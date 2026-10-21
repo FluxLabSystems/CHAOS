@@ -43,6 +43,13 @@ public enum ChaosEventId
     /// <summary>Too many failures in the window. Retrying has stopped. Terminal.</summary>
     CircuitBreakerTripped = 1030,
 
+    /// <summary>
+    /// The host is stopping itself with a non-zero exit code because
+    /// supervision failed terminally, so the service control manager's
+    /// recovery policy can restart it.
+    /// </summary>
+    HostStoppingAfterSupervisionFailure = 1031,
+
     /// <summary>Graceful shutdown was not possible or timed out; the tree was killed.</summary>
     ForcedTermination = 1040,
 

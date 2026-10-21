@@ -188,6 +188,10 @@ public static class ChaosHostExtensions
         // gateway reported "no supervisor registered" with supervision on.
         if (options.SuperviseBackend)
         {
+            // Registered before the supervisor's TryAdd so a breaker trip
+            // reports its exit code to SCM as well as to the process.
+            builder.Services.TryAddSingleton<IHostExitCodeReporter, Supervision.WindowsServiceExitCodeReporter>();
+
             builder.Services.AddChaosBackendSupervisor(
                 backendSection,
                 supervisor =>

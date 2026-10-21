@@ -44,6 +44,12 @@ internal sealed class FakeSupervisedBackend
         }
     }
 
+    /// <summary>
+    /// When set, every launched process exits with this code immediately, as
+    /// a backend that cannot start at all does.
+    /// </summary>
+    public int? ExitImmediatelyWithCode { get; set; }
+
     /// <summary>Every launch the supervisor asked for, in order.</summary>
     public IReadOnlyList<FakeChildProcess> Processes
     {
@@ -71,12 +77,19 @@ internal sealed class FakeSupervisedBackend
 
     private FakeChildProcess Launch(ProcessStartSpec spec)
     {
+        FakeChildProcess process;
         lock (_gate)
         {
-            var process = new FakeChildProcess(5000 + _processes.Count, spec);
+            process = new FakeChildProcess(5000 + _processes.Count, spec);
             _processes.Add(process);
-            return process;
         }
+
+        if (ExitImmediatelyWithCode is { } code)
+        {
+            process.Exit(code);
+        }
+
+        return process;
     }
 
     private sealed class Launcher(FakeSupervisedBackend owner) : IProcessLauncher

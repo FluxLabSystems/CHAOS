@@ -92,6 +92,88 @@ public sealed class BackendSupervisorTests
         Assert.Equal(1, launcher.StartCount);
     }
 
+    [Fact]
+    public async Task A_tripped_breaker_stops_the_host_with_a_non_zero_exit_code()
+    {
+        var options = Options();
+        options.MaxStartFailures = 2;
+
+        // Every launch dies at once: the backend cannot start at all.
+        var launcher = new FakeProcessLauncher { Configure = process => process.Exit(1) };
+        var probe = new FakeHealthProbe();
+        var clock = new FakeClock { AutoAdvance = true };
+        var events = new RecordingEventSink();
+        var lifetime = new FakeHostApplicationLifetime();
+        var exitCode = new RecordingExitCodeReporter();
+
+        await using var supervisor = Build(options, launcher, probe, clock, events);
+        var stop = new SupervisionFailureHostStop(supervisor, lifetime, options, exitCode, events, NullLogger<SupervisionFailureHostStop>.Instance);
+        await stop.StartAsync(CancellationToken.None);
+
+        await supervisor.StartAsync(CancellationToken.None);
+        await Eventually.IsTrueAsync(() => lifetime.StopRequested, "the breaker to trip and the host to be asked to stop");
+
+        Assert.Equal(SupervisionState.Failed, supervisor.State);
+        Assert.Equal(BackendState.Faulted, supervisor.Status.State);
+        Assert.Contains("circuit breaker tripped", supervisor.Status.LastError, StringComparison.Ordinal);
+        Assert.Equal(2, launcher.StartCount);
+
+        // Visible to the process, to SCM, and in the Event Log, in that order
+        // of who is likely to look.
+        Assert.Equal(70, exitCode.ExitCode);
+        Assert.True(stop.StopRequested);
+        Assert.True(events.Contains(ChaosEventId.CircuitBreakerTripped));
+        Assert.True(events.Contains(ChaosEventId.HostStoppingAfterSupervisionFailure));
+
+        // Stopping the host afterwards leaves the verdict alone: Failed does
+        // not soften into Stopped - not on the host's stop, and not on the
+        // second stop that disposal sends after it.
+        await supervisor.StopAsync(CancellationToken.None);
+        Assert.Equal(SupervisionState.Failed, supervisor.State);
+        await supervisor.StopAsync(CancellationToken.None);
+        await supervisor.DisposeAsync();
+        Assert.Equal(SupervisionState.Failed, supervisor.State);
+        Assert.Equal(BackendState.Faulted, supervisor.Status.State);
+    }
+
+    [Fact]
+    public async Task With_the_stop_turned_off_the_host_stays_up_and_the_failure_is_reported()
+    {
+        var options = Options();
+        options.MaxStartFailures = 2;
+        options.StopHostOnCircuitBreakerTrip = false;
+
+        var launcher = new FakeProcessLauncher { Configure = process => process.Exit(1) };
+        var clock = new FakeClock { AutoAdvance = true };
+        var events = new RecordingEventSink();
+        var lifetime = new FakeHostApplicationLifetime();
+        var exitCode = new RecordingExitCodeReporter();
+
+        await using var supervisor = Build(options, launcher, new FakeHealthProbe(), clock, events);
+        var stop = new SupervisionFailureHostStop(supervisor, lifetime, options, exitCode, events, NullLogger<SupervisionFailureHostStop>.Instance);
+        await stop.StartAsync(CancellationToken.None);
+
+        await supervisor.StartAsync(CancellationToken.None);
+        await Eventually.IsTrueAsync(() => supervisor.State == SupervisionState.Failed, "the breaker to trip");
+
+        Assert.False(lifetime.StopRequested);
+        Assert.Null(exitCode.ExitCode);
+        Assert.True(events.Contains(ChaosEventId.CircuitBreakerTripped));
+        Assert.False(events.Contains(ChaosEventId.HostStoppingAfterSupervisionFailure));
+    }
+
+    [Fact]
+    public void A_zero_exit_code_is_refused_when_the_stop_is_on()
+    {
+        var options = Options();
+        options.CircuitBreakerExitCode = 0;
+
+        Assert.Contains(options.Validate(), error => error.Contains("CircuitBreakerExitCode", StringComparison.Ordinal));
+
+        options.StopHostOnCircuitBreakerTrip = false;
+        Assert.Empty(options.Validate());
+    }
+
     internal static BackendSupervisor Build(
         BackendSupervisorOptions options,
         FakeProcessLauncher launcher,

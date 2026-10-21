@@ -182,12 +182,32 @@ point does not register a backend supervisor, so nothing starts the Python
 backend for it. See
 <a href="visual-studio.html#what-happens-when-you-press-f5">Visual Studio § What happens when you press F5</a>.</li></ol>
 <h3 id="56-it-starts-then-stops-then-starts-again" class="doc-h"><span class="doc-h-text">5.6 It starts, then stops, then starts again</span><a class="doc-anchor" href="#56-it-starts-then-stops-then-starts-again" aria-label="Link to this section"></a></h3>
-<p>Restart behaviour is deliberate: a homestead does not have someone watching the
-console, so the supervisor keeps restarting with a backoff rather than giving up
-after a counter. The alarm for <em>"the backend is crash-looping"</em> is the operator's
-signal, not a give-up threshold.</p>
-<p>Read the platform log via <strong>Open logs</strong> — the repeated failure is at the top of
-each restart.</p>
+<p>Two layers restart things, and it helps to know which one you are watching.</p>
+<p><strong>The gateway restarts the backend.</strong> When the Python backend dies or stops
+answering <code>/health</code>, the gateway's supervisor restarts it with a growing delay —
+2 s, doubling, up to 2 min — and <code>/host/info</code> shows <code>supervisionState: "Restarting"</code> with the reason and the next attempt time. A backend that then
+stays healthy for two minutes has its history forgiven.</p>
+<p><strong>After five failures inside ten minutes it gives up</strong>, and it does not sit
+there looking <em>Starting</em> forever: the supervisor reports <code>Faulted</code> with the
+reason, writes a critical entry (Event Log IDs 1030 and 1031 under the source
+<code>Project CHAOS</code> when that source is registered, and always the gateway log
+file), and <strong>stops the whole service with exit code 70</strong>. That is the
+"crash-loop" signal: the <code>ChaosHost</code> service shows as stopped in
+<code>services.msc</code>, and the last gateway log ends with <em>Backend supervision has
+given up</em>.</p>
+<p><strong>Windows restarts the service</strong> — after 5 s, 15 s, then every minute — but
+only if its recovery policy counts that stop. A crash always counts. A stop
+with an error code, which is what the supervisor does, counts only when the
+service's failure flag is set: <code>sc failureflag ChaosHost 1</code>, once, elevated.
+<code>Chaos.Host.exe --install-service</code> sets it; the MSI's own registration does
+not, so on an MSI install run that command once if you want the machine to
+keep trying unattended. Either way, something is wrong in the backend; read the
+platform log via <strong>Open logs</strong> — the repeated failure is at the top of each
+restart — and fix that before relying on the retries.</p>
+<p>The counts and delays are the <code>Backend</code> keys in <code>chaos.host.json</code>
+(<code>MaxStartFailures</code>, <code>FailureWindow</code>, <code>InitialRestartDelay</code>, <code>MaxRestartDelay</code>,
+<code>HealthyRunDuration</code>); <code>Backend.StopHostOnCircuitBreakerTrip: false</code> keeps the
+gateway up, answering 503, with no backend behind it.</p>
 <hr>
 <h2 id="6-the-console-loads-but-has-no-data" class="doc-h"><span class="doc-h-text">6. The console loads but has no data</span><a class="doc-anchor" href="#6-the-console-loads-but-has-no-data" aria-label="Link to this section"></a></h2>
 <h3 id="61-look-at-the-freshness-indicator-first" class="doc-h"><span class="doc-h-text">6.1 Look at the freshness indicator first</span><a class="doc-anchor" href="#61-look-at-the-freshness-indicator-first" aria-label="Link to this section"></a></h3>

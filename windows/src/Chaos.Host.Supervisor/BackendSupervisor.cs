@@ -164,6 +164,13 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
     /// <summary>Fired after every state change, outside the internal lock.</summary>
     public event EventHandler<BackendStateChangedEventArgs>? StateChanged;
 
+    /// <summary>
+    /// Fired once when supervision ends terminally: the circuit breaker
+    /// tripped, or the loop itself failed. The snapshot carries the reason.
+    /// <see cref="SupervisionFailureHostStop"/> turns this into a host stop.
+    /// </summary>
+    public event EventHandler<BackendSnapshot>? SupervisionFailed;
+
     // -- Start / Stop ------------------------------------------------------
 
     /// <inheritdoc />
@@ -265,7 +272,15 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
 
         if (loop is null || cancellation is null)
         {
-            SetStatus(SupervisionState.Stopped, "stop requested; nothing was being supervised");
+            // A terminal failure is never softened into "stopped on request",
+            // including by the second stop that disposal sends after the host's
+            // own: an operator reading the status after the host went down must
+            // still see why.
+            if (State != SupervisionState.Failed)
+            {
+                SetStatus(SupervisionState.Stopped, "stop requested; nothing was being supervised");
+            }
+
             return;
         }
 
@@ -361,10 +376,16 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
                     SetFailed(reason);
                     _events.Write(ChaosEventId.CircuitBreakerTripped, ChaosEventLevel.Error, reason);
                     _logger.LogCritical(
-                        "Backend supervision has given up. {Reason} The platform is DOWN and will not " +
-                        "restart itself. Restart the CHAOS service once the cause is fixed.",
-                        reason);
+                        "Backend supervision has given up. {Reason} The platform is DOWN. {Next}",
+                        reason,
+                        _options.StopHostOnCircuitBreakerTrip
+                            ? "The host will now stop with a non-zero exit code so the service manager's " +
+                              "recovery policy can restart it; if it keeps coming back here, fix the cause " +
+                              "in the backend log first."
+                            : "The host stays up and will not restart the backend itself. Restart the " +
+                              "CHAOS service once the cause is fixed.");
                     CompleteFirstOutcome(false);
+                    RaiseSupervisionFailed();
                     return;
                 }
 
@@ -403,6 +424,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
             SetFailed(reason);
             _logger.LogCritical(ex, "The backend supervision loop failed. The backend is not being supervised.");
             _events.Write(ChaosEventId.CircuitBreakerTripped, ChaosEventLevel.Error, reason);
+            RaiseSupervisionFailed();
         }
         finally
         {
@@ -907,6 +929,24 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "A backend status subscriber threw. Supervision is unaffected.");
+        }
+    }
+
+    private void RaiseSupervisionFailed()
+    {
+        var handler = SupervisionFailed;
+        if (handler is null)
+        {
+            return;
+        }
+
+        try
+        {
+            handler(this, Snapshot);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "A supervision-failure subscriber threw.");
         }
     }
 

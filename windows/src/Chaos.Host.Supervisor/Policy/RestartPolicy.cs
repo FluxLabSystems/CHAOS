@@ -100,7 +100,7 @@ public sealed class RestartPolicy
                 $"circuit breaker tripped: {_failures.Count.ToString(CultureInfo.InvariantCulture)} backend " +
                 $"failures within {Describe(_options.FailureWindow)} " +
                 $"(limit {_options.MaxStartFailures.ToString(CultureInfo.InvariantCulture)}). " +
-                "The supervisor has stopped retrying; this needs a human.");
+                "The supervisor has stopped retrying.");
         }
 
         var delay = DelayFor(ConsecutiveFailures);

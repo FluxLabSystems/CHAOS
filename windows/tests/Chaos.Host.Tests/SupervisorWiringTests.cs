@@ -3,6 +3,7 @@ using Chaos.Host.Abstractions;
 using Chaos.Host.Supervisor;
 using Chaos.Host.Tests.Support;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace Chaos.Host.Tests;
@@ -20,6 +21,13 @@ namespace Chaos.Host.Tests;
 /// </remarks>
 public sealed class SupervisorWiringTests
 {
+    private sealed class RecordingExitCodeReporter : IHostExitCodeReporter
+    {
+        public int? ExitCode { get; private set; }
+
+        public void Report(int exitCode) => ExitCode = exitCode;
+    }
+
     [Fact]
     public async Task Host_info_reports_the_real_supervisor_when_supervision_is_on()
     {
@@ -111,6 +119,52 @@ public sealed class SupervisorWiringTests
         Assert.DoesNotContain(
             factory.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>(),
             service => service is BackendSupervisorHostedService);
+    }
+
+    [Fact]
+    public async Task A_backend_that_cannot_start_trips_the_breaker_and_stops_the_host_with_an_error()
+    {
+        // The backend never answers /health, but it does not die until the
+        // test says so: a host that stops itself before the test factory has
+        // finished starting it is a race, not a result.
+        var backend = new FakeSupervisedBackend { Healthy = false };
+        var exitCode = new RecordingExitCodeReporter();
+        using var factory = ChaosHostFactory.For()
+            .WithSupervisedBackend(backend)
+            .With("Backend:MaxStartFailures", "2")
+            .With("Backend:InitialRestartDelay", "00:00:00.010")
+            .With("Backend:MaxRestartDelay", "00:00:00.050")
+            .With("Backend:HealthPollInterval", "00:00:00.010")
+            .With("Backend:ReadinessTimeout", "00:00:30")
+            .ConfigureServices(services =>
+            {
+                // Keep the test process's own exit code out of it.
+                services.RemoveAll<IHostExitCodeReporter>();
+                services.AddSingleton<IHostExitCodeReporter>(exitCode);
+            })
+            .Build();
+
+        // Resolved before the stop: once the host has stopped itself the
+        // container is gone, which is itself the point of the test.
+        var lifetime = factory.Services.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>();
+        var supervisor = factory.Services.GetRequiredService<IBackendSupervisor>();
+        await TestExtensions.WaitUntilAsync(() => Task.FromResult(backend.Processes.Count == 1), "the first launch");
+
+        // Now the backend cannot start at all: the running child dies, and so
+        // does every child launched after it.
+        backend.ExitImmediatelyWithCode = 1;
+        backend.Processes[0].Exit(1);
+
+        await TestExtensions.WaitUntilAsync(
+            () => Task.FromResult(lifetime.ApplicationStopping.IsCancellationRequested),
+            "the gateway to stop itself after the breaker tripped");
+
+        Assert.Equal(70, exitCode.ExitCode);
+        Assert.Equal(2, backend.Processes.Count);
+
+        var status = supervisor.Status;
+        Assert.Equal(BackendState.Faulted, status.State);
+        Assert.Contains("circuit breaker tripped", status.LastError, StringComparison.Ordinal);
     }
 
     [Fact]

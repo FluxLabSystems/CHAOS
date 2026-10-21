@@ -167,6 +167,24 @@ public sealed class BackendSupervisorOptions
     /// <summary>Register the supervisor as an <c>IHostedService</c>.</summary>
     public bool RegisterHostedService { get; set; } = true;
 
+    /// <summary>
+    /// When the circuit breaker trips (or the supervision loop itself fails),
+    /// stop the host with <see cref="CircuitBreakerExitCode"/>. On by default:
+    /// a supervisor that has given up and keeps the process alive is invisible
+    /// to the service control manager, whose recovery policy is the one thing
+    /// left that can give an unattended machine another chance. Off, the host
+    /// stays up, reports the failure on <c>/health</c>, and waits for a human.
+    /// </summary>
+    public bool StopHostOnCircuitBreakerTrip { get; set; } = true;
+
+    /// <summary>
+    /// The process exit code used for <see cref="StopHostOnCircuitBreakerTrip"/>.
+    /// Non-zero so a shell, a scheduler and SCM all see a failure rather than a
+    /// clean stop; 70 is <c>EX_SOFTWARE</c> from sysexits, "internal software
+    /// error", which is the nearest standard meaning.
+    /// </summary>
+    public int CircuitBreakerExitCode { get; set; } = 70;
+
     // -- Windows Event Log -------------------------------------------------
 
     /// <summary>Event Log source. Created at install time; see README.md.</summary>
@@ -273,6 +291,12 @@ public sealed class BackendSupervisorOptions
         if (string.IsNullOrWhiteSpace(EventLogSource))
         {
             errors.Add($"{nameof(EventLogSource)} must be set.");
+        }
+
+        if (StopHostOnCircuitBreakerTrip && CircuitBreakerExitCode == 0)
+        {
+            errors.Add($"{nameof(CircuitBreakerExitCode)} must be non-zero: a host that stops because its backend " +
+                       "is unrecoverable must not report a clean exit, or the service manager will not restart it.");
         }
 
         return new ReadOnlyCollection<string>(errors);

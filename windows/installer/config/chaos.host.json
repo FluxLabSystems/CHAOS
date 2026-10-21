@@ -42,7 +42,7 @@
     "BackendHealthPath": "/health",
     "BackendStartTimeout": "00:02:00",
 
-    "_health_comment": "How the gateway watches the backend. A homestead has nobody watching the console, so the supervisor keeps restarting and the crash-loop alarm is the operator's signal rather than a give-up counter. The quiet period stops a long outage filling the log with identical lines.",
+    "_health_comment": "How the gateway watches the backend. The supervisor restarts a backend that dies or stops answering /health, with a backoff from 2 s up to 2 min. After five failures inside ten minutes it gives up and STOPS THIS SERVICE with exit code 70 so Windows' recovery policy can restart it -- see the troubleshooting page, 'It starts, then stops, then starts again', including the one-time 'sc failureflag ChaosHost 1' an MSI install needs for that. The counts live under the Backend key (MaxStartFailures, FailureWindow, HealthyRunDuration, StopHostOnCircuitBreakerTrip). The quiet period stops a long outage filling the log with identical lines.",
     "BackendHealthInterval": "00:00:10",
     "BackendHealthTimeout": "00:00:05",
     "BackendHealthMaxBackoff": "00:00:30",

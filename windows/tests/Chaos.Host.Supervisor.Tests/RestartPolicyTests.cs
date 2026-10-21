@@ -67,7 +67,7 @@ public sealed class RestartPolicyTests
         Assert.False(third.ShouldRetry);
         Assert.True(policy.IsTripped);
         Assert.Contains("circuit breaker tripped", third.Reason, StringComparison.Ordinal);
-        Assert.Contains("needs a human", third.Reason, StringComparison.Ordinal);
+        Assert.Contains("stopped retrying", third.Reason, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -290,13 +290,37 @@ nothing to show; `/health` answers 503 with `backend: "down"`.
 
 ### 5.6 It starts, then stops, then starts again
 
-Restart behaviour is deliberate: a homestead does not have someone watching the
-console, so the supervisor keeps restarting with a backoff rather than giving up
-after a counter. The alarm for *"the backend is crash-looping"* is the operator's
-signal, not a give-up threshold.
+Two layers restart things, and it helps to know which one you are watching.
 
-Read the platform log via **Open logs** — the repeated failure is at the top of
-each restart.
+**The gateway restarts the backend.** When the Python backend dies or stops
+answering `/health`, the gateway's supervisor restarts it with a growing delay —
+2 s, doubling, up to 2 min — and `/host/info` shows `supervisionState:
+"Restarting"` with the reason and the next attempt time. A backend that then
+stays healthy for two minutes has its history forgiven.
+
+**After five failures inside ten minutes it gives up**, and it does not sit
+there looking *Starting* forever: the supervisor reports `Faulted` with the
+reason, writes a critical entry (Event Log IDs 1030 and 1031 under the source
+`Project CHAOS` when that source is registered, and always the gateway log
+file), and **stops the whole service with exit code 70**. That is the
+"crash-loop" signal: the `ChaosHost` service shows as stopped in
+`services.msc`, and the last gateway log ends with *Backend supervision has
+given up*.
+
+**Windows restarts the service** — after 5 s, 15 s, then every minute — but
+only if its recovery policy counts that stop. A crash always counts. A stop
+with an error code, which is what the supervisor does, counts only when the
+service's failure flag is set: `sc failureflag ChaosHost 1`, once, elevated.
+`Chaos.Host.exe --install-service` sets it; the MSI's own registration does
+not, so on an MSI install run that command once if you want the machine to
+keep trying unattended. Either way, something is wrong in the backend; read the
+platform log via **Open logs** — the repeated failure is at the top of each
+restart — and fix that before relying on the retries.
+
+The counts and delays are the `Backend` keys in `chaos.host.json`
+(`MaxStartFailures`, `FailureWindow`, `InitialRestartDelay`, `MaxRestartDelay`,
+`HealthyRunDuration`); `Backend.StopHostOnCircuitBreakerTrip: false` keeps the
+gateway up, answering 503, with no backend behind it.
 
 ---
 
