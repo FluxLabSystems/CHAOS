@@ -54,6 +54,8 @@ CLEARNESS_MIN_CLEAR_FRACTION = 0.05
 #: Today's clear-sky energy must reach this fraction of the rating (in kWh per
 #: kW) before today's measured energy is trusted as a clearness index.
 DAILY_CLEARNESS_MIN_KWH_PER_KW = 0.25
+#: Timezone names that mean UTC and need no timezone database on the host.
+UTC_TIMEZONE_NAMES = frozenset({"UTC", "Etc/UTC", "Z", "Zulu", "GMT", "Etc/GMT"})
 #: Register orientation vocabulary -> azimuth measured clockwise from north.
 ORIENTATION_AZIMUTH_DEG: dict[str, float] = {
     "north": 0.0,
@@ -420,12 +422,18 @@ class ClearSkyForecast:
         """Local midnight in the site's timezone, or why it is unknown."""
         if not self.site.timezone:
             return None, "site timezone not in the register"
-        try:
-            from zoneinfo import ZoneInfo
+        zone: dt.tzinfo
+        if self.site.timezone in UTC_TIMEZONE_NAMES:
+            # UTC needs no timezone database, so a host without one (Windows
+            # without the tzdata package) still gets the daily clearness.
+            zone = dt.UTC
+        else:
+            try:
+                from zoneinfo import ZoneInfo
 
-            zone = ZoneInfo(self.site.timezone)
-        except Exception:  # pragma: no cover - depends on the host tz database
-            return None, f"timezone {self.site.timezone!r} is not available on this host"
+                zone = ZoneInfo(self.site.timezone)
+            except Exception:  # pragma: no cover - depends on the host tz database
+                return None, f"timezone {self.site.timezone!r} is not available on this host"
         local = now.astimezone(zone)
         midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
         return midnight.astimezone(dt.UTC), self.site.timezone
