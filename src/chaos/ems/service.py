@@ -31,15 +31,15 @@ from chaos.ems.blackstart import BlackStartCoordinator, BlackStartState
 from chaos.ems.config import DEFAULT_CONFIG, EmsConfig, energy_state_topic
 from chaos.ems.derived import (
     DerivedEnergyState,
-    LoadSnapshot,
     PvForecast,
     RollingWindow,
     compute_derived,
 )
+from chaos.ems.forecast import registry_forecast
 from chaos.ems.generator import GeneratorCoordinator, GeneratorRuntime
 from chaos.ems.inputs import EmsInputs, gather_inputs
 from chaos.ems.leases import LeaseManager, LeaseSweepResult
-from chaos.ems.loader import effective_tier, load_profiles
+from chaos.ems.loader import load_profiles
 from chaos.ems.shedding import (
     LoadState,
     RestoreStepResult,
@@ -47,6 +47,7 @@ from chaos.ems.shedding import (
     ShedStepResult,
     active_shed_groups,
     current_load_states,
+    load_snapshots,
 )
 from chaos.ems.state_machine import (
     EnergyStateMachine,
@@ -116,6 +117,9 @@ class EnergyManagerService:
         interval_s: float | None = None,
         forecast: PvForecast | None = None,
     ) -> None:
+        """``forecast`` overrides the registry-derived clear-sky forecaster
+        (``chaos.ems.forecast.registry_forecast``) that each tick builds
+        otherwise."""
         self.session_factory = session_factory
         self.bus = bus
         self.settings = settings
@@ -203,21 +207,16 @@ class EnergyManagerService:
         inputs = gather_inputs(session, now, self.config, load_asset_ids=load_asset_ids)
 
         # 2. derived ----------------------------------------------------
-        load_snapshots = [
-            LoadSnapshot(
-                asset_id=profile.asset_id,
-                tier=effective_tier(profile, now),
-                estimated_power_kw=profile.estimated_power_kw,
-            )
-            for profile in profiles
-        ]
+        # The live shed state feeds the derived layer: restoration energy,
+        # deferrable backlog and absorb capacity all come from it.
+        states: dict[str, LoadState] = current_load_states(session, inputs, now=now, config=self.config)
         derived = compute_derived(
             inputs,
             self.config,
             now=now,
             rolling=self.rolling,
-            forecast=self.forecast,
-            loads=load_snapshots,
+            forecast=self.forecast or registry_forecast(session, site_id=self.settings.site_id),
+            loads=load_snapshots(states, now=now),
         )
 
         # 3. leases -----------------------------------------------------
@@ -227,7 +226,6 @@ class EnergyManagerService:
         generator_decision = self.generator.evaluate(inputs, derived, energy_state=snapshot.state, now=now)
 
         # 5. state ------------------------------------------------------
-        states: dict[str, LoadState] = current_load_states(session, inputs, now=now, config=self.config)
         decision = self.state_machine.evaluate(
             session,
             inputs,

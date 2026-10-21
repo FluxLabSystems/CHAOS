@@ -113,6 +113,14 @@ class EmsConfig:
     battery_temp_warning_c: float = 45.0
     container_temp_emergency_c: float = 50.0
     container_temp_warning_c: float = 40.0
+    #: Thermal derate curves (SDD 30.6 ``thermal_derate_pct``): piecewise-linear
+    #: ``(temperature_c, derate_pct)`` points, flat beyond the end points. The
+    #: defaults are commissioning placeholders running from 0% at the warning
+    #: threshold to 100% at the emergency threshold; replace them with the
+    #: battery manufacturer's curve and the container HVAC capacity at
+    #: commissioning. The derived value names whichever curve is in force.
+    thermal_derate_battery_curve: tuple[tuple[float, float], ...] = ((45.0, 0.0), (55.0, 100.0))
+    thermal_derate_container_curve: tuple[tuple[float, float], ...] = ((40.0, 0.0), (50.0, 100.0))
     #: Fault codes that classify as shutdown-class inverter faults.
     inverter_shutdown_fault_codes: tuple[str, ...] = (
         "shutdown",
@@ -272,12 +280,16 @@ class EmsConfig:
     # ------------------------------------------------------------------
     forecast_short_horizon_h: float = 6.0
     forecast_day_horizon_h: float = 24.0
-    #: Naive persistence: assume the present PV power holds for this many hours.
+    #: Naive persistence fallback: assume the present PV power holds for this
+    #: many hours. Used only when the register cannot locate the site or rate
+    #: the array (``chaos.ems.forecast``).
     forecast_persistence_window_h: float = 3.0
-    #: Derate applied to the persistence estimate. Placeholder, not a model.
+    #: Confidence margin applied to every PV forecast: the clear-sky curve as
+    #: well as the persistence fallback. A commissioning placeholder, not a
+    #: loss model; neither forecaster has a weather feed.
     forecast_persistence_derate: float = 0.7
-    #: Equivalent full-load hours used only when today's PV energy total is
-    #: unavailable. A placeholder for a real forecast service.
+    #: Equivalent full-load hours used by the persistence fallback when today's
+    #: PV energy total is unavailable. A placeholder for a real forecast service.
     forecast_daily_equivalent_full_load_h: float = 4.0
 
     # ------------------------------------------------------------------

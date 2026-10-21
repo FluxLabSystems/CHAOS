@@ -45,7 +45,7 @@ from sqlalchemy.orm import Session
 from chaos.config import Settings
 from chaos.ems import CommandOutcome, CommandPort, CommandRequest
 from chaos.ems.config import EmsConfig, load_budget_topic
-from chaos.ems.derived import DerivedEnergyState
+from chaos.ems.derived import DerivedEnergyState, LoadSnapshot
 from chaos.ems.inputs import EmsInputs, load_input_key
 from chaos.ems.loader import effective_tier, load_profiles
 from chaos.envelope import EventEnvelope, TelemetryEnvelope
@@ -213,6 +213,39 @@ def current_load_states(
     for asset_id, count in attempts.items():
         states[asset_id].attempts = count
     return states
+
+
+def load_snapshots(states: dict[str, LoadState], *, now: dt.datetime) -> list[LoadSnapshot]:
+    """Project the live load states onto what the derived layer needs.
+
+    ``restorable_in_h`` is the time until the load's minimum off time and
+    restart delay both allow a restoration; it is ``None`` for a load the EMS
+    will not restart automatically (attended equipment, SDD 33.2 rules 6 and
+    7, or a lockout), so its energy never enters the restoration forecast.
+    """
+    snapshots: list[LoadSnapshot] = []
+    for state in states.values():
+        shed = state.is_shed
+        since_s = (state.since(now) or 0.0) if shed else None
+        restorable_in_h: float | None = None
+        if shed and state.automatic_restart_permitted and not state.locked_out:
+            earliest_s = max(
+                state.profile.minimum_off_time_s or 0,
+                int(state.restart.get("minimum_off_time_s") or 0),
+                int(state.restart.get("delay_s") or 0),
+            )
+            restorable_in_h = max(earliest_s - (since_s or 0.0), 0.0) / 3600.0
+        snapshots.append(
+            LoadSnapshot(
+                asset_id=state.asset_id,
+                tier=state.tier,
+                estimated_power_kw=state.profile.estimated_power_kw,
+                shed=shed,
+                shed_for_h=None if since_s is None else since_s / 3600.0,
+                restorable_in_h=restorable_in_h,
+            )
+        )
+    return snapshots
 
 
 # ---------------------------------------------------------------------------
