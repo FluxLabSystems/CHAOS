@@ -24,10 +24,13 @@ from chaos.topics import DEFAULT_BASE, telemetry_topic
 
 #: Canonical point name the EMS publishes the site energy state on.
 #:
-#: OPEN ITEM: ``energy_state`` is not yet in ``data/point_dictionary.yaml``
-#: (that file belongs to the registry package). Until it is added, an ingest
-#: service that resolves topics against the registry will dead-letter this
-#: message. The state is still published so subsystems can subscribe today.
+#: Defined in ``data/point_dictionary.yaml`` as a platform-owned ``CALC`` point
+#: (``dictionary_status: reconciled_v0_4``) whose enum is exactly
+#: :data:`chaos.models.energy.ENERGY_STATES`, and attached to the site asset
+#: through the ``ems_site`` point profile. Ingest therefore resolves
+#: ``chaos/site/primary/site_01/energy_state`` to
+#: ``site.site.primary.01/energy_state`` instead of dead-lettering it
+#: (integration finding F-003, resolved).
 ENERGY_STATE_POINT = "energy_state"
 
 #: Canonical point name for the per-load budget published by the EMS. This one

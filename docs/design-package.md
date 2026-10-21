@@ -47,7 +47,7 @@ what that looks like in practice.
 |---|---:|
 | Assets | 90 |
 | Relationships | 99 |
-| Points | 701 |
+| Points | 702 |
 | Point bindings | 245 |
 | Locations | 30 |
 | Load profiles | 12 |

@@ -1131,6 +1131,8 @@ point_profiles:
   - minimum_off_time_s
   - power_budget_kw
   - power_request_kw
+  ems_site:
+  - energy_state
   rack_environment:
   - temperature_inlet_c
   - temperature_exhaust_c

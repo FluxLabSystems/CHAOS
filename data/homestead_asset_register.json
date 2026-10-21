@@ -53,7 +53,8 @@
       "documentation": [],
       "maintenance_plan": {},
       "point_profile_refs": [
-        "common_monitored"
+        "common_monitored",
+        "ems_site"
       ],
       "source_refs": [
         {

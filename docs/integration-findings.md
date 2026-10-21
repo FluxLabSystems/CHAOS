@@ -35,7 +35,7 @@ Related: [The annunciator panel](./annunciator.md) ·
 |---|---|---|
 | [F-001](#f-001--five-asset-classes-cannot-represent-a-device-going-silent) | high | Assets: safety sensors with no availability point |
 | [F-002](#f-002--command_last_result-has-no-idle-value) | low | The dead-letter list |
-| [F-003](#f-003--energy_state-is-published-but-not-defined) | medium | A steady stream of dead letters |
+| [F-003](#f-003--energy_state-is-published-but-not-defined) | medium — **resolved** | Nowhere any more: the point is defined and resolves |
 | [F-004](#f-004--automatic_control_allowed-is-semantically-overloaded) | medium | Nowhere yet — and that is the problem. See [Control § A safety-relevant ambiguity](./control.md#8-a-safety-relevant-ambiguity-you-should-know-about) |
 | [F-005](#f-005--asset-id-schema-is-looser-than-the-identification-standard) | low | Nowhere; latent |
 | [F-006](#f-006--load-tiers-are-one-based-in-the-register-zero-based-in-the-sdd) | medium | The Energy screen's load tiers |
@@ -101,21 +101,36 @@ value already means "no result."
 
 ## F-003 — `energy_state` is published but not defined
 
-**Severity: medium — produces recurring noise**
+**Severity: medium — produces recurring noise. Status: resolved.**
 
 The EMS publishes the site energy state to
 `chaos/site/primary/site_01/energy_state` every tick (SDD section 13
-requires the EMS to publish a state that subsystems consume). `energy_state` is
-not in `data/point_dictionary.yaml`, so ingest dead-letters it on every
-evaluation.
+requires the EMS to publish a state that subsystems consume). When this was
+found, `energy_state` was not in `data/point_dictionary.yaml`, so ingest
+dead-lettered it on every evaluation.
 
-Nothing breaks, but a steady stream of dead letters is exactly the noise that
+Nothing broke, but a steady stream of dead letters is exactly the noise that
 masks genuine commissioning errors — which is the one thing the dead-letter
 queue exists to make visible.
 
-**Recommendation:** define `energy_state` as a `CALC` point with the ten SDD
-30.7 state names as its enum, via an extension document following the
-`water_points.yaml` pattern, and give the site asset a profile that includes it.
+**Resolution:** `energy_state` is now defined in `data/point_dictionary.yaml`
+as a `CALC` point whose enum is exactly the ten SDD 30.7 state names the state
+machine publishes, and the site asset carries it through a new `ems_site` point
+profile — the same pattern `ems_load` already uses for `power_budget_kw`. The
+definition is marked `dictionary_status: reconciled_v0_4`, the provenance rung
+`water_points.yaml` defines for a formal definition added after the v0.3 pass.
+
+The original recommendation was an extension document in the
+`water_points.yaml` style. It went into the base dictionary instead for one
+reason: the registry loader reads only the four core documents, and extension
+documents are deliberately **not** merged until the owner ratifies them
+([Design package § Ratification](./design-package.md#4-ratification-and-what-not-ratified-means)).
+An extension would have left the dead letters exactly where they were. Unlike
+the water points, this point is not a design proposal: it is the platform's own
+output, and its vocabulary was already fixed by the code that publishes it.
+
+`tests/test_registry_loader.py::test_energy_state_is_a_platform_owned_site_point`
+asserts that the published topic resolves against a freshly loaded registry.
 
 ---
 

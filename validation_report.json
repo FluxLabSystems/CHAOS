@@ -1,12 +1,12 @@
 {
-  "validation_timestamp": "2026-08-07T14:23:17Z",
+  "validation_timestamp": "2026-10-21T21:40:22Z",
   "schema_version": "0.3.0",
   "result": "PASS",
   "strict": false,
   "counts": {
     "domains": 12,
     "asset_classes": 72,
-    "point_definitions": 214,
+    "point_definitions": 215,
     "assets": 90,
     "relationships": 99,
     "point_bindings": 245,
@@ -42,7 +42,7 @@
       "status": "OK",
       "counts": {
         "asset_classes": 72,
-        "point_profiles": 5,
+        "point_profiles": 6,
         "domains": 12
       },
       "messages": []
@@ -99,7 +99,7 @@
       "json_mirror": "data/point_dictionary.json",
       "status": "OK",
       "counts": {
-        "points": 214
+        "points": 215
       },
       "messages": []
     },

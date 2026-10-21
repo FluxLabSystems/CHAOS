@@ -197,8 +197,8 @@ def test_asset_dependencies_endpoint(api):
 
 def test_list_points_filters(api):
     everything = api.get(f"{BASE}/points", params={"limit": 1000}).json()
-    assert everything["total"] == 701
-    assert len(everything["items"]) == 701
+    assert everything["total"] == 702
+    assert len(everything["items"]) == 702
 
     for_asset = api.get(f"{BASE}/points", params={"asset_id": INVERTER}).json()
     assert for_asset["total"] == 19
@@ -278,7 +278,7 @@ def test_registry_summary_endpoint(api):
     summary = response.json()
 
     assert summary["assets"] == 90
-    assert summary["points"] == 701
+    assert summary["points"] == 702
     assert summary["relationships"] == 99
     assert summary["bindings"] == 245
     assert sum(summary["assets_by_domain"].values()) == 90
@@ -310,7 +310,7 @@ def test_point_dictionary_endpoint(api):
     response = api.get(f"{BASE}/registry/dictionary/points")
     assert response.status_code == 200
     definitions = response.json()
-    assert len(definitions) == 214
+    assert len(definitions) == 215
 
     by_name = {item["name"]: item for item in definitions}
     assert by_name["soc_pct"]["unit"] == "%"
@@ -322,7 +322,7 @@ def test_point_dictionary_endpoint(api):
     ]
 
     capable = api.get(f"{BASE}/registry/dictionary/points", params={"control_capable": True}).json()
-    assert 0 < len(capable) < 214
+    assert 0 < len(capable) < 215
     assert all(item["control_capable"] for item in capable)
 
     searched = api.get(f"{BASE}/registry/dictionary/points", params={"q": "temperature"}).json()
@@ -366,10 +366,10 @@ def test_reload_reruns_the_loader(api, admin_headers, db_session):
 
     assert body["assets"] == 90
     assert body["relationships"] == 99
-    assert body["points"] == 701
+    assert body["points"] == 702
     assert body["bindings"] == 245
     assert body["asset_classes"] == 72
-    assert body["point_definitions"] == 214
+    assert body["point_definitions"] == 215
     assert body["warnings"] == []
     assert body["package_version"] == "0.3.0"
 
