@@ -21,9 +21,9 @@ The subsystem is four cooperating pieces:
 
 ``notify``
     Routes an incident (not each member alarm) to the configured channels,
-    escalates unacknowledged critical alarms, and records every attempt --
-    including the honest ``not_configured`` result for channels that have no
-    working implementation yet.
+    escalates unacknowledged critical alarms, retries failed deliveries, and
+    records every attempt -- including the honest ``not_configured`` result
+    for a channel that has not been given a transport.
 
 ``published``
     Turns the platform's own alarm publications -- the EMS asserting

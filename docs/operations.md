@@ -171,8 +171,10 @@ The console fetches **nothing** from the internet — no CDN, no fonts, no map
 tiles, no charting library — so it renders identically with the uplink down.
 
 **But:** the MVP criterion requiring critical alarms to work during internet
-loss is **not met**, because only the `log` notification channel is implemented
-and a log line is not an alert. See
+loss is met only where the `email` or `push` channel has been configured
+against an SMTP relay or push server **inside the property network** and proven
+at commissioning step 10. With only `log` configured a log line is not an
+alert, and `voice` is not implemented. See
 [Alarms § Notification](./alarms.md#7-notification-and-the-honest-part).
 
 ### 2.4 Loss of the primary node

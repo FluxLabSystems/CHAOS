@@ -103,6 +103,31 @@ class Settings(BaseSettings):
     # --- Alarms / notification -----------------------------------------
     alarm_engine_enabled: bool = True
     notification_backends: str = "log"  # comma separated: log,email,push,voice
+    #: Role -> recipient directories, one grammar for both:
+    #: ``role=addr,addr;role=addr``. The roles are the ones escalation paths
+    #: name (operator, on_call, maintainer). Email addresses for the email
+    #: channel; topic names for the push channel.
+    notify_email_recipients: str = ""
+    notify_push_targets: str = ""
+    #: Email goes through an SMTP relay reachable without internet access
+    #: (SDD 5.1 local-first). ``security`` is starttls, tls or none.
+    notify_smtp_host: str | None = None
+    notify_smtp_port: int = 587
+    notify_smtp_security: str = "starttls"
+    notify_smtp_username: str | None = None
+    notify_smtp_password: str | None = None
+    notify_smtp_from: str | None = None
+    notify_smtp_timeout_s: float = 10.0
+    #: Push goes to a self-hosted, ntfy-compatible HTTP endpoint (one JSON POST
+    #: per message; see chaos.alarms.notify.PushChannel for the exact shape).
+    notify_push_url: str | None = None
+    notify_push_token: str | None = None
+    notify_push_timeout_s: float = 10.0
+    #: A delivery that failed is retried on later alarm-engine cycles, at most
+    #: this many times and no sooner than this many seconds apart. A failed
+    #: row is never mistaken for a delivered one.
+    notify_retry_limit: int = 3
+    notify_retry_interval_s: int = 300
 
     # --- Plugins --------------------------------------------------------
     # Third-party integrations (SDD 26.2 vendor bindings) load through

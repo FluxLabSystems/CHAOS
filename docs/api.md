@@ -288,7 +288,7 @@ fact.
 | `POST` | `/api/v1/alarms/definitions/reload` | Reload from the design package (`strict`) | maintainer |
 | `GET` | `/api/v1/incidents` | Correlated incidents (`state`, `severity`, `since`, `limit`) | viewer |
 | `GET` | `/api/v1/incidents/{incident_id}` | One incident with member alarms | viewer |
-| `GET` | `/api/v1/notifications` | Delivery log (`channel`, `status`, `incident_id`, `alarm_id`, `limit`) | viewer |
+| `GET` | `/api/v1/notifications` | Delivery log (`channel`, `status` — `sent`, `failed` or `not_configured` — `incident_id`, `alarm_id`, `limit`) | viewer |
 
 `/annunciator` returns **every definition as a tile**, whether or not it is in
 alarm, with a computed serviceability flag. A tile that cannot light is reported

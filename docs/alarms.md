@@ -197,15 +197,36 @@ coverage. Full write-up:
 
 ## 7. Notification, and the honest part
 
-**Only the `log` channel has a working implementation.**
-
-`email`, `push` and `voice` are honest stubs. They record a delivery-log row with
-status `not_configured` and a detail explaining exactly what is missing. **They
-never return success**, and nothing reports that an alert was delivered when it
-was not.
+Four channels. **`log` always works.** `email` delivers through an SMTP relay on
+the property network and `push` through a self-hosted, ntfy-compatible push
+server; each reports `sent` only when the relay or the server accepted the
+message, `failed` with the error when it did not, and `not_configured` — naming
+the exact setting that is missing — until it has been given its settings.
+**`voice` is an honest stub**: the CUCM VM is a planned functional position, not
+commissioned hardware, and the channel records `not_configured` rather than
+claim a call it cannot place. **Nothing reports that an alert was delivered
+when it was not.**
 
 An alerting path you believe in but that does not exist is worse than no
 alerting path.
+
+### Configuring email and push
+
+| Setting | Meaning |
+|---|---|
+| `CHAOS_NOTIFICATION_BACKENDS` | Which channels this node may use, e.g. `log,email,push`. A channel an escalation path names but this list omits is still recorded, as `not_configured` |
+| `CHAOS_NOTIFY_EMAIL_RECIPIENTS` | `role=addr,addr;role=addr` — email addresses per escalation role (`operator`, `on_call`, `maintainer`) |
+| `CHAOS_NOTIFY_SMTP_HOST`, `_PORT`, `_SECURITY` | The relay. `starttls` (default), `tls`, or `none` for a relay on a switched link inside the property |
+| `CHAOS_NOTIFY_SMTP_USERNAME`, `_PASSWORD`, `_FROM` | Relay credentials (optional) and the sender address |
+| `CHAOS_NOTIFY_PUSH_URL`, `CHAOS_NOTIFY_PUSH_TOKEN` | The push server and, if it requires one, a bearer token |
+| `CHAOS_NOTIFY_PUSH_TARGETS` | `role=topic,topic;role=topic` — push topics per escalation role |
+| `CHAOS_NOTIFY_RETRY_LIMIT`, `CHAOS_NOTIFY_RETRY_INTERVAL_S` | How many times, and how far apart, a failed delivery is retried (defaults 3 and 300) |
+
+A message to a role goes to every address or topic the role maps to. The push
+request is one JSON `POST` to the URL per topic, in the shape ntfy's publish
+API accepts — `{"topic", "title", "message", "priority"}` with `priority` 1–5
+derived from severity and `"tags": ["chaos", "<severity>", "stage-<n>"]` — with
+`Authorization: Bearer <token>` when a token is set. Any 2xx is `sent`.
 
 ### Routing rules
 
@@ -216,16 +237,20 @@ alerting path.
 | **Escalation is time-driven and explicit** | Stage *N* fires once its delay has elapsed since the alarm activated, and **only while the alarm is still unacknowledged** |
 | **Acknowledging stops escalation** | It does not clear the alarm |
 | **Re-notification** | Repeats the highest reached stage at a fixed interval for alarms that stay unacknowledged |
+| **A failed delivery is retried, bounded** | A stage counts as told on a channel once that channel's row says `sent`. A `failed` row is tried again on a later engine cycle — at most the retry limit, no sooner than the interval — and every attempt is its own row. A failed row is never mistaken for a delivered one |
 
 **Every attempt on every channel is a row**, so *"why did nobody get called"* is
-answerable after the fact. That log is on the console.
+answerable after the fact. That log is on the console, and the counts by channel
+and outcome are on `/metrics`.
 
 ### What this means for the acceptance criteria
 
 One of the platform's MVP criteria requires critical alarms to work during
-internet loss. With only `log` wired, that criterion is **not met** — a log line
-is not an alert. Meeting it needs a local audible or voice path, or an
-independent device path such as the environmental appliance's own alerting.
+internet loss. A log line is not an alert, so the criterion is met only once
+`email` or `push` is configured against a relay or push server **on the
+property network** and proven at
+[Commissioning § Step 10](./commissioning.md#step-10--alarm_and_notification_test) —
+which this repository cannot do on its own. `voice` remains unimplemented.
 Recorded as an open item in
 [Secondary control node § Open decisions](./secondary-control-node.md#6-open-decisions).
 
