@@ -11,10 +11,11 @@
     <Authors>Homestead</Authors>
     <Version>0.5.0</Version>
 
-    <!-- The platform version this host is contracted against. The gateway
-         refuses to proxy to a backend reporting a different major/minor,
-         because a route-ownership table is only meaningful against a known
-         API surface. -->
+    <!-- The platform version this host is contracted against. A backend
+         reporting a different major/minor is always flagged on /health and
+         /host/info, and is refused by the proxy when Chaos:RefuseIncompatibleBackend
+         is on (off by default), because a route-ownership table is only
+         meaningful against a known API surface. -->
     <ChaosPlatformVersion>0.4.0</ChaosPlatformVersion>
 
     <!-- .NET 10 (LTS, active). .NET 11 exists only as preview at time of

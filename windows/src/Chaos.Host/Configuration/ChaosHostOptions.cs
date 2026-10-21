@@ -149,9 +149,12 @@ public sealed class ChaosHostOptions
     /// <summary>
     /// Whether the gateway should refuse to proxy when the backend reports a
     /// platform version incompatible with the contract this host was built
-    /// against. Off by default — see the notes on
-    /// <see cref="Health.BackendHealthState"/>. Incompatibility is always
-    /// reported on <c>/health</c> and <c>/host/info</c> whether or not it is enforced.
+    /// against (<c>ChaosPlatformVersion</c>, compared on major.minor). Off by
+    /// default. When on, every Python-owned request answers <c>502</c> with a
+    /// JSON body naming both versions until the backend reports a compatible
+    /// one; <c>/health</c> and <c>/health/live</c> keep answering, because they
+    /// are how the mismatch is seen. Incompatibility is always reported on
+    /// <c>/health</c> and <c>/host/info</c> whether or not it is enforced.
     /// </summary>
     public bool RefuseIncompatibleBackend { get; set; }
 

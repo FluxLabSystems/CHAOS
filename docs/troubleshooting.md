@@ -334,6 +334,21 @@ not that the console broke — see
 counts are rising. Clock skew makes alarm correlation wrong, command expiries
 wrong, and time-windowed queries silently return nothing.
 
+### 6.4 Every API call answers `502 backend_incompatible`
+
+The gateway and the backend were built for different platform versions. The
+gateway is contracted against one `major.minor` (`platformVersionContract` on
+`/host/info`); `/health` reports the version the backend actually answers with
+as `reportedVersion` and sets `versionCompatible: false`, and the status reads
+*degraded*.
+
+That report is always made. The **refusal** happens only when
+`RefuseIncompatibleBackend` is `true` in `chaos.host.json` — it is `false` as
+shipped — and then every proxied request answers `502` with a JSON body naming
+both versions until the backend reports a compatible one. Fix it by installing
+a gateway and backend from the same release; to keep proxying and live with the
+report, set the key back to `false` and restart the service.
+
 ---
 
 ## 7. A command was refused
