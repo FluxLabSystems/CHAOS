@@ -250,6 +250,7 @@ public static class HostEndpoints
         var health = services.GetRequiredService<BackendHealthState>();
         var installed = services.GetRequiredService<InstalledConfigurationState>();
         var storage = services.GetRequiredService<PlatformStorage>();
+        var apiDatabase = services.GetRequiredService<ChaosApiDatabaseResolution>();
         var report = BackendHealthReport.Create(health, options, DateTimeOffset.UtcNow);
         var snapshot = report.Snapshot;
 
@@ -311,10 +312,16 @@ public static class HostEndpoints
             },
             storage = new
             {
-                databaseUrl = storage.DatabaseUrl,
+                databaseUrl = PlatformStorage.Redact(storage.DatabaseUrl),
                 databaseUrlSource = storage.DatabaseUrlSource,
                 dataDirectory = storage.DataDirectory,
                 dataDirectorySource = storage.DataDirectorySource,
+
+                // What the natively served endpoints would read, whether or
+                // not any route is owned by them yet.
+                chaosApiSqlitePath = apiDatabase.SqlitePath,
+                chaosApiSqlitePathSource = apiDatabase.Source,
+                chaosApiProblem = apiDatabase.Problem,
             },
 
             // Where the manuals are. The shell and the console link to this, so

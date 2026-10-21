@@ -96,7 +96,7 @@ internal static class SetupPayload
             configuration = new
             {
                 autoSetup = options.AutoSetup,
-                databaseUrl = snapshot.DatabaseUrl,
+                databaseUrl = PlatformStorage.Redact(snapshot.DatabaseUrl),
                 databaseUrlSource = storage.DatabaseUrlSource,
                 dataDirectory = snapshot.DataDirectory,
                 dataDirectorySource = snapshot.DataDirectorySource == "configured"

@@ -76,6 +76,18 @@ public sealed class PlatformStorageTests
         Assert.StartsWith("installed layout default", storage.DataDirectorySource, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("postgresql+psycopg://chaos:secret@db:5432/homestead", "postgresql+psycopg://chaos:***@db:5432/homestead")]
+    [InlineData("postgresql://chaos@db/homestead", "postgresql://chaos@db/homestead")]
+    [InlineData("sqlite:///C:/ProgramData/Project CHAOS/db/homestead.db", "sqlite:///C:/ProgramData/Project CHAOS/db/homestead.db")]
+    [InlineData("mysql://u:p@ss:w@rd@host/db", "mysql://u:***@host/db")]
+    [InlineData("not a url", "not a url")]
+    [InlineData(null, null)]
+    public void A_password_never_reaches_a_status_page(string? url, string? expected)
+    {
+        Assert.Equal(expected, PlatformStorage.Redact(url));
+    }
+
     [Fact]
     public void A_checkout_names_nothing_and_says_so()
     {

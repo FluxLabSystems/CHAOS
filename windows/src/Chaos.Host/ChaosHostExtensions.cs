@@ -41,6 +41,12 @@ public static class ChaosHostExtensions
     public const string HostLogFileName = "chaos-host.log";
 
     /// <summary>
+    /// The ported endpoints' section, relative to the gateway's <c>Chaos</c>
+    /// section: <c>Chaos:Api</c> in a file, <c>CHAOS_Api__*</c> as a variable.
+    /// </summary>
+    public const string ApiSectionName = "Api";
+
+    /// <summary>
     /// Registers everything the gateway needs and applies
     /// <see cref="ChaosHostOptions.ListenUrl"/> to the web host.
     /// </summary>
@@ -195,7 +201,27 @@ public static class ChaosHostExtensions
         // owned is inert; a route marked Dotnet with no endpoint behind it 404s,
         // which is why the startup check refuses that combination. Registering
         // first means flipping ownership is a configuration change.
-        builder.Services.AddChaosApi(api => api.SqliteDatabasePath = storage.DatabaseUrl);
+        //
+        // Their options bind from Chaos:Api (CHAOS_Api__SqliteDatabasePath),
+        // and when nothing is set there the SQLite file is derived from the one
+        // resolved database URL - a URL, not a path, which is what used to be
+        // handed over as if it were one. A non-SQLite URL leaves the endpoints
+        // without a database, and ChaosApiStartupCheck refuses to start a host
+        // that owns one of their routes in that state.
+        var apiSection = chaosConfiguration.GetSection(ApiSectionName);
+        var apiDatabase = ChaosApiDatabaseResolution.Resolve(
+            apiSection[nameof(ChaosApiOptions.SqliteDatabasePath)],
+            storage.DatabaseUrl);
+        builder.Services.AddSingleton(apiDatabase);
+        builder.Services.AddOptions<ChaosApiOptions>().Bind(apiSection);
+        builder.Services.AddChaosApi(api =>
+        {
+            if (string.IsNullOrWhiteSpace(api.SqliteDatabasePath))
+            {
+                api.SqliteDatabasePath = apiDatabase.SqlitePath;
+            }
+        });
+        builder.Services.AddHostedService<ChaosApiStartupCheck>();
 
         // The real supervisor must be registered BEFORE the TryAdd below, which
         // is a fallback and not a default: TryAdd keeps whatever is already

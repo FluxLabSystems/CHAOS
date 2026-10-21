@@ -66,7 +66,7 @@ at the repository root and is a separate build. Section 7 covers it.
 | `Chaos.Host` | The front door. The only LAN listener, a reverse proxy to the Python backend on loopback, the host of the operator console, and where ported subsystems land |
 | `Chaos.Host.Abstractions` | `IBackendSupervisor` and its status types — the contract between the gateway and the supervisor, in a project that references nothing, so there is exactly one definition of it |
 | `Chaos.Host.Supervisor` | Resolves which Python runs the platform and supervises it as a child process, with a restart policy |
-| `Chaos.Api` | Where `/api/v1` routes ported to .NET live. Built and tested; **nothing in it is live yet** — see section 8 |
+| `Chaos.Api` | Where `/api/v1` routes ported to .NET live. Registered and mapped by the gateway; **no route is owned by it yet** — the manifest still sends its one endpoint to Python, and flipping that is a configuration row. See section 8 |
 | `Chaos.Shell` | The WinUI 3 windows: launcher, console, settings, annunciator, tray icon |
 | `Chaos.Shell.Core` | Every decision the shell makes — launcher state machine, settings validation, tray state, diagnostics — with no Windows dependency, so it can be tested anywhere |
 | `Chaos.Runtime` | Compiles no code. It builds the two parts of the product that are not .NET: the embedded Python interpreter and this documentation site. Section 6 |
@@ -420,11 +420,17 @@ in `/host/setup` and `/host/info`:
 
 ## 8. What is not ported yet
 
-Every `/api/v1` prefix is served by the Python backend today. `Chaos.Api` exists,
-is built, and is covered by tests, but nothing in it is wired into the gateway:
-`Chaos.Host` does not reference it, and no manifest row names it.
+Every `/api/v1` prefix is served by the Python backend today. `Chaos.Api` is
+built, tested, referenced by `Chaos.Host`, and its endpoints are registered and
+mapped by the gateway on every start — but the shipped manifest still marks
+`/api/v1/annunciator`, the one route it serves, as Python-owned, so the proxy
+takes the request before the native endpoint sees it. The gateway derives the
+SQLite file the ported endpoints read from the platform's database URL
+(`/host/info` shows it under `storage.chaosApiSqlitePath`), and refuses to start
+if a row is flipped to .NET while the platform uses a database `Chaos.Api`
+cannot read, such as PostgreSQL.
 
-Porting a subsystem is intended to be one row in the route-ownership manifest —
+Porting a subsystem is therefore one row in the route-ownership manifest —
 compiled into `RouteOwnershipDefaults`, or merged over it from the node's own
 configuration:
 

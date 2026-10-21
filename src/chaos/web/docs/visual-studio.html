@@ -65,7 +65,7 @@ preview.</p>
 <p>The Python platform backend is <strong>not</strong> in this solution. It lives in <code>src/chaos/</code>
 at the repository root and is a separate build. Section 7 covers it.</p>
 <h3 id="which-project-does-what" class="doc-h"><span class="doc-h-text">Which project does what</span><a class="doc-anchor" href="#which-project-does-what" aria-label="Link to this section"></a></h3>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Project</th><th scope="col">Role</th></tr></thead><tbody><tr><td><code>Chaos.Host</code></td><td>The front door. The only LAN listener, a reverse proxy to the Python backend on loopback, the host of the operator console, and where ported subsystems land</td></tr><tr><td><code>Chaos.Host.Abstractions</code></td><td><code>IBackendSupervisor</code> and its status types — the contract between the gateway and the supervisor, in a project that references nothing, so there is exactly one definition of it</td></tr><tr><td><code>Chaos.Host.Supervisor</code></td><td>Resolves which Python runs the platform and supervises it as a child process, with a restart policy</td></tr><tr><td><code>Chaos.Api</code></td><td>Where <code>/api/v1</code> routes ported to .NET live. Built and tested; <strong>nothing in it is live yet</strong> — see section 8</td></tr><tr><td><code>Chaos.Shell</code></td><td>The WinUI 3 windows: launcher, console, settings, annunciator, tray icon</td></tr><tr><td><code>Chaos.Shell.Core</code></td><td>Every decision the shell makes — launcher state machine, settings validation, tray state, diagnostics — with no Windows dependency, so it can be tested anywhere</td></tr><tr><td><code>Chaos.Runtime</code></td><td>Compiles no code. It builds the two parts of the product that are not .NET: the embedded Python interpreter and this documentation site. Section 6</td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Project</th><th scope="col">Role</th></tr></thead><tbody><tr><td><code>Chaos.Host</code></td><td>The front door. The only LAN listener, a reverse proxy to the Python backend on loopback, the host of the operator console, and where ported subsystems land</td></tr><tr><td><code>Chaos.Host.Abstractions</code></td><td><code>IBackendSupervisor</code> and its status types — the contract between the gateway and the supervisor, in a project that references nothing, so there is exactly one definition of it</td></tr><tr><td><code>Chaos.Host.Supervisor</code></td><td>Resolves which Python runs the platform and supervises it as a child process, with a restart policy</td></tr><tr><td><code>Chaos.Api</code></td><td>Where <code>/api/v1</code> routes ported to .NET live. Registered and mapped by the gateway; <strong>no route is owned by it yet</strong> — the manifest still sends its one endpoint to Python, and flipping that is a configuration row. See section 8</td></tr><tr><td><code>Chaos.Shell</code></td><td>The WinUI 3 windows: launcher, console, settings, annunciator, tray icon</td></tr><tr><td><code>Chaos.Shell.Core</code></td><td>Every decision the shell makes — launcher state machine, settings validation, tray state, diagnostics — with no Windows dependency, so it can be tested anywhere</td></tr><tr><td><code>Chaos.Runtime</code></td><td>Compiles no code. It builds the two parts of the product that are not .NET: the embedded Python interpreter and this documentation site. Section 6</td></tr></tbody></table></div>
 <p>The split between <code>Chaos.Shell</code> and <code>Chaos.Shell.Core</code> is the reason the startup
 experience is testable at all: every awkward combination (a service running while
 the gateway is silent, a gateway answering while its backend is dead, a host too
@@ -284,10 +284,16 @@ checkout's <code>src</code>. This is the F5-from-a-checkout case, and it is why
 first-run setup can work under the debugger.</li></ol>
 <hr>
 <h2 id="8-what-is-not-ported-yet" class="doc-h"><span class="doc-h-text">8. What is not ported yet</span><a class="doc-anchor" href="#8-what-is-not-ported-yet" aria-label="Link to this section"></a></h2>
-<p>Every <code>/api/v1</code> prefix is served by the Python backend today. <code>Chaos.Api</code> exists,
-is built, and is covered by tests, but nothing in it is wired into the gateway:
-<code>Chaos.Host</code> does not reference it, and no manifest row names it.</p>
-<p>Porting a subsystem is intended to be one row in the route-ownership manifest —
+<p>Every <code>/api/v1</code> prefix is served by the Python backend today. <code>Chaos.Api</code> is
+built, tested, referenced by <code>Chaos.Host</code>, and its endpoints are registered and
+mapped by the gateway on every start — but the shipped manifest still marks
+<code>/api/v1/annunciator</code>, the one route it serves, as Python-owned, so the proxy
+takes the request before the native endpoint sees it. The gateway derives the
+SQLite file the ported endpoints read from the platform's database URL
+(<code>/host/info</code> shows it under <code>storage.chaosApiSqlitePath</code>), and refuses to start
+if a row is flipped to .NET while the platform uses a database <code>Chaos.Api</code>
+cannot read, such as PostgreSQL.</p>
+<p>Porting a subsystem is therefore one row in the route-ownership manifest —
 compiled into <code>RouteOwnershipDefaults</code>, or merged over it from the node's own
 configuration:</p>
 <div class="doc-table-wrap"><table><thead><tr><th scope="col">Field</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>PathPrefix</code></td><td>The prefix being claimed</td></tr><tr><td><code>Owner</code></td><td><code>Python</code> or <code>Dotnet</code></td></tr><tr><td><code>PortedInVersion</code></td><td>The gateway version that took it over</td></tr><tr><td><code>Notes</code></td><td>Why, in a sentence</td></tr></tbody></table></div>

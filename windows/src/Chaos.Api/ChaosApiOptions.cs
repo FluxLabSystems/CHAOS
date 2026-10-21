@@ -4,13 +4,17 @@ namespace Chaos.Api;
 /// Configuration for the natively-served slice of <c>/api/v1</c>.
 /// </summary>
 /// <remarks>
-/// Bound from <c>Chaos:Api</c> by the host. Kept deliberately small: this
+/// Bound from <c>Chaos:Api</c> by the host (<c>CHAOS_Api__SqliteDatabasePath</c>
+/// as a variable), which also fills <see cref="SqliteDatabasePath"/> in from
+/// the platform's database URL when nothing is set here - see
+/// <see cref="Data.SqliteDatabaseUrl"/>. Kept deliberately small: this
 /// assembly serves ported routes, it does not own deployment policy.
 /// </remarks>
 public sealed class ChaosApiOptions
 {
     /// <summary>
-    /// Path to the SQLite platform database, when SQLite is the backend.
+    /// Path to the SQLite platform database, when SQLite is the backend. A
+    /// file path, not a URL.
     /// </summary>
     /// <remarks>
     /// Ignored if the host registers its own <see cref="Data.IChaosConnectionFactory"/>

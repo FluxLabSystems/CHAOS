@@ -86,6 +86,49 @@ public sealed record PlatformStorage
         };
     }
 
+    /// <summary>
+    /// The URL with any password replaced by <c>***</c>, for anything an
+    /// operator or a status page reads. <c>postgresql://chaos:secret@db/homestead</c>
+    /// becomes <c>postgresql://chaos:***@db/homestead</c>; a URL with no
+    /// credentials is returned unchanged.
+    /// </summary>
+    /// <param name="url">The URL, or null.</param>
+    /// <returns>The redacted URL, or null.</returns>
+    public static string? Redact(string? url)
+    {
+        if (string.IsNullOrEmpty(url))
+        {
+            return url;
+        }
+
+        var schemeEnd = url.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd < 0)
+        {
+            return url;
+        }
+
+        var authorityStart = schemeEnd + 3;
+        var authorityEnd = url.IndexOf('/', authorityStart);
+        if (authorityEnd < 0)
+        {
+            authorityEnd = url.Length;
+        }
+
+        var at = url.LastIndexOf('@', authorityEnd - 1, authorityEnd - authorityStart);
+        if (at < 0)
+        {
+            return url;
+        }
+
+        var colon = url.IndexOf(':', authorityStart, at - authorityStart);
+        if (colon < 0)
+        {
+            return url;
+        }
+
+        return string.Concat(url.AsSpan(0, colon + 1), "***", url.AsSpan(at));
+    }
+
     private static (string? Value, string Source) First(params (string? Value, string Source)[] candidates)
     {
         foreach (var (value, source) in candidates)
