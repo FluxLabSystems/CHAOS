@@ -59,7 +59,9 @@ coverage. If it changes, something changed in the design package. See
 ### Monthly
 
 - **Restore the latest backup into a scratch database and confirm the counts
-  match the manifest.** A backup you have never restored is a hypothesis.
+  match the manifest** (`chaos init-db` on a scratch `CHAOS_DATABASE_URL`, then
+  `chaos restore <archive>`, then `chaos status`; section 4.3). A backup you
+  have never restored is a hypothesis.
 
 ---
 
@@ -263,6 +265,23 @@ Check the checksums and read the manifest for a failure count of zero. Then,
 monthly, **restore it into a scratch database and compare the counts against the
 manifest.** A backup you have never restored is a hypothesis.
 
+The drill is three commands against a scratch database that nothing else uses:
+
+```sh
+export CHAOS_DATABASE_URL=sqlite:////tmp/restore-drill.db
+chaos init-db
+chaos restore /var/backups/homestead/<archive>.tar.gz
+chaos status            # counts should match manifest.json inside the archive
+```
+
+`chaos restore` validates `manifest.json` against the archive's contents before
+touching anything, restores every table in foreign-key dependency order inside
+one transaction, and checks the row counts against the manifest before it
+commits — a restore that fails half-way leaves the database as it was. It
+**refuses a database that already holds rows**; `--force` deletes the rows of
+every table in the archive first (and only those, apart from foreign-key
+cascades). `--dry-run` reports what would happen and writes nothing.
+
 ### 4.4 Rebuilding from the design package instead
 
 Often faster and often better: `data/` in version control is the source of truth
@@ -273,9 +292,15 @@ it and let first-run setup import it.
 
 ### 4.5 Restoring onto a machine with nothing
 
-The portable archive is JSON plus YAML. Untar it and read it: a manifest with
-counts, provenance and node role; a restore procedure; one JSON file per table;
-and the design package the registry was built from.
+Install the platform, point `CHAOS_DATABASE_URL` at the new database, then
+`chaos init-db` and `chaos restore <archive>`. Everything the archive holds —
+registry, alarm and command history, work orders, notification log, current
+state, and the historian if the backup was taken with `--include-history` —
+comes back; credentials do not (4.6).
+
+If even that is not possible, the portable archive is JSON plus YAML. Untar it
+and read it: a manifest with counts, provenance and node role; `RESTORE.txt`;
+one JSON file per table; and the design package the registry was built from.
 
 That is the case where the container is gone and you have a laptop.
 

@@ -60,7 +60,9 @@ with the primary's. Change it back afterwards.</li><li><strong>Check the binding
 <code>tbd</code> is un-commissioned, whatever the wiring looks like.</li></ul>
 <h3 id="monthly" class="doc-h"><span class="doc-h-text">Monthly</span><a class="doc-anchor" href="#monthly" aria-label="Link to this section"></a></h3>
 <ul><li><strong>Restore the latest backup into a scratch database and confirm the counts
-match the manifest.</strong> A backup you have never restored is a hypothesis.</li></ul>
+match the manifest</strong> (<code>chaos init-db</code> on a scratch <code>CHAOS_DATABASE_URL</code>, then
+<code>chaos restore &lt;archive&gt;</code>, then <code>chaos status</code>; section 4.3). A backup you
+have never restored is a hypothesis.</li></ul>
 <hr>
 <h2 id="1-black-start" class="doc-h"><span class="doc-h-text">1. Black start</span><a class="doc-anchor" href="#1-black-start" aria-label="Link to this section"></a></h2>
 <p>Recovery from a de-energized property.</p>
@@ -175,15 +177,32 @@ design assumes can be destroyed.</p>
 <p>Check the checksums and read the manifest for a failure count of zero. Then,
 monthly, <strong>restore it into a scratch database and compare the counts against the
 manifest.</strong> A backup you have never restored is a hypothesis.</p>
+<p>The drill is three commands against a scratch database that nothing else uses:</p>
+<div class="doc-code" data-lang="sh"><div class="doc-code-bar"><span class="doc-code-lang">sh</span><button type="button" class="doc-copy" data-copy><span class="doc-copy-label">Copy</span></button></div><pre class="doc-pre"><code class="lang-sh"><span class="t-k">export</span> CHAOS_DATABASE_URL=sqlite&#58;////tmp/restore-drill.db
+chaos init-db
+chaos restore /var/backups/homestead/&lt;archive&gt;.tar.gz
+chaos status            <span class="t-c"># counts should match manifest.json inside the archive</span></code></pre></div>
+<p><code>chaos restore</code> validates <code>manifest.json</code> against the archive's contents before
+touching anything, restores every table in foreign-key dependency order inside
+one transaction, and checks the row counts against the manifest before it
+commits — a restore that fails half-way leaves the database as it was. It
+<strong>refuses a database that already holds rows</strong>; <code>--force</code> deletes the rows of
+every table in the archive first (and only those, apart from foreign-key
+cascades). <code>--dry-run</code> reports what would happen and writes nothing.</p>
 <h3 id="44-rebuilding-from-the-design-package-instead" class="doc-h"><span class="doc-h-text">4.4 Rebuilding from the design package instead</span><a class="doc-anchor" href="#44-rebuilding-from-the-design-package-instead" aria-label="Link to this section"></a></h3>
 <p>Often faster and often better: <code>data/</code> in version control is the source of truth
 for registry content. Point a fresh install's <strong>Settings → Data directory</strong> at
 it and let first-run setup import it.</p>
 <p><strong>History is not recoverable this way</strong> — only the registry.</p>
 <h3 id="45-restoring-onto-a-machine-with-nothing" class="doc-h"><span class="doc-h-text">4.5 Restoring onto a machine with nothing</span><a class="doc-anchor" href="#45-restoring-onto-a-machine-with-nothing" aria-label="Link to this section"></a></h3>
-<p>The portable archive is JSON plus YAML. Untar it and read it: a manifest with
-counts, provenance and node role; a restore procedure; one JSON file per table;
-and the design package the registry was built from.</p>
+<p>Install the platform, point <code>CHAOS_DATABASE_URL</code> at the new database, then
+<code>chaos init-db</code> and <code>chaos restore &lt;archive&gt;</code>. Everything the archive holds —
+registry, alarm and command history, work orders, notification log, current
+state, and the historian if the backup was taken with <code>--include-history</code> —
+comes back; credentials do not (4.6).</p>
+<p>If even that is not possible, the portable archive is JSON plus YAML. Untar it
+and read it: a manifest with counts, provenance and node role; <code>RESTORE.txt</code>;
+one JSON file per table; and the design package the registry was built from.</p>
 <p>That is the case where the container is gone and you have a laptop.</p>
 <h3 id="46-credentials-are-re-issued-not-restored" class="doc-h"><span class="doc-h-text">4.6 Credentials are re-issued, not restored</span><a class="doc-anchor" href="#46-credentials-are-re-issued-not-restored" aria-label="Link to this section"></a></h3>
 <p>Broker identities, dashboard admin, database passwords. If the container was
