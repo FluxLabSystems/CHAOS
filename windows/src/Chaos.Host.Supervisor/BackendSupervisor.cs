@@ -13,13 +13,13 @@ using Microsoft.Extensions.Options;
 namespace Chaos.Host.Supervisor;
 
 /// <summary>Raised on every state change, so the gateway can react without polling.</summary>
-public sealed class BackendStatusChangedEventArgs(BackendStatus previous, BackendSnapshot snapshot) : EventArgs
+public sealed class BackendStateChangedEventArgs(SupervisionState previous, BackendSnapshot snapshot) : EventArgs
 {
-    public BackendStatus Previous { get; } = previous;
+    public SupervisionState Previous { get; } = previous;
 
     public BackendSnapshot Snapshot { get; } = snapshot;
 
-    public BackendStatus Status => Snapshot.Status;
+    public SupervisionState State => Snapshot.State;
 }
 
 /// <summary>
@@ -27,7 +27,7 @@ public sealed class BackendStatusChangedEventArgs(BackendStatus previous, Backen
 /// </summary>
 /// <remarks>
 /// <para>
-/// The rule this class exists to enforce: <see cref="BackendStatus.Running"/>
+/// The rule this class exists to enforce: <see cref="SupervisionState.Running"/>
 /// is reported if and only if the platform's own <c>/health</c> endpoint
 /// answered. A live PID proves the interpreter started, not that FastAPI
 /// bound the port, not that the database opened, and not that the registry
@@ -49,7 +49,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
     private readonly Lock _gate = new();
     private readonly Queue<string> _stderrTail = new();
 
-    private BackendStatus _status = BackendStatus.Stopped;
+    private SupervisionState _state = SupervisionState.Stopped;
     private string _statusDetail = "not started";
     private string? _failureReason;
     private int _restartCount;
@@ -110,15 +110,42 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         _policy = new RestartPolicy(_options, jitter ?? throw new ArgumentNullException(nameof(jitter)));
     }
 
-    /// <inheritdoc />
-    public BackendStatus Status
+    /// <summary>
+    /// The supervisor's own five-state view. Richer than the gateway contract:
+    /// it distinguishes a scheduled restart from a first start, and a tripped
+    /// breaker from a deliberate stop.
+    /// </summary>
+    public SupervisionState State
     {
         get
         {
             lock (_gate)
             {
-                return _status;
+                return _state;
             }
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The gateway's contract, derived from the snapshot by
+    /// <see cref="SupervisionContract.ToStatus"/>. Read on every <c>/health</c>
+    /// and <c>/host/info</c> request; it takes the lock briefly and never does
+    /// I/O.
+    /// </remarks>
+    public BackendStatus Status
+    {
+        get
+        {
+            BackendSnapshot snapshot;
+            bool stopping;
+            lock (_gate)
+            {
+                snapshot = BuildSnapshotLocked();
+                stopping = _stopRequested && _loop is { IsCompleted: false };
+            }
+
+            return SupervisionContract.ToStatus(snapshot, stopping);
         }
     }
 
@@ -134,8 +161,8 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         }
     }
 
-    /// <summary>Fired after every status change, outside the internal lock.</summary>
-    public event EventHandler<BackendStatusChangedEventArgs>? StatusChanged;
+    /// <summary>Fired after every state change, outside the internal lock.</summary>
+    public event EventHandler<BackendStateChangedEventArgs>? StateChanged;
 
     // -- Start / Stop ------------------------------------------------------
 
@@ -146,7 +173,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         _options.ThrowIfInvalid();
 
         Task<bool> firstOutcome;
-        BackendStatus previous;
+        SupervisionState previous;
         BackendSnapshot snapshot;
 
         lock (_gate)
@@ -165,9 +192,9 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
             _firstOutcome = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             firstOutcome = _firstOutcome.Task;
 
-            previous = _status;
+            previous = _state;
             ApplyStatusLocked(
-                BackendStatus.Starting,
+                SupervisionState.Starting,
                 $"supervision started; nothing has answered {_options.HealthEndpoint} yet",
                 failureReason: null);
             snapshot = BuildSnapshotLocked();
@@ -217,8 +244,8 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         if (!ready)
         {
             _logger.LogError(
-                "The backend did not reach a healthy state. Status is {Status}: {Detail}",
-                Status,
+                "The backend did not reach a healthy state. State is {State}: {Detail}",
+                State,
                 Snapshot.StatusDetail);
         }
     }
@@ -238,7 +265,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
 
         if (loop is null || cancellation is null)
         {
-            SetStatus(BackendStatus.Stopped, "stop requested; nothing was being supervised");
+            SetStatus(SupervisionState.Stopped, "stop requested; nothing was being supervised");
             return;
         }
 
@@ -268,9 +295,9 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
             _loop = null;
         }
 
-        if (Status != BackendStatus.Failed)
+        if (State != SupervisionState.Failed)
         {
-            SetStatus(BackendStatus.Stopped, "stopped on request");
+            SetStatus(SupervisionState.Stopped, "stopped on request");
         }
     }
 
@@ -342,7 +369,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
                 }
 
                 RecordRestartPending(decision.Delay);
-                SetStatus(BackendStatus.Restarting, $"{outcome.Detail}; {decision.Reason}");
+                SetStatus(SupervisionState.Restarting, $"{outcome.Detail}; {decision.Reason}");
                 _events.Write(
                     ChaosEventId.BackendRestarting,
                     ChaosEventLevel.Warning,
@@ -360,9 +387,9 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
                 ClearRestartPending();
             }
 
-            if (Status != BackendStatus.Failed)
+            if (State != SupervisionState.Failed)
             {
-                SetStatus(BackendStatus.Stopped, "supervision stopped");
+                SetStatus(SupervisionState.Stopped, "supervision stopped");
             }
 
             _events.Write(
@@ -428,7 +455,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         {
             SetProcessId(process.Id);
             SetStatus(
-                BackendStatus.Starting,
+                SupervisionState.Starting,
                 $"pid {process.Id.ToString(CultureInfo.InvariantCulture)} launched; waiting for " +
                 $"{_options.HealthEndpoint} to answer");
             _events.Write(
@@ -531,7 +558,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
             {
                 consecutiveUnhealthy = 0;
                 RecordHealth(health, healthy: true);
-                if (Status != BackendStatus.Running)
+                if (State != SupervisionState.Running)
                 {
                     MarkRunning(health.Detail, readySince);
                     _logger.LogInformation("The backend is answering /health again: {Detail}", health.Detail);
@@ -546,7 +573,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
             // A live process is not a healthy backend. Say what is actually
             // true: it is up, and it is not answering.
             SetStatus(
-                BackendStatus.Starting,
+                SupervisionState.Starting,
                 $"pid {process.Id.ToString(CultureInfo.InvariantCulture)} is alive but " +
                 $"{_options.HealthEndpoint} is not answering " +
                 $"({consecutiveUnhealthy.ToString(CultureInfo.InvariantCulture)} of " +
@@ -793,15 +820,15 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
 
     // -- State bookkeeping -------------------------------------------------
 
-    private void SetStatus(BackendStatus status, string detail)
+    private void SetStatus(SupervisionState state, string detail)
     {
-        BackendStatus previous;
+        SupervisionState previous;
         BackendSnapshot snapshot;
 
         lock (_gate)
         {
-            previous = _status;
-            ApplyStatusLocked(status, detail, failureReason: null);
+            previous = _state;
+            ApplyStatusLocked(state, detail, failureReason: null);
             snapshot = BuildSnapshotLocked();
         }
 
@@ -810,13 +837,13 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
 
     private void SetFailed(string reason)
     {
-        BackendStatus previous;
+        SupervisionState previous;
         BackendSnapshot snapshot;
 
         lock (_gate)
         {
-            previous = _status;
-            ApplyStatusLocked(BackendStatus.Failed, reason, reason);
+            previous = _state;
+            ApplyStatusLocked(SupervisionState.Failed, reason, reason);
             _runningSince = null;
             _nextRestartDelay = null;
             _nextRestartAt = null;
@@ -828,46 +855,46 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
 
     private void MarkRunning(string detail, DateTimeOffset readySince)
     {
-        BackendStatus previous;
+        SupervisionState previous;
         BackendSnapshot snapshot;
 
         lock (_gate)
         {
-            previous = _status;
+            previous = _state;
             _runningSince ??= readySince;
             _nextRestartDelay = null;
             _nextRestartAt = null;
-            ApplyStatusLocked(BackendStatus.Running, detail, failureReason: null);
+            ApplyStatusLocked(SupervisionState.Running, detail, failureReason: null);
             snapshot = BuildSnapshotLocked();
         }
 
         RaiseStatusChanged(previous, snapshot);
     }
 
-    private void ApplyStatusLocked(BackendStatus status, string detail, string? failureReason)
+    private void ApplyStatusLocked(SupervisionState state, string detail, string? failureReason)
     {
-        _status = status;
+        _state = state;
         _statusDetail = detail;
         _failureReason = failureReason;
 
-        if (status is BackendStatus.Stopped or BackendStatus.Failed or BackendStatus.Restarting)
+        if (state is SupervisionState.Stopped or SupervisionState.Failed or SupervisionState.Restarting)
         {
             _runningSince = null;
         }
     }
 
-    private void RaiseStatusChanged(BackendStatus previous, BackendSnapshot snapshot)
+    private void RaiseStatusChanged(SupervisionState previous, BackendSnapshot snapshot)
     {
-        if (previous != snapshot.Status)
+        if (previous != snapshot.State)
         {
             _logger.LogInformation(
                 "Backend status {Previous} -> {Status}: {Detail}",
                 previous,
-                snapshot.Status,
+                snapshot.State,
                 snapshot.StatusDetail);
         }
 
-        var handler = StatusChanged;
+        var handler = StateChanged;
         if (handler is null)
         {
             return;
@@ -875,7 +902,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
 
         try
         {
-            handler(this, new BackendStatusChangedEventArgs(previous, snapshot));
+            handler(this, new BackendStateChangedEventArgs(previous, snapshot));
         }
         catch (Exception ex)
         {
@@ -1001,7 +1028,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
 
     private BackendSnapshot BuildSnapshotLocked() => new()
     {
-        Status = _status,
+        State = _state,
         StatusDetail = _statusDetail,
         FailureReason = _failureReason,
         RestartCount = _restartCount,

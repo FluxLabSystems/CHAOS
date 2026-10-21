@@ -1,6 +1,7 @@
 using Chaos.Host.Routing;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Chaos.Host.Tests.Support;
 
@@ -16,8 +17,13 @@ namespace Chaos.Host.Tests.Support;
 internal sealed class ChaosHostFactory : WebApplicationFactory<Program>
 {
     private readonly Dictionary<string, string?> _settings;
+    private readonly Action<IServiceCollection>? _configureServices;
 
-    private ChaosHostFactory(Dictionary<string, string?> settings) => _settings = settings;
+    private ChaosHostFactory(Dictionary<string, string?> settings, Action<IServiceCollection>? configureServices)
+    {
+        _settings = settings;
+        _configureServices = configureServices;
+    }
 
     /// <summary>Starts a builder for a host whose backend is the given stub.</summary>
     /// <param name="backend">The stub backend, or null for a host with no reachable backend.</param>
@@ -30,6 +36,13 @@ internal sealed class ChaosHostFactory : WebApplicationFactory<Program>
         {
             builder.UseSetting(key, value);
         }
+
+        if (_configureServices is not null)
+        {
+            // Runs after Program's own registrations, so a test can replace a
+            // collaborator the composition root registered with TryAdd.
+            builder.ConfigureServices(_configureServices);
+        }
     }
 
     /// <summary>Fluent configuration for <see cref="ChaosHostFactory"/>.</summary>
@@ -37,6 +50,7 @@ internal sealed class ChaosHostFactory : WebApplicationFactory<Program>
     {
         private readonly Dictionary<string, string?> _settings = new(StringComparer.OrdinalIgnoreCase);
         private int _routeIndex;
+        private Action<IServiceCollection>? _configureServices;
 
         internal ChaosHostFactoryBuilder(string? backendUrl)
         {
@@ -112,8 +126,37 @@ internal sealed class ChaosHostFactory : WebApplicationFactory<Program>
         /// <returns>This builder.</returns>
         public ChaosHostFactoryBuilder WithWebRoot(string? path) => With("WebRootPath", path);
 
+        /// <summary>
+        /// Replaces services after the composition root has registered its
+        /// own, for tests that stand in for a collaborator.
+        /// </summary>
+        /// <param name="configure">The replacement registrations.</param>
+        /// <returns>This builder.</returns>
+        public ChaosHostFactoryBuilder ConfigureServices(Action<IServiceCollection> configure)
+        {
+            _configureServices += configure;
+            return this;
+        }
+
+        /// <summary>
+        /// Turns backend supervision on, with the supervisor's three contacts
+        /// with the machine - the interpreter, the child process and the
+        /// health probe - replaced by <paramref name="backend"/>. The real
+        /// supervision loop, restart policy and status mapping run; no
+        /// interpreter is ever launched.
+        /// </summary>
+        /// <param name="backend">The fakes the supervisor will drive.</param>
+        /// <returns>This builder.</returns>
+        public ChaosHostFactoryBuilder WithSupervisedBackend(FakeSupervisedBackend backend)
+        {
+            ArgumentNullException.ThrowIfNull(backend);
+
+            With("SuperviseBackend", "true");
+            return ConfigureServices(backend.Register);
+        }
+
         /// <summary>Builds the factory.</summary>
         /// <returns>The factory.</returns>
-        public ChaosHostFactory Build() => new(_settings);
+        public ChaosHostFactory Build() => new(_settings, _configureServices);
     }
 }

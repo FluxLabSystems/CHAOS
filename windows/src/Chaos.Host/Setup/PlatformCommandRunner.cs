@@ -1,12 +1,10 @@
-extern alias ChaosSupervisor;
-
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using Chaos.Host.Configuration;
-using ChaosSupervisor::Chaos.Host.Supervisor;
-using ChaosSupervisor::Chaos.Host.Supervisor.Processes;
-using ChaosSupervisor::Chaos.Host.Supervisor.Runtime;
+using Chaos.Host.Supervisor;
+using Chaos.Host.Supervisor.Processes;
+using Chaos.Host.Supervisor.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -18,12 +16,10 @@ namespace Chaos.Host.Setup;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the only file in the gateway that touches the supervisor, and it
-/// does so through an <c>extern alias</c> — see <c>Chaos.Host.csproj</c> for
-/// why. It reuses <c>IPythonRuntimeResolver</c> and <c>IProcessLauncher</c>
-/// rather than resolving an interpreter or spawning a process itself, so first
-/// run setup and the supervised backend can never disagree about which Python
-/// the platform runs on.
+/// It reuses the supervisor's <c>IPythonRuntimeResolver</c> and
+/// <c>IProcessLauncher</c> rather than resolving an interpreter or spawning a
+/// process itself, so first-run setup and the supervised backend can never
+/// disagree about which Python the platform runs on.
 /// </para>
 /// <para>
 /// Failure is a value, not an exception. "No interpreter", "the CLI exited 1"

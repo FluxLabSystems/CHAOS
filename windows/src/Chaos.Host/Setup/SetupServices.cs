@@ -1,8 +1,6 @@
-extern alias ChaosSupervisor;
-
 using Chaos.Host.Configuration;
-using ChaosSupervisor::Chaos.Host.Supervisor.Processes;
-using ChaosSupervisor::Chaos.Host.Supervisor.Runtime;
+using Chaos.Host.Supervisor.Processes;
+using Chaos.Host.Supervisor.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;

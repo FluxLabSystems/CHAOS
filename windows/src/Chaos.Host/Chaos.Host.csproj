@@ -36,25 +36,17 @@
   </ItemGroup>
 
   <!--
-    First-run setup launches the platform's own CLI (init-db, load-all,
-    status) as a child process. Rather than write a second process launcher,
-    it reuses Chaos.Host.Supervisor's IProcessLauncher / IPythonRuntimeResolver
-    - the same abstractions that start the backend, so setup and the backend
-    always run against the same interpreter.
-
-    The reference is ALIASED. Chaos.Host.Supervisor compiles its own mirror of
-    the Chaos.Host.Abstractions contract when no shared abstractions project
-    exists (see its .csproj), and that mirror collides by name with the
-    definitive copy in Chaos.Host/Abstractions/. The extern alias keeps the
-    mirror out of the global namespace, so the gateway's own contract stays
-    unambiguous and nothing in the supervisor has to change.
-
-    Only Setup/PlatformCommandRunner.cs and Setup/SetupServices.cs open the
-    alias; the rest of the gateway never sees supervisor types.
+    The supervisor is a direct reference: the gateway registers it from
+    AddChaosHost (AddChaosBackendSupervisor), first-run setup reuses its
+    IProcessLauncher / IPythonRuntimeResolver so setup and the backend always
+    run against the same interpreter, and Program.cs parses the service-control
+    flags it owns. Both projects consume the IBackendSupervisor contract from
+    Chaos.Host.Abstractions, so there is exactly one definition of it and the
+    DI container cannot hold two interfaces of the same name.
   -->
   <ItemGroup>
-    <ProjectReference Include="..\Chaos.Host.Supervisor\Chaos.Host.Supervisor.csproj"
-                      Aliases="ChaosSupervisor" />
+    <ProjectReference Include="..\Chaos.Host.Abstractions\Chaos.Host.Abstractions.csproj" />
+    <ProjectReference Include="..\Chaos.Host.Supervisor\Chaos.Host.Supervisor.csproj" />
 
     <!-- The ported endpoints. Registered and mapped by the composition root, but
          NOT owned by default: the route-ownership manifest still sends

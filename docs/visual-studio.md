@@ -41,6 +41,7 @@ CHAOS
 ├── src
 │   ├── Chaos.Api                 subsystems ported from Python to .NET
 │   ├── Chaos.Host                the gateway — LAN listener, proxy, first-run setup
+│   ├── Chaos.Host.Abstractions   the supervisor contract both of its neighbours compile against
 │   ├── Chaos.Host.Supervisor     supervises the Python backend as a child process
 │   ├── Chaos.Runtime             builds the things that are not .NET — see section 6
 │   ├── Chaos.Shell               the WinUI 3 desktop shell (Windows only)
@@ -63,6 +64,7 @@ at the repository root and is a separate build. Section 7 covers it.
 | Project | Role |
 |---|---|
 | `Chaos.Host` | The front door. The only LAN listener, a reverse proxy to the Python backend on loopback, the host of the operator console, and where ported subsystems land |
+| `Chaos.Host.Abstractions` | `IBackendSupervisor` and its status types — the contract between the gateway and the supervisor, in a project that references nothing, so there is exactly one definition of it |
 | `Chaos.Host.Supervisor` | Resolves which Python runs the platform and supervises it as a child process, with a restart policy |
 | `Chaos.Api` | Where `/api/v1` routes ported to .NET live. Built and tested; **nothing in it is live yet** — see section 8 |
 | `Chaos.Shell` | The WinUI 3 windows: launcher, console, settings, annunciator, tray icon |
@@ -235,9 +237,20 @@ if one is present, otherwise the Python on your `PATH` with the repository's
 reports what it found:
 
 ```json
-"supervisor": { "registered": true, "state": "Running",
-  "runtime": "development", "restarts": 0 }
+"supervisor": { "registered": true,
+  "implementation": "Chaos.Host.Supervisor.BackendSupervisor",
+  "state": "Running", "supervisionState": "Running",
+  "processId": 12345, "restartCount": 0,
+  "runtime": { "layout": "Development", "description": "DEVELOPMENT layout: interpreter '…\\python.exe', PYTHONPATH '…\\src'" },
+  "healthEndpoint": "http://127.0.0.1:8081/health",
+  "failureReason": null, "nextRestartUtc": null, "standardErrorTail": [] }
 ```
+
+`state` is the gateway's contract (`Unknown`, `Starting`, `Running`,
+`Stopping`, `Stopped`, `Faulted`); `supervisionState` is the supervisor's own
+finer view, which also distinguishes `Restarting` and `Failed`. The
+`standardErrorTail` is the last lines the backend wrote to stderr — the Python
+traceback, when there is one.
 
 If you would rather run the backend yourself, under its own debugger, set
 `CHAOS_SuperviseBackend=false` in the launch profile. The gateway then keeps

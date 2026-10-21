@@ -1,8 +1,6 @@
-extern alias ChaosSupervisor;
-
 using Chaos.Api;
 using Chaos.Host.Abstractions;
-using ChaosSupervisor::Chaos.Host.Supervisor;
+using Chaos.Host.Supervisor;
 using Chaos.Host.Configuration;
 using Chaos.Host.Docs;
 using Chaos.Host.Endpoints;
@@ -131,6 +129,12 @@ public static class ChaosHostExtensions
         // there. Without this call the gateway would register
         // NullBackendSupervisor, start nothing, and proxy /api/v1 to a port
         // with no listener -- a console that loads and then answers nothing.
+        //
+        // Both registrations name the same IBackendSupervisor, from
+        // Chaos.Host.Abstractions. That is what makes the TryAdd a fallback:
+        // when the supervisor compiled its own mirror of the contract the two
+        // interfaces merely shared a name, the TryAdd always won, and the
+        // gateway reported "no supervisor registered" with supervision on.
         if (options.SuperviseBackend)
         {
             builder.Services.AddChaosBackendSupervisor(
@@ -145,6 +149,17 @@ public static class ChaosHostExtensions
                         supervisor.BindAddress = backend.Host;
                         supervisor.Port = backend.Port;
                     }
+
+                    // The gateway drives the lifecycle through
+                    // BackendSupervisorHost, bounded by Chaos:BackendStartTimeout
+                    // and placed after route validation and first-run setup in
+                    // the hosted-service order. The supervisor's own hosted
+                    // service would start it a second time, unbounded, from
+                    // wherever this call happens to sit; so it is switched off
+                    // and the one budget is handed down as the supervisor's
+                    // startup gate.
+                    supervisor.RegisterHostedService = false;
+                    supervisor.StartupGate = options.BackendStartTimeout;
                 });
         }
 

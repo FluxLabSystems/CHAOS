@@ -49,6 +49,7 @@ preview.</p>
 ├── src
 │   ├── Chaos.Api                 subsystems ported from Python to .NET
 │   ├── Chaos.Host                the gateway — LAN listener, proxy, first-run setup
+│   ├── Chaos.Host.Abstractions   the supervisor contract both of its neighbours compile against
 │   ├── Chaos.Host.Supervisor     supervises the Python backend as a child process
 │   ├── Chaos.Runtime             builds the things that are not .NET — see section 6
 │   ├── Chaos.Shell               the WinUI 3 desktop shell (Windows only)
@@ -64,7 +65,7 @@ preview.</p>
 <p>The Python platform backend is <strong>not</strong> in this solution. It lives in <code>src/chaos/</code>
 at the repository root and is a separate build. Section 7 covers it.</p>
 <h3 id="which-project-does-what" class="doc-h"><span class="doc-h-text">Which project does what</span><a class="doc-anchor" href="#which-project-does-what" aria-label="Link to this section"></a></h3>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Project</th><th scope="col">Role</th></tr></thead><tbody><tr><td><code>Chaos.Host</code></td><td>The front door. The only LAN listener, a reverse proxy to the Python backend on loopback, the host of the operator console, and where ported subsystems land</td></tr><tr><td><code>Chaos.Host.Supervisor</code></td><td>Resolves which Python runs the platform and supervises it as a child process, with a restart policy</td></tr><tr><td><code>Chaos.Api</code></td><td>Where <code>/api/v1</code> routes ported to .NET live. Built and tested; <strong>nothing in it is live yet</strong> — see section 8</td></tr><tr><td><code>Chaos.Shell</code></td><td>The WinUI 3 windows: launcher, console, settings, annunciator, tray icon</td></tr><tr><td><code>Chaos.Shell.Core</code></td><td>Every decision the shell makes — launcher state machine, settings validation, tray state, diagnostics — with no Windows dependency, so it can be tested anywhere</td></tr><tr><td><code>Chaos.Runtime</code></td><td>Compiles no code. It builds the two parts of the product that are not .NET: the embedded Python interpreter and this documentation site. Section 6</td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Project</th><th scope="col">Role</th></tr></thead><tbody><tr><td><code>Chaos.Host</code></td><td>The front door. The only LAN listener, a reverse proxy to the Python backend on loopback, the host of the operator console, and where ported subsystems land</td></tr><tr><td><code>Chaos.Host.Abstractions</code></td><td><code>IBackendSupervisor</code> and its status types — the contract between the gateway and the supervisor, in a project that references nothing, so there is exactly one definition of it</td></tr><tr><td><code>Chaos.Host.Supervisor</code></td><td>Resolves which Python runs the platform and supervises it as a child process, with a restart policy</td></tr><tr><td><code>Chaos.Api</code></td><td>Where <code>/api/v1</code> routes ported to .NET live. Built and tested; <strong>nothing in it is live yet</strong> — see section 8</td></tr><tr><td><code>Chaos.Shell</code></td><td>The WinUI 3 windows: launcher, console, settings, annunciator, tray icon</td></tr><tr><td><code>Chaos.Shell.Core</code></td><td>Every decision the shell makes — launcher state machine, settings validation, tray state, diagnostics — with no Windows dependency, so it can be tested anywhere</td></tr><tr><td><code>Chaos.Runtime</code></td><td>Compiles no code. It builds the two parts of the product that are not .NET: the embedded Python interpreter and this documentation site. Section 6</td></tr></tbody></table></div>
 <p>The split between <code>Chaos.Shell</code> and <code>Chaos.Shell.Core</code> is the reason the startup
 experience is testable at all: every awkward combination (a service running while
 the gateway is silent, a gateway answering while its backend is dead, a host too
@@ -167,8 +168,18 @@ if one is present, otherwise the Python on your <code>PATH</code> with the repos
 <code>src</code> on <code>PYTHONPATH</code> — launches the platform on loopback, waits for its
 <code>/health</code> to answer, and restarts it with backoff if it dies. <code>/host/info</code>
 reports what it found:</p>
-<div class="doc-code" data-lang="json"><div class="doc-code-bar"><span class="doc-code-lang">json</span><button type="button" class="doc-copy" data-copy><span class="doc-copy-label">Copy</span></button></div><pre class="doc-pre"><code class="lang-json"><span class="t-p">"supervisor"</span>: { <span class="t-p">"registered"</span>: <span class="t-k">true</span>, <span class="t-p">"state"</span>: <span class="t-s">"Running"</span>,
-  <span class="t-p">"runtime"</span>: <span class="t-s">"development"</span>, <span class="t-p">"restarts"</span>: <span class="t-n">0</span> }</code></pre></div>
+<div class="doc-code" data-lang="json"><div class="doc-code-bar"><span class="doc-code-lang">json</span><button type="button" class="doc-copy" data-copy><span class="doc-copy-label">Copy</span></button></div><pre class="doc-pre"><code class="lang-json"><span class="t-p">"supervisor"</span>: { <span class="t-p">"registered"</span>: <span class="t-k">true</span>,
+  <span class="t-p">"implementation"</span>: <span class="t-s">"Chaos.Host.Supervisor.BackendSupervisor"</span>,
+  <span class="t-p">"state"</span>: <span class="t-s">"Running"</span>, <span class="t-p">"supervisionState"</span>: <span class="t-s">"Running"</span>,
+  <span class="t-p">"processId"</span>: <span class="t-n">12345</span>, <span class="t-p">"restartCount"</span>: <span class="t-n">0</span>,
+  <span class="t-p">"runtime"</span>: { <span class="t-p">"layout"</span>: <span class="t-s">"Development"</span>, <span class="t-p">"description"</span>: <span class="t-s">"DEVELOPMENT layout: interpreter '…\\python.exe', PYTHONPATH '…\\src'"</span> },
+  <span class="t-p">"healthEndpoint"</span>: <span class="t-s">"http&#58;//127.0.0.1:8081/health"</span>,
+  <span class="t-p">"failureReason"</span>: <span class="t-k">null</span>, <span class="t-p">"nextRestartUtc"</span>: <span class="t-k">null</span>, <span class="t-p">"standardErrorTail"</span>: [] }</code></pre></div>
+<p><code>state</code> is the gateway's contract (<code>Unknown</code>, <code>Starting</code>, <code>Running</code>,
+<code>Stopping</code>, <code>Stopped</code>, <code>Faulted</code>); <code>supervisionState</code> is the supervisor's own
+finer view, which also distinguishes <code>Restarting</code> and <code>Failed</code>. The
+<code>standardErrorTail</code> is the last lines the backend wrote to stderr — the Python
+traceback, when there is one.</p>
 <p>If you would rather run the backend yourself, under its own debugger, set
 <code>CHAOS_SuperviseBackend=false</code> in the launch profile. The gateway then keeps
 proxying to <code>Chaos:BackendUrl</code> and reports the backend from probing alone; it

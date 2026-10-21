@@ -5,6 +5,7 @@ using Chaos.Host.Health;
 using Chaos.Host.Http;
 using Chaos.Host.Routing;
 using Chaos.Host.Setup;
+using Chaos.Host.Supervisor;
 using Chaos.Host.Web;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -364,6 +365,13 @@ public static class HostEndpoints
         var status = supervisor.Status;
         var isNull = supervisor is NullBackendSupervisor;
 
+        // The contract fields come first and are always present. The richer
+        // diagnostics - which Python was chosen, why the last run ended, the
+        // Python traceback from stderr - are there whenever the real supervisor
+        // is, because an operator reading this at 2am should not need a second
+        // endpoint to find out why the backend is not up.
+        var diagnostics = (supervisor as IBackendSupervisorDiagnostics)?.Snapshot;
+
         return new
         {
             registered = !isNull,
@@ -375,6 +383,18 @@ public static class HostEndpoints
             startedUtc = status.StartedUtc,
             lastExitCode = status.LastExitCode,
             restartCount = status.RestartCount,
+            supervisionState = diagnostics?.State.ToString(),
+            runtime = diagnostics is null ? null : new
+            {
+                layout = diagnostics.RuntimeLayout.ToString(),
+                description = diagnostics.RuntimeDescription,
+            },
+            healthEndpoint = diagnostics?.HealthEndpoint?.ToString(),
+            lastHealthyUtc = diagnostics?.LastHealthyAt,
+            failureReason = diagnostics?.FailureReason,
+            nextRestartUtc = diagnostics?.NextRestartAt,
+            standardErrorTail = diagnostics?.StandardErrorTail,
+            eventSink = diagnostics?.EventSinkDescription,
         };
     }
 }

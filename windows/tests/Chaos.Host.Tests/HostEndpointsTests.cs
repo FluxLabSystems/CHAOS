@@ -91,8 +91,11 @@ public sealed class HostEndpointsTests
     }
 
     [Fact]
-    public async Task Host_info_reports_that_no_supervisor_is_registered()
+    public async Task Host_info_reports_that_no_supervisor_is_registered_when_supervision_is_off()
     {
+        // The test factory sets Chaos:SuperviseBackend=false, so the gateway
+        // falls back to the no-op supervisor. SupervisorWiringTests covers the
+        // other setting.
         await using var backend = await StubBackend.StartAsync();
         using var factory = ChaosHostFactory.For(backend).Build();
         using var client = factory.CreateClient();

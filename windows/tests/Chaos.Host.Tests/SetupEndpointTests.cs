@@ -253,6 +253,9 @@ public sealed class SetupEndpointTests
         Assert.Equal("up", body.GetStringProperty("backend"));
         Assert.Equal("Chaos.Host", body.GetProperty("host").GetStringProperty("component"));
         Assert.Equal(backend.Url, body.GetProperty("backendDetail").GetStringProperty("url"));
+
+        // Supervision is off in this factory (Chaos:SuperviseBackend=false),
+        // so the no-op fallback is what /health reports.
         Assert.False(body.GetProperty("supervisor").GetProperty("registered").GetBoolean());
 
         var setup = body.GetProperty("setup");

@@ -29,31 +29,20 @@
   </PropertyGroup>
 
   <!--
-    The IBackendSupervisor contract is owned by the gateway agent. Where it
-    physically lives decides how we consume it:
-
-      * If windows/src/Chaos.Host.Abstractions exists, we reference it and the
-        mirrored copy in Abstractions/BackendSupervisorContract.cs compiles out.
-      * Otherwise we compile the mirror, so this project builds standalone.
+    The IBackendSupervisor contract (IBackendSupervisor, BackendState,
+    BackendStatus) is owned by the gateway and lives in
+    windows/src/Chaos.Host.Abstractions, which both this project and Chaos.Host
+    reference. There is deliberately ONE copy: this project used to compile a
+    mirror of the contract when that project was absent, and the mirror is how
+    the gateway ended up resolving a NullBackendSupervisor with supervision
+    switched on - two interfaces with the same name from two assemblies.
 
     We deliberately do NOT reference Chaos.Host itself: Chaos.Host must
     reference us (it calls AddChaosBackendSupervisor), so referencing it back
-    would be a project cycle. See README.md, "Contract ownership".
-
-    Override the location with -p:ChaosHostAbstractionsProject=<path>.
+    would be a project cycle.
   -->
-  <PropertyGroup>
-    <ChaosHostAbstractionsProject Condition="'$(ChaosHostAbstractionsProject)' == ''">$(MSBuildThisFileDirectory)..\Chaos.Host.Abstractions\Chaos.Host.Abstractions.csproj</ChaosHostAbstractionsProject>
-    <UseExternalChaosAbstractions Condition="Exists('$(ChaosHostAbstractionsProject)')">true</UseExternalChaosAbstractions>
-    <UseExternalChaosAbstractions Condition="'$(UseExternalChaosAbstractions)' == ''">false</UseExternalChaosAbstractions>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(UseExternalChaosAbstractions)' == 'true'">
-    <DefineConstants>$(DefineConstants);CHAOS_HOST_ABSTRACTIONS_EXTERNAL</DefineConstants>
-  </PropertyGroup>
-
-  <ItemGroup Condition="'$(UseExternalChaosAbstractions)' == 'true'">
-    <ProjectReference Include="$(ChaosHostAbstractionsProject)" />
+  <ItemGroup>
+    <ProjectReference Include="..\Chaos.Host.Abstractions\Chaos.Host.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>
