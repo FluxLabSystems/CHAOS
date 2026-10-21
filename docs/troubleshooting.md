@@ -68,7 +68,8 @@ and the shell log location. It also says, deliberately:
    administrator**.
 5. If the address is wrong — you moved the platform to another node, or changed
    its port — open **Settings → Gateway** and correct it.
-6. Press **Open logs folder** and read the newest shell log.
+6. Press **Open logs folder** and read the end of `chaos-host.log` — the
+   gateway, the supervisor and the backend's own output are all in it.
 
 ### If it says "WebView2 runtime is not installed"
 
@@ -414,7 +415,7 @@ nothing.
 
 | Want | Where |
 |---|---|
-| The shell and platform logs | Launcher → **Open logs**, or the diagnostic panel's **Open logs folder** |
+| The platform logs | Launcher → **Open logs**, or the diagnostic panel's **Open logs folder**: `chaos-host.log` (gateway, supervisor and backend output; rotated at 8 MiB, ten kept) and `chaos-setup.log` (the first-run setup transcript) |
 | What the gateway thinks it is | `http://<node>:8080/host/info` — version, listen and backend addresses, web-root resolution, supervisor state, route counts |
 | Who serves which route | `http://<node>:8080/host/routes` |
 | The full setup report | `http://<node>:8080/host/setup` — always 200; a report that a machine needs setting up is a successful report |

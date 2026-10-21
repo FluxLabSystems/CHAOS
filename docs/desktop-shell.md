@@ -327,7 +327,7 @@ is ignored is worse than one that was refused.
 |---|---|
 | Settings | `%APPDATA%\ProjectCHAOS\Shell\settings.json` |
 | Window layout | `%APPDATA%\ProjectCHAOS\Shell\layout.json` |
-| Logs (shell and platform) | `%ProgramData%\Project CHAOS\logs` |
+| Platform logs | `%ProgramData%\Project CHAOS\logs` — `chaos-host.log` (gateway, supervisor and backend output, rotated) and `chaos-setup.log`. The shell's own platform log is the one on the launcher screen, not a file |
 
 **Open logs** on the launcher and **Open logs folder** on the diagnostic panel
 open that directory in Explorer. You are never asked to type a path.

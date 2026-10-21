@@ -63,6 +63,12 @@ public sealed class ChaosHostOptions
     /// </summary>
     public string? LogDirectory { get; set; }
 
+    /// <summary>Size at which <c>chaos-host.log</c> is rotated. 8 MiB by default.</summary>
+    public long LogFileMaxBytes { get; set; } = 8 * 1024 * 1024;
+
+    /// <summary>Rotated log files kept beside the current one. Ten by default.</summary>
+    public int LogFilesRetained { get; set; } = 10;
+
     /// <summary>
     /// Where the operator console assets live. Empty means "probe" — see
     /// <see cref="Web.WebRootResolver"/>: the packaged <c>web</c> folder beside
@@ -236,10 +242,11 @@ public sealed class ChaosHostOptions
 
     /// <summary>
     /// Where the setup transcript is written — every command, its full output
-    /// and its exit code. Empty derives
-    /// <c>&lt;LocalApplicationData&gt;/Project CHAOS/chaos-setup.log</c>. The
-    /// path is reported on <c>GET /host/setup</c> so a failure is actionable
-    /// without a stack trace.
+    /// and its exit code. Empty derives <c>chaos-setup.log</c> under
+    /// <see cref="LogDirectory"/> when that directory exists, otherwise under
+    /// <c>&lt;LocalApplicationData&gt;/Project CHAOS</c>. The path is reported
+    /// on <c>GET /host/setup</c> so a failure is actionable without a stack
+    /// trace.
     /// </summary>
     public string? SetupLogPath { get; set; }
 

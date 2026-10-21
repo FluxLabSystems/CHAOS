@@ -303,6 +303,9 @@ public static class HostEndpoints
                 backendEnvironmentVariables = installed.BackendEnvironmentVariables,
                 backendEnvironmentProblems = installed.BackendEnvironmentProblems,
                 logDirectory = options.LogDirectory,
+                hostLogFile = options.LogDirectory is null
+                    ? null
+                    : Path.Combine(options.LogDirectory, ChaosHostExtensions.HostLogFileName),
                 installDirectory = installed.Layout.InstallDirectory,
                 searched = installed.Layout.Searched,
             },

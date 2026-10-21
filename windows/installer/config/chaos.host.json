@@ -62,7 +62,7 @@
   },
 
   "Logging": {
-    "_comment": "Files land in %ProgramData%\\Project CHAOS\\logs. Service lifecycle events also go to the Windows Application event log under the source 'ChaosHost' -- that is where to look when the service will not start at all.",
+    "_comment": "Files land in %ProgramData%\\Project CHAOS\\logs (the registry's LogDir): chaos-host.log holds the gateway, the supervisor and the Python backend's own output, rotated at LogFileMaxBytes with LogFilesRetained copies kept; chaos-setup.log is the first-run setup transcript. Service lifecycle events (IDs 1000-1090) also go to the Windows Application event log under the source 'Project CHAOS' WHEN that source is registered -- 'Chaos.Host.exe --install-service' registers it, the MSI does not -- and otherwise only to the file. When the service will not start at all, the Application log's own Service Control Manager entries are where to look.",
     "LogLevel": {
       "Default": "Information",
       "Microsoft.AspNetCore": "Warning",

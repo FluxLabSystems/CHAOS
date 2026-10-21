@@ -258,7 +258,7 @@ mean anything.
 |---|---|
 | Shell settings | `%APPDATA%\ProjectCHAOS\Shell\settings.json` |
 | Shell window layout | `%APPDATA%\ProjectCHAOS\Shell\layout.json` |
-| Shell and platform logs | `%ProgramData%\Project CHAOS\logs` |
+| Platform logs | `%ProgramData%\Project CHAOS\logs`: `chaos-host.log` is the gateway, the supervisor and the Python backend's own output in one file, rotated at 8 MiB with ten kept (`chaos-host.1.log` is the newest rotated copy); `chaos-setup.log` is the first-run setup transcript. The shell keeps its own platform log on screen (**Show platform log** on the launcher) rather than in a file |
 | Gateway configuration | `%ProgramData%\Project CHAOS\config\chaos.host.json`. Written once by the installer, never overwritten by an upgrade, never removed by an uninstall. The gateway loads it at startup after its shipped defaults and before any `CHAOS_` environment variable, so an edit beats the defaults and a variable beats the edit. Restart the service after editing it |
 | Backend overrides | `%ProgramData%\Project CHAOS\config\homestead.env` — `CHAOS_<SETTING>=value` lines, shipped fully commented out. The gateway reads it at startup and hands every line to the Python backend it supervises **and** to first-run setup; it never relies on machine environment variables, which a Windows service does not see until the next boot |
 | The database | `%ProgramData%\Project CHAOS\db\homestead.db`, unless something names another one (`CHAOS_DATABASE_URL` in `homestead.env`, or `DatabaseUrl` in `chaos.host.json`). It is the same file `chaos.cmd` uses, so the service and the command line share one database |

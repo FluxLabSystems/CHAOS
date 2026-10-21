@@ -1,6 +1,7 @@
 using Chaos.Api;
 using Chaos.Host.Abstractions;
 using Chaos.Host.Supervisor;
+using Chaos.Host.Supervisor.Logging;
 using Chaos.Host.Configuration;
 using Chaos.Host.Docs;
 using Chaos.Host.Endpoints;
@@ -14,6 +15,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Chaos.Host;
@@ -34,6 +36,9 @@ public static class ChaosHostExtensions
     /// <c>Chaos:Backend</c> in a file, <c>CHAOS_Backend__*</c> as a variable.
     /// </summary>
     public const string BackendSectionName = "Backend";
+
+    /// <summary>The gateway's rolling log file, under <see cref="ChaosHostOptions.LogDirectory"/>.</summary>
+    public const string HostLogFileName = "chaos-host.log";
 
     /// <summary>
     /// Registers everything the gateway needs and applies
@@ -96,6 +101,23 @@ public static class ChaosHostExtensions
         options.ConfigDirectory ??= layout.ConfigDirectory;
         options.LogDirectory ??= layout.LogDirectory;
         builder.Services.AddSingleton(storage);
+
+        // Log files, in the installed layout's logs folder (or wherever
+        // Chaos:LogDirectory says). A service has no console; without this
+        // the folder the shell's "Open logs" button opens stays empty, and the
+        // manuals that say to read the gateway log there are describing a
+        // file that was never written. A checkout with no layout logs to the
+        // console as before.
+        if (!string.IsNullOrWhiteSpace(options.LogDirectory))
+        {
+            builder.Logging.AddProvider(new RollingFileLoggerProvider(new RollingFileLoggerOptions
+            {
+                Directory = options.LogDirectory,
+                FileName = HostLogFileName,
+                MaxFileSizeBytes = options.LogFileMaxBytes,
+                MaxRetainedFiles = options.LogFilesRetained,
+            }));
+        }
 
         builder.Services.AddSingleton<IValidateOptions<ChaosHostOptions>, ChaosHostOptionsValidator>();
         builder.Services
