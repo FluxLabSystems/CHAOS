@@ -316,7 +316,7 @@ alarms; correlation groups them so a human sees one incident. See
 | `POST` | `/api/v1/maintenance/plans` | Create a plan | maintainer |
 | `DELETE` | `/api/v1/maintenance/plans/{plan_id}` | Delete a plan | maintainer |
 | `GET` | `/api/v1/maintenance/due` | Work due (`horizon_days`) | viewer |
-| `POST` | `/api/v1/maintenance/generate` | Generate work orders from due plans | maintainer |
+| `POST` | `/api/v1/maintenance/generate` | Generate work orders from due plans, including alarm-triggered plans with an open alarm | maintainer |
 | `GET` | `/api/v1/work-orders` | List (`state`, `asset_id`, `priority`, `limit`) | viewer |
 | `POST` | `/api/v1/work-orders` | Create | maintainer |
 | `GET` | `/api/v1/work-orders/{work_order_id}` | One work order | viewer |
@@ -329,6 +329,15 @@ alarms; correlation groups them so a human sees one incident. See
 | `GET` | `/api/v1/commissioning/{asset_id}/records` | Full records | viewer |
 | `POST` | `/api/v1/commissioning/{asset_id}/steps` | Record a step outcome | maintainer |
 | `POST` | `/api/v1/commissioning/bindings/{point_id}` | Enable a binding | maintainer |
+
+A plan's `trigger_type` is one of `calendar`, `runtime_hours`, `cycle_count`,
+`condition`, `alarm`, `seasonal` or `inspection` (SDD 18). The polled kinds are
+evaluated by the maintenance scheduler and by `/maintenance/generate`. `alarm`
+plans are event-driven: the alarm engine raises their work **when an alarm on
+the plan's asset activates**, once per alarm occurrence, on the primary node
+only. For that trigger type `condition_point` may name the one `alarm_key` that
+raises the plan; blank means any alarm on the asset. `inspection` plans are
+raised when a failed or advisory inspection is recorded.
 
 Recording a step outcome:
 

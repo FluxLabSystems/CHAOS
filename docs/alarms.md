@@ -217,6 +217,19 @@ Recorded as an open item in
 Every action collects a mandatory reason. The API requires it, and the dialog
 exists so you learn that from the interface rather than from a rejection.
 
+### Alarm-triggered maintenance
+
+A maintenance plan with `trigger_type: alarm` (SDD 18, "alarm occurrence") is
+raised by the alarm engine itself: every cycle, after evaluation and
+correlation, each **activated, unsuppressed** alarm on the plan's asset raises
+the plan's work order — once per alarm occurrence, so the same alarm seen on
+the next cycle does not raise it again, and a completed work order is not
+reopened by the alarm that caused it. Symptom and flood members of an incident
+are suppressed and raise nothing; the root cause carries the work. The plan may
+name one `alarm_key` in its `condition_point`; blank means any alarm on the
+asset. Work is raised on the primary node only, for the same reason the
+secondary node runs no maintenance scheduler.
+
 ---
 
 ## 9. Related reading

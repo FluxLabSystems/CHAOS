@@ -243,6 +243,106 @@ def test_alarm_raises_corrective_work_once(db_session, pump):
     assert scheduler.raise_for_alarm(db_session, alarm, NOW) is None
 
 
+def _alarm_definition(session, key="pump.overcurrent", severity="critical"):
+    if session.get(AlarmDefinition, key) is None:
+        session.add(AlarmDefinition(alarm_key=key, name=key, severity=severity))
+        session.flush()
+
+
+def _alarm(session, pump, *, key="pump.overcurrent", severity="critical", state="active", **kwargs):
+    _alarm_definition(session, key, severity)
+    alarm = Alarm(
+        alarm_key=key,
+        asset_id=pump.asset_id,
+        severity=severity,
+        state=state,
+        detected_at=NOW,
+        activated_at=NOW if state != "detected" else None,
+        message=f"{key} fired",
+        **kwargs,
+    )
+    session.add(alarm)
+    session.flush()
+    return alarm
+
+
+def _alarm_plan(session, pump, *, name="Inspect pump after trip", alarm_key=None, enabled=True):
+    plan = MaintenancePlan(
+        asset_id=pump.asset_id,
+        name=name,
+        trigger_type="alarm",
+        condition_point=alarm_key,
+        procedure="Check the contactor and the motor windings before restarting.",
+        enabled=enabled,
+    )
+    session.add(plan)
+    session.flush()
+    return plan
+
+
+def test_alarm_plan_raises_work_once_per_occurrence(db_session, pump):
+    plan = _alarm_plan(db_session, pump)
+    alarm = _alarm(db_session, pump)
+
+    result = scheduler.raise_for_alarm_plans(db_session, NOW)
+    db_session.commit()
+    assert result.created_count == 1
+    order = result.created[0]
+    assert (order.plan_id, order.alarm_id, order.asset_id) == (plan.id, alarm.id, pump.asset_id)
+    assert order.priority == "urgent"  # critical alarm beats the asset's "important"
+    assert "Check the contactor" in order.description
+    assert "pump.overcurrent" in order.description
+
+    # The same occurrence on the next cycle raises nothing more ...
+    assert scheduler.raise_for_alarm_plans(db_session, NOW + dt.timedelta(minutes=10)).created_count == 0
+    # ... and neither does it once the work has been completed.
+    scheduler.complete_work_order(db_session, order, NOW + dt.timedelta(hours=1), "tech.a", note="done")
+    db_session.commit()
+    assert scheduler.raise_for_alarm_plans(db_session, NOW + dt.timedelta(hours=2)).created_count == 0
+
+    # A new occurrence is a new job.
+    _alarm(db_session, pump)
+    assert scheduler.raise_for_alarm_plans(db_session, NOW + dt.timedelta(hours=3)).created_count == 1
+
+
+def test_alarm_plan_can_be_bound_to_one_alarm_key(db_session, pump):
+    _alarm_plan(db_session, pump, alarm_key="pump.seal_leak")
+    _alarm(db_session, pump, key="pump.overcurrent")
+    assert scheduler.raise_for_alarm_plans(db_session, NOW).created_count == 0
+    _alarm(db_session, pump, key="pump.seal_leak", severity="warning")
+    result = scheduler.raise_for_alarm_plans(db_session, NOW)
+    assert result.created_count == 1
+    assert result.created[0].priority == "normal"  # warning alarm, "important" asset
+
+
+def test_alarm_plan_ignores_candidates_suppressed_alarms_and_disabled_plans(db_session, pump):
+    plan = _alarm_plan(db_session, pump)
+    _alarm(db_session, pump, state="detected")  # still inside its on-delay
+    _alarm(db_session, pump, suppressed=True, suppression_reason="symptom: of an incident")
+    _alarm(db_session, pump, state="cleared")
+    result = scheduler.raise_for_alarm_plans(db_session, NOW)
+    assert result.created_count == 0
+    assert (plan.id, "no_new_alarm_occurrence") in result.skipped
+
+    plan.enabled = False
+    _alarm(db_session, pump)
+    result = scheduler.raise_for_alarm_plans(db_session, NOW)
+    assert result.created_count == 0
+    assert (plan.id, "plan_disabled") in result.skipped
+
+
+def test_generate_work_orders_covers_alarm_plans_too(db_session, pump):
+    """The periodic scheduler and the maintainer's generate action catch up on alarm work."""
+    plan = _alarm_plan(db_session, pump)
+    _alarm(db_session, pump)
+    result = scheduler.generate_work_orders(db_session, NOW)
+    db_session.commit()
+    assert [order.plan_id for order in result.created] == [plan.id]
+    # And it is still once per occurrence across both paths.
+    assert scheduler.raise_for_alarm_plans(db_session, NOW).created_count == 0
+    assert scheduler.generate_work_orders(db_session, NOW).created_count == 0
+
+
 def test_failed_inspection_generates_follow_up(db_session, pump):
     passing = Inspection(asset_id=pump.asset_id, inspected_at=NOW, result="pass")
     failing = Inspection(asset_id=pump.asset_id, inspected_at=NOW, result="fail", findings="Seal weeping")
@@ -424,3 +524,87 @@ def test_maintenance_due_endpoint(client, db_session, pump, admin_headers):
     generated = client.post("/api/v1/maintenance/generate", headers=admin_headers)
     assert generated.status_code == 200
     assert generated.json()["created_count"] == 1
+
+
+# --------------------------------------------------------------------------
+# The alarm engine raises alarm-triggered work (SDD 18 "alarm occurrence")
+# --------------------------------------------------------------------------
+
+
+def test_alarm_engine_cycle_raises_work_for_alarm_plans(session_factory, bus, settings, db_session):
+    """Activation -> correlation -> work order, inside one engine cycle, once."""
+    from test_alarm_correlation import AC_MAIN, SERVER, UPS, at, load_real_registry, set_state
+
+    from chaos.alarms.service import AlarmEngineService
+
+    load_real_registry(db_session)
+    db_session.add(
+        MaintenancePlan(
+            asset_id=AC_MAIN,
+            name="Inspect the container AC feed after a bus loss",
+            trigger_type="alarm",
+            procedure="Check the transfer switch and the feed breaker before re-energising.",
+        )
+    )
+    # A plan on a symptom asset: the server's alarm is a member of the outage
+    # incident, suppressed as a symptom, and must raise nothing.
+    db_session.add(MaintenancePlan(asset_id=SERVER, name="Server post-outage check", trigger_type="alarm"))
+    db_session.commit()
+
+    service = AlarmEngineService(session_factory, bus, settings, interval_s=3600)
+    service.load_definitions()
+    set_state(db_session, AC_MAIN, "energized_state", False)
+    set_state(db_session, UPS, "on_battery", True)
+    set_state(db_session, SERVER, "availability_state", "offline")
+    db_session.commit()
+
+    first = service.evaluate_once(at(0))
+    assert first.work_orders == 0  # candidates only, nothing has activated
+
+    second = service.evaluate_once(at(600))
+    assert second.evaluation.activated
+    assert second.work_orders == 1
+    assert second.as_dict()["work_orders"] == 1
+
+    fresh = session_factory()
+    try:
+        orders = fresh.query(WorkOrder).all()
+        assert len(orders) == 1
+        order = orders[0]
+        assert order.asset_id == AC_MAIN
+        assert order.alarm_id is not None
+        root = fresh.get(Alarm, order.alarm_id)
+        assert root.alarm_key == "power_container_ac_bus_lost"
+        assert root.suppressed is False
+    finally:
+        fresh.close()
+
+    # The same occurrence on the next cycle raises nothing more.
+    assert service.evaluate_once(at(1200)).work_orders == 0
+
+
+def test_secondary_node_never_raises_work(session_factory, bus, settings, db_session):
+    from test_alarm_correlation import AC_MAIN, UPS, at, load_real_registry, set_state
+
+    from chaos.alarms.service import AlarmEngineService
+
+    load_real_registry(db_session)
+    db_session.add(MaintenancePlan(asset_id=AC_MAIN, name="AC feed inspection", trigger_type="alarm"))
+    db_session.commit()
+
+    secondary = settings.model_copy(update={"node_role": "secondary"})
+    service = AlarmEngineService(session_factory, bus, secondary, interval_s=3600)
+    service.load_definitions()
+    set_state(db_session, AC_MAIN, "energized_state", False)
+    set_state(db_session, UPS, "on_battery", True)
+    db_session.commit()
+
+    service.evaluate_once(at(0))
+    result = service.evaluate_once(at(600))
+    assert result.evaluation.activated
+    assert result.work_orders == 0
+    fresh = session_factory()
+    try:
+        assert fresh.query(WorkOrder).count() == 0
+    finally:
+        fresh.close()
