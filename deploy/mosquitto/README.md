@@ -137,11 +137,19 @@ so the broker can never come up serving plaintext on the TLS port.
 2. Place `ca.crt`, `server.crt`, `server.key` in
    `/mosquitto/config/local/certs/` with mode `600`.
 3. Uncomment the `listener 8883` block.
-4. Set `CHAOS_MQTT_TLS=true` in `deploy/.env`.
+4. Set `CHAOS_MQTT_TLS=true` and `CHAOS_MQTT_TLS_CA=<path to ca.crt as the twin
+   container sees it>` in `deploy/.env`, and mount the CA file into the twin
+   container read-only. The CA is not optional: without it the platform's
+   client verifies against the system trust store, which does not contain
+   your private CA, and the connection fails. The platform refuses to start
+   its bus if the configured file does not exist, and it never disables
+   verification on its own (`CHAOS_MQTT_TLS_INSECURE=true` is the only way to
+   relax hostname checking, it is logged loudly, and it is for a bench only).
 5. Once every gateway holds a client certificate, set `require_certificate true`
    and `use_identity_as_username true`. That binds the broker identity to the
    certificate rather than to a password, which is what SDD 15.2 means by
-   "certificate-based credentials where supported".
+   "certificate-based credentials where supported". The platform presents its
+   own certificate through `CHAOS_MQTT_TLS_CERT` and `CHAOS_MQTT_TLS_KEY`.
 
 Until step 5, plaintext `1883` remains acceptable only on a switched,
 VLAN-separated link inside the property (SDD 15.1). Anything wireless or routed

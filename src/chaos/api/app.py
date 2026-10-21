@@ -20,10 +20,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from chaos import __version__
+from chaos.api.metrics import METRICS_CONTENT_TYPE, render_metrics
 from chaos.config import Settings, get_settings
 from chaos.db import build_engine, create_all, get_session_factory
 from chaos.mqtt import MessageBus, build_bus
@@ -151,6 +152,18 @@ def create_app(
             "site_id": settings.site_id,
             "physical_control_enabled": settings.allow_physical_control,
         }
+
+    @app.get(
+        "/metrics",
+        tags=["platform"],
+        summary="Prometheus exposition of the platform's own counters",
+        response_class=PlainTextResponse,
+    )
+    def metrics() -> PlainTextResponse:
+        # Read-only and unauthenticated, like /health: it carries counts, never
+        # values of points, never credentials. deploy/prometheus/prometheus.yml
+        # scrapes it.
+        return PlainTextResponse(render_metrics(app), media_type=METRICS_CONTENT_TYPE)
 
     if WEB_DIR.is_dir():
         app.mount("/ui", StaticFiles(directory=WEB_DIR, html=True), name="ui")

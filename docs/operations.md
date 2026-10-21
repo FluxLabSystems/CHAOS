@@ -367,7 +367,30 @@ The broker step is a headless action; the exact commands are in
 
 ---
 
-## 8. What these runbooks do not cover
+## 8. Monitoring the platform itself
+
+The platform exposes its own counters at `GET /metrics` in the Prometheus text
+format, and the compose stack's Prometheus scrapes it (`deploy/prometheus/prometheus.yml`,
+job `chaos`). What is there is deliberately narrow — counts the platform already
+holds, never point values and never credentials:
+
+| Series | What it tells you |
+|---|---|
+| `chaos_alarms_active{severity}` and `chaos_alarms_active_suppressed` | The same numbers as the console's alarm header, scrapeable |
+| `chaos_incidents_open` | Correlated incidents still open |
+| `chaos_ingest_dead_letters` | The dead-letter count from the daily check above — the one that must not grow every day |
+| `chaos_ingest_events_total{event}` | The ingest subscriber's counters: received, written, dead-lettered, out of order, stale-marked |
+| `chaos_notifications_total{channel,status}` | Delivery attempts by outcome. A rising `failed` count on `email` or `push` is a relay or push server problem, not an alarm problem |
+| `chaos_mirror_readings_total{source,outcome}` | What each plugin mirror source published or dropped, with the drop reason |
+| `chaos_plugin_health{plugin,state}` | One series per plugin per health state; the `1` is where the plugin currently is |
+
+A subsystem that is not running on this node (the EMS on the secondary, ingest
+with MQTT disabled) contributes **no series** and a comment line saying so, so
+"ingest received nothing" and "there is no ingest here" stay distinguishable.
+
+---
+
+## 9. What these runbooks do not cover
 
 - **Electrical work.** Black start, generator start, transfer switching, battery
   isolation. Equipment procedures, not platform procedures.
@@ -382,7 +405,7 @@ The broker step is a headless action; the exact commands are in
 
 ---
 
-## 9. Related reading
+## 10. Related reading
 
 | Document | Why |
 |---|---|

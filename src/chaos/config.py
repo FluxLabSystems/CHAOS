@@ -49,6 +49,21 @@ class Settings(BaseSettings):
     mqtt_username: str | None = None
     mqtt_password: str | None = None
     mqtt_tls: bool = False
+    #: TLS material for the broker connection (deploy/mosquitto/README.md,
+    #: "Enabling TLS"). The deployment issues the broker certificate from a
+    #: private CA, so the CA bundle is what makes verification possible rather
+    #: than an optional extra: without it ``tls_set()`` falls back to the
+    #: system trust store and a private-CA broker can never be verified. The
+    #: client certificate and key are for the later step where the broker
+    #: requires one (``require_certificate true``).
+    mqtt_tls_ca: str | None = None
+    mqtt_tls_cert: str | None = None
+    mqtt_tls_key: str | None = None
+    #: Skip hostname verification of the broker certificate. Never the default:
+    #: a broker that cannot be verified is a broker that must not carry command
+    #: traffic. Exists for a bench where the certificate's name cannot match,
+    #: and is logged as the weakening it is.
+    mqtt_tls_insecure: bool = False
     mqtt_client_id: str = "chaos-core"
     mqtt_base_topic: str = "chaos"
     mqtt_enabled: bool = True
@@ -66,6 +81,14 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_title: str = "Project CHAOS API"
     api_root_path: str = ""
+
+    # --- Overview thresholds -------------------------------------------
+    # The property overview derives a freeze/heat risk from the site's outside
+    # air temperature. Both trip points are settings rather than constants so a
+    # site can move them without a code change; the defaults are commissioning
+    # values, not agronomic decisions.
+    overview_freeze_risk_c: float = 2.0
+    overview_heat_risk_c: float = 32.0
 
     # --- Control safety -------------------------------------------------
     # Global master switch. Physical control stays disabled until a subsystem

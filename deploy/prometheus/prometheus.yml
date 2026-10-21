@@ -2,15 +2,18 @@
 #
 # HONEST SCOPE, read this before adding panels that depend on it.
 #
-# Exactly one job below is live: Prometheus scraping itself. Everything else is
-# commented out because the exporter it needs is not deployed, or because the
-# target's address is an open item in the design package.
+# Two jobs below are live: Prometheus scraping itself, and the digital twin
+# API's own /metrics. Everything else is commented out because the exporter it
+# needs is not deployed, or because the target's address is an open item in
+# the design package.
 #
-# The digital twin API does NOT currently expose /metrics. Process telemetry
-# (ingest rate, dead letters, command outcomes, alarm counts, EMS state) is
-# written to PostgreSQL by the platform itself and is read by Grafana through
-# the PostgreSQL datasource, not through Prometheus. Prometheus's job here is
-# the layer underneath: hosts, switches, UPS, PDUs, NetBotz, ZFS, backups.
+# /metrics carries the platform's own counters -- active alarms by severity,
+# open incidents, dead letters, ingest and mirror counters, notification
+# outcomes, plugin health -- and nothing else. Point values, command history
+# and EMS state are written to PostgreSQL by the platform and are read by
+# Grafana through the PostgreSQL datasource, not through Prometheus.
+# Prometheus's job here is liveness and the layer underneath: hosts, switches,
+# UPS, PDUs, NetBotz, ZFS, backups.
 #
 # Addressing: data/homestead_asset_register.yaml deliberately records every
 # management_ip as TBD. No target below invents one. Fill them in from the
@@ -45,17 +48,18 @@ scrape_configs:
           asset_id: it.application_service.rack_01.prometheus_01
           service: prometheus
 
-  # --- Awaiting an exporter -------------------------------------------------
+  # Digital twin API: the platform's own counters (see the header). "twin" is
+  # the compose service name and 8000 its container port, so this target is
+  # real on the compose network without any addressing decision.
+  - job_name: chaos
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["twin:8000"]
+        labels:
+          asset_id: it.application_service.rack_01.digital_twin_api_01
+          service: digital-twin-api
 
-  # Digital twin API. Enable once the application exposes /metrics.
-  # Until then, use the PostgreSQL datasource in Grafana and /health for liveness.
-  # - job_name: chaos
-  #   metrics_path: /metrics
-  #   static_configs:
-  #     - targets: ["twin:8000"]
-  #       labels:
-  #         asset_id: it.application_service.rack_01.digital_twin_api_01
-  #         service: digital-twin-api
+  # --- Awaiting an exporter -------------------------------------------------
 
   # PostgreSQL. Needs prometheus-community/postgres_exporter as a sidecar.
   # - job_name: postgres

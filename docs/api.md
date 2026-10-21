@@ -403,7 +403,13 @@ The shipped NetBotz plugin contributes five:
 ## 12. Surface size
 
 **87 core operations under `/api/v1`**, plus five contributed by the shipped
-NetBotz plugin under `/api/v1/ext`, plus the platform's own `/health`. Everything
+NetBotz plugin under `/api/v1/ext`, plus the platform's own `/health` and
+`/metrics` (Prometheus text exposition of the platform's own counters: active
+alarms by severity, open incidents, dead letters, ingest and mirror counters,
+notification outcomes by channel and status, plugin health — never point values
+and never credentials; see
+[Operations § Monitoring the platform itself](./operations.md#8-monitoring-the-platform-itself)).
+Everything
 the design document named exists, and the implementation goes further.
 
 Write endpoints carry authorization, an audit reason, an idempotency key and an
@@ -416,12 +422,12 @@ decision.
 ## 13. Not in the API
 
 Nothing here polls SNMP or Modbus, renders a map over a basemap, integrates a
-home-automation platform, forecasts anything, or exposes Prometheus metrics. See
+home-automation platform, or forecasts anything. See
 [Architecture § Status summary](./architecture.md#8-status-summary).
 
-The [plugin system](./plugins.md) is where a vendor poller *would* live, and the
-NetBotz plugin is the worked example — but its transport is an honest stub, so
-the platform still speaks to no vendor system over the network.
+The [plugin system](./plugins.md) is where a vendor poller lives, and the
+NetBotz plugin is the worked example: its HTTPS transport is real and its SNMP
+transport is not (see [Plugins § The NetBotz plugin](./plugins.md#6-the-netbotz-plugin)).
 
 In the container deployment, Grafana reads PostgreSQL directly rather than going
 through this API — it is a read path, and putting a dashboard's query load

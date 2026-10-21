@@ -204,7 +204,13 @@ can never define, shadow or reorder a core route.</p>
 <hr>
 <h2 id="12-surface-size" class="doc-h"><span class="doc-h-text">12. Surface size</span><a class="doc-anchor" href="#12-surface-size" aria-label="Link to this section"></a></h2>
 <p><strong>87 core operations under <code>/api/v1</code></strong>, plus five contributed by the shipped
-NetBotz plugin under <code>/api/v1/ext</code>, plus the platform's own <code>/health</code>. Everything
+NetBotz plugin under <code>/api/v1/ext</code>, plus the platform's own <code>/health</code> and
+<code>/metrics</code> (Prometheus text exposition of the platform's own counters: active
+alarms by severity, open incidents, dead letters, ingest and mirror counters,
+notification outcomes by channel and status, plugin health — never point values
+and never credentials; see
+<a href="operations.html#8-monitoring-the-platform-itself">Operations § Monitoring the platform itself</a>).
+Everything
 the design document named exists, and the implementation goes further.</p>
 <p>Write endpoints carry authorization, an audit reason, an idempotency key and an
 expiry where applicable. <strong>Authentication is not implemented here</strong> — it
@@ -213,11 +219,11 @@ decision.</p>
 <hr>
 <h2 id="13-not-in-the-api" class="doc-h"><span class="doc-h-text">13. Not in the API</span><a class="doc-anchor" href="#13-not-in-the-api" aria-label="Link to this section"></a></h2>
 <p>Nothing here polls SNMP or Modbus, renders a map over a basemap, integrates a
-home-automation platform, forecasts anything, or exposes Prometheus metrics. See
+home-automation platform, or forecasts anything. See
 <a href="architecture.html#8-status-summary">Architecture § Status summary</a>.</p>
-<p>The <a href="plugins.html">plugin system</a> is where a vendor poller <em>would</em> live, and the
-NetBotz plugin is the worked example — but its transport is an honest stub, so
-the platform still speaks to no vendor system over the network.</p>
+<p>The <a href="plugins.html">plugin system</a> is where a vendor poller lives, and the
+NetBotz plugin is the worked example: its HTTPS transport is real and its SNMP
+transport is not (see <a href="plugins.html#6-the-netbotz-plugin">Plugins § The NetBotz plugin</a>).</p>
 <p>In the container deployment, Grafana reads PostgreSQL directly rather than going
 through this API — it is a read path, and putting a dashboard's query load
 through the control plane buys nothing.</p>
