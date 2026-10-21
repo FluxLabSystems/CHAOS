@@ -84,6 +84,31 @@ the next occurrence too — which is why the runbook for planned work is
 maintenance mode, not suppression. See
 [Control § Operating modes](./control.md#5-operating-modes).
 
+### Alarms the platform raises about itself
+
+Not every alarm comes from a threshold on a point. The energy manager does not
+own the alarm store: when a shed does not take effect, a restore is rejected, a
+generator start fails or a reserve decision cannot be verified, it **publishes**
+on the asset's alarm topic (`…/alarm/<alarm_key>`, `source: ems`). Ingest
+recognises the platform's own producers by that `source` and, rather than
+dead-lettering the message as an unresolved point, hands it to the alarm
+subsystem. The result is an ordinary alarm row, so correlation, notification,
+escalation, the annunciator and alarm-triggered maintenance treat it exactly as
+an evaluated one. Three things differ:
+
+| | Evaluated alarm | Published alarm |
+|---|---|---|
+| Needs | A definition and a registered point | A definition. A key nobody defined is counted as a platform event (`platform_events_unbound` on `/api/v1/telemetry/stats`, with the names) and raises nothing |
+| Activates | After its on-delay | On assertion — the publisher has already applied its own confirmation logic (SDD 32.3, 34.7) |
+| Clears | When the reset condition holds for its off-delay | When the publisher publishes `detail.state: cleared`, or an operator clears it. Never on the publisher's silence: an EMS that stops re-asserting `load_shed_failed` may simply have moved to the next group while the load still draws power |
+
+The definition's severity is the one used — that is the contract the operator
+agreed to — and the severity the publisher claimed is kept on the row. Repeated
+assertions of an open alarm update its record without adding lifecycle events.
+The evaluator's own announcements of every state change travel on the same
+topic with `source: alarm-engine`; ingest counts those as echoes and never feeds
+them back into the store.
+
 ---
 
 ## 4. Operator context — the FR-008 payload

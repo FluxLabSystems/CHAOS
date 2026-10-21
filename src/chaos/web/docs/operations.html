@@ -115,8 +115,10 @@ state reconciliation (section 1.1) to matter.</li></ol>
 <p>The console fetches <strong>nothing</strong> from the internet — no CDN, no fonts, no map
 tiles, no charting library — so it renders identically with the uplink down.</p>
 <p><strong>But:</strong> the MVP criterion requiring critical alarms to work during internet
-loss is <strong>not met</strong>, because only the <code>log</code> notification channel is implemented
-and a log line is not an alert. See
+loss is met only where the <code>email</code> or <code>push</code> channel has been configured
+against an SMTP relay or push server <strong>inside the property network</strong> and proven
+at commissioning step 10. With only <code>log</code> configured a log line is not an
+alert, and <code>voice</code> is not implemented. See
 <a href="alarms.html#7-notification-and-the-honest-part">Alarms § Notification</a>.</p>
 <h3 id="24-loss-of-the-primary-node" class="doc-h"><span class="doc-h-text">2.4 Loss of the primary node</span><a class="doc-anchor" href="#24-loss-of-the-primary-node" aria-label="Link to this section"></a></h3>
 <p>See <a href="secondary-control-node.html#3-what-it-can-and-cannot-do-when-the-power-container-is-lost">Secondary control node § What it can and cannot do</a>.</p>

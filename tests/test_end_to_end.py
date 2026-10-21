@@ -105,6 +105,76 @@ def test_dead_letters_are_only_known_package_gaps(platform):
     )
 
 
+def test_platform_publications_never_dead_letter_on_the_platforms_own_ingest(
+    platform, session_factory, settings
+):
+    """Ingest, the alarm engine and the EMS on one bus: nothing the platform
+    publishes about itself may come back as an unresolved alarm or event.
+
+    The evaluator announces every state change on the alarm topic, and the
+    EMS asserts ``load_shed_failed`` and friends there too. Both used to be
+    dead-lettered as ``unresolved_alarm_point`` by the platform's own ingest.
+    """
+    from chaos.alarms.service import AlarmEngineService
+    from chaos.ems import RecordingCommandPort
+    from chaos.models.alarms import Alarm
+
+    site, session, bus, ingest = platform["site"], platform["session"], platform["bus"], platform["ingest"]
+    site.start()
+    for _ in range(60):
+        site.step(dt_s=10)
+    now = site.clock.now()
+
+    engine = AlarmEngineService(session_factory, bus, settings, interval_s=3600)
+    engine.load_definitions()
+    ems = EnergyManagerService(
+        session_factory,
+        bus,
+        settings.model_copy(update={"ems_enabled": True}),
+        command_port=RecordingCommandPort(),
+    )
+    ems.tick(now=now)
+
+    # Drive the EMS publishers directly: these are the exact helpers every shed,
+    # restore and generator decision publishes through.
+    load = session.scalars(select(PowerLoadProfile.asset_id).order_by(PowerLoadProfile.asset_id)).first()
+    ems.shedding._alarm(load, "load_shed_failed", "major", {"stage": "dispatch", "detail": "rejected"})
+    ems.shedding._alarm(load, "load_shed_requested", "info", {"group": "S3"})
+    ems.generator._alarm("generator_start_failed", "critical", {"stage": "request", "detail": "rejected"})
+    ems.generator._event("generator_start_requested", {"cause": "test"})
+
+    # And the alarm engine's own echoes of every state change.
+    cycle = engine.evaluate_once(now)
+
+    session.expire_all()
+    letters = session.execute(select(IngestDeadLetter)).scalars().all()
+    categories = {letter.reason.split(":")[0] for letter in letters}
+    own = {c for c in categories if c.startswith(("unresolved_alarm", "unresolved_event", "platform_"))}
+    assert not own, f"the platform dead-lettered its own publications: {sorted(own)}"
+
+    raised = {
+        alarm.alarm_key: alarm
+        for alarm in session.execute(
+            select(Alarm).where(Alarm.alarm_key.in_(["load_shed_failed", "generator_start_failed"]))
+        ).scalars()
+    }
+    assert set(raised) == {"load_shed_failed", "generator_start_failed"}
+    assert all(alarm.state == "active" for alarm in raised.values())
+    assert raised["load_shed_failed"].asset_id == load
+
+    counters = ingest.stats()["counters"]
+    assert counters["platform_alarms_raised"] == 2
+    assert counters["platform_events_unbound"] == 2  # the two informational events
+    assert counters["platform_alarm_echoes"] >= 2
+    assert ingest.stats()["platform_unbound"] == {"generator_start_requested": 1, "load_shed_requested": 1}
+
+    # The engine notified them in the cycle that found them, exactly as it
+    # would an evaluated alarm, and does not tell anyone twice on the next.
+    assert cycle.notification.dispatches >= 2
+    again = engine.evaluate_once(now + dt.timedelta(seconds=1))
+    assert again.notification.skipped_duplicate >= 2
+
+
 def test_battery_soc_is_ingested_with_good_quality(platform):
     site, session = platform["site"], platform["session"]
     site.start()

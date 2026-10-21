@@ -25,6 +25,11 @@ The subsystem is four cooperating pieces:
     including the honest ``not_configured`` result for channels that have no
     working implementation yet.
 
+``published``
+    Turns the platform's own alarm publications -- the EMS asserting
+    ``load_shed_failed`` on the alarm topic -- into ordinary alarm rows, so
+    everything above treats them exactly as evaluated alarms.
+
 Two rules run through all of it:
 
 1. Severity ``emergency`` means local alarms and protective actions execute
@@ -64,6 +69,7 @@ from chaos.alarms.notify import (
     Notifier,
     build_channels,
 )
+from chaos.alarms.published import PublishedAlarmOutcome, apply_published_alarm
 from chaos.alarms.service import AlarmCycleResult, AlarmEngineService
 
 __all__ = [
@@ -83,7 +89,9 @@ __all__ = [
     "EvaluationResult",
     "NotificationResult",
     "Notifier",
+    "PublishedAlarmOutcome",
     "SuppressionReason",
+    "apply_published_alarm",
     "build_channels",
     "definition_meta",
     "load_document",

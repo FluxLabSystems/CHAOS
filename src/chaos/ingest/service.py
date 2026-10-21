@@ -15,6 +15,18 @@ telemetry to :class:`~chaos.ingest.writer.TelemetryWriter`:
 ``.../<point_name>``         telemetry
 ===========================  ==============================================
 
+The platform's own producers publish on the alarm and event topics too: the
+evaluator announces every state change of an alarm it stores
+(``source="alarm-engine"``) and the EMS asserts ``load_shed_failed`` and its
+kin (``source="ems"``). Those envelopes are platform state, not field data,
+and are routed by ``source`` rather than resolved to a point: an evaluator
+echo is counted and dropped (the store must not become its own input), an
+EMS alarm is handed to :mod:`chaos.alarms.published` and becomes a real alarm
+when a definition exists, and anything else from a platform producer is
+counted as a platform event. None of it is dead-lettered -- a dead letter
+means a field device or a binding needs attention, and the platform talking
+to itself is neither.
+
 The subscriber never raises. A malformed payload, an unregistered topic or a
 failing write becomes an ``IngestDeadLetter`` with a specific reason, written in
 its own transaction so a rolled-back ingest still leaves the evidence behind. A
@@ -62,6 +74,23 @@ MAX_DEAD_LETTER_PAYLOAD = 2000
 MIN_SWEEP_INTERVAL_S = 1.0
 MAX_SWEEP_INTERVAL_S = 60.0
 
+#: ``source`` values the platform's own producers write into their envelopes.
+#: A publication from one of these on an alarm or event topic is routed as
+#: platform state (see the module docstring), never dead-lettered.
+SOURCE_ALARM_ENGINE = "alarm-engine"
+SOURCE_EMS = "ems"
+PLATFORM_SOURCES = frozenset({SOURCE_ALARM_ENGINE, SOURCE_EMS})
+
+#: How many distinct unbound platform event names to keep counts for. Enough
+#: to see which EMS events have no alarm definition; bounded so a looping
+#: publisher cannot grow it without limit.
+MAX_UNBOUND_TRACKED = 100
+
+#: What ingest hands a platform alarm publication to. Injectable so the ingest
+#: tests can observe routing without the alarm subsystem, and resolved lazily
+#: otherwise so an alarm-subsystem import error degrades that path only.
+PlatformAlarmSink = Callable[[Session, EventEnvelope, dt.datetime], Any]
+
 
 class IngestService:
     """Background service: MQTT -> registry-resolved identity -> database."""
@@ -79,6 +108,7 @@ class IngestService:
         auto_sweep: bool = True,
         resolver: TopicResolver | None = None,
         writer: TelemetryWriter | None = None,
+        platform_alarm_sink: PlatformAlarmSink | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.bus = bus
@@ -87,6 +117,12 @@ class IngestService:
         self.base = settings.mqtt_base_topic
         self.resolver = resolver or TopicResolver(self.base)
         self.writer = writer or TelemetryWriter(settings, session_factory=session_factory)
+        self._platform_alarm_sink = platform_alarm_sink
+        self._alarm_sink_unavailable = False
+        #: Platform event names (alarm keys the EMS asserted, generator events)
+        #: that had neither an alarm definition nor a registry point, with
+        #: counts. A gap in the design package should be visible as a gap.
+        self.platform_unbound: dict[str, int] = {}
         # Half the default point timeout: fast enough that a dead sensor is
         # flagged within roughly one timeout, cheap enough to be irrelevant.
         self.sweep_interval_s = (
@@ -109,6 +145,13 @@ class IngestService:
             "availability_received": 0,
             "points_marked_offline": 0,
             "events_received": 0,
+            "platform_events_received": 0,
+            "platform_alarm_echoes": 0,
+            "platform_alarms_raised": 0,
+            "platform_alarms_reasserted": 0,
+            "platform_alarms_cleared": 0,
+            "platform_events_materialised": 0,
+            "platform_events_unbound": 0,
             "unresolved_topics": 0,
             "invalid_payloads": 0,
             "registry_refreshes": 0,
@@ -296,6 +339,9 @@ class IngestService:
         envelope = self._parse(message, _parse_event, "event")
         if envelope is None:
             return
+        if envelope.source in PLATFORM_SOURCES:
+            self._handle_platform_event(message, kind, name, envelope)
+            return
         asset_id = self.resolver.resolve_asset(message.topic)
         if asset_id is None:
             self.counters["unresolved_topics"] += 1
@@ -329,6 +375,104 @@ class IngestService:
                 schema_version=envelope.schema_version,
             )
             self._apply(message, telemetry, session=session)
+
+    def _handle_platform_event(
+        self, message: Message, kind: str, name: str | None, envelope: EventEnvelope
+    ) -> None:
+        """Route a publication from one of the platform's own producers.
+
+        The publisher names the asset itself, so the registry's topic
+        resolution is not consulted -- an EMS alarm about the site asset,
+        which has no telemetry topics, must still land.
+        """
+        self.counters["platform_events_received"] += 1
+        event_name = name or envelope.event
+
+        if envelope.source == SOURCE_ALARM_ENGINE:
+            # The evaluator announcing a state change of an alarm it already
+            # stores. Feeding that back would make the store its own input.
+            self.counters["platform_alarm_echoes"] += 1
+            return
+
+        if kind == topic_utils.KIND_ALARM:
+            outcome = self._apply_platform_alarm(message, envelope)
+            if outcome is None:
+                return
+            action = getattr(outcome, "action", None)
+            if action in ("raised", "reasserted", "cleared"):
+                self.counters[f"platform_alarms_{action}"] += 1
+                return
+            # No definition: fall through to the registry point, if there is one.
+
+        with self.session_factory() as session:
+            point_id = topic_utils.point_id(envelope.asset_id, event_name)
+            meta = self.writer.point_meta(session, point_id)
+            if meta is None:
+                self.counters["platform_events_unbound"] += 1
+                self._note_unbound(event_name)
+                logger.info(
+                    "Platform %s %r from %s on %s has no alarm definition and no registry point; counted",
+                    kind,
+                    event_name,
+                    envelope.source,
+                    envelope.asset_id,
+                )
+                return
+            telemetry = TelemetryEnvelope(
+                ts=envelope.ts,
+                asset_id=meta.asset_id,
+                point=meta.point_name,
+                value=_event_value(meta.kind, envelope),
+                quality="good",
+                source=envelope.source,
+                schema_version=envelope.schema_version,
+            )
+            self._apply(message, telemetry, session=session)
+            self.counters["platform_events_materialised"] += 1
+
+    def _apply_platform_alarm(self, message: Message, envelope: EventEnvelope) -> Any | None:
+        """Hand an EMS alarm publication to the alarm subsystem, in its own transaction."""
+        sink = self._resolve_alarm_sink()
+        if sink is None:
+            return None
+        try:
+            with self.session_factory() as session:
+                outcome = sink(session, envelope, self.clock())
+                session.commit()
+            return outcome
+        except Exception as exc:
+            logger.exception(
+                "Platform alarm %s on %s could not be applied", envelope.event, envelope.asset_id
+            )
+            self.counters["handler_errors"] += 1
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            self._dead_letter(message, f"platform_alarm_error: {type(exc).__name__}: {_short(exc)}")
+            return None
+
+    def _resolve_alarm_sink(self) -> PlatformAlarmSink | None:
+        if self._platform_alarm_sink is not None:
+            return self._platform_alarm_sink
+        if self._alarm_sink_unavailable:
+            return None
+        try:
+            from chaos.alarms.published import apply_published_alarm
+        except Exception:
+            # Logged once: without the alarm subsystem an EMS alarm can only be
+            # counted, and that is worth a loud line rather than a dead letter
+            # per tick.
+            logger.exception("Alarm subsystem unavailable; platform alarm publications will only be counted")
+            self._alarm_sink_unavailable = True
+            return None
+
+        def sink(session: Session, envelope: EventEnvelope, now: dt.datetime) -> Any:
+            return apply_published_alarm(session, envelope, settings=self.settings, bus=self.bus, now=now)
+
+        self._platform_alarm_sink = sink
+        return sink
+
+    def _note_unbound(self, event_name: str) -> None:
+        if event_name in self.platform_unbound or len(self.platform_unbound) < MAX_UNBOUND_TRACKED:
+            self.platform_unbound[event_name] = self.platform_unbound.get(event_name, 0) + 1
 
     # -- shared write path ----------------------------------------------
 
@@ -393,6 +537,7 @@ class IngestService:
             "last_message_at": self.last_message_at.isoformat() if self.last_message_at else None,
             "last_error": self.last_error,
             "counters": dict(self.counters),
+            "platform_unbound": dict(sorted(self.platform_unbound.items())),
             "writer": dict(self.writer.counters),
             "resolver": self.resolver.stats.as_dict(),
         }
