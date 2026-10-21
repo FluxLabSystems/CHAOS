@@ -779,16 +779,12 @@ def test_interlocks_accept_the_command_services_record_shape(client, seeded, db_
 
 
 # ---------------------------------------------------------------------------
-# Real design package (skipped until the registry loader lands)
+# Real design package
 # ---------------------------------------------------------------------------
 
 
 def test_overview_against_real_v03_registry(client, db_session):
     """The shipped v0.3 package: 90 planned assets, no coordinates, no telemetry."""
-    pytest.importorskip(
-        "chaos.registry.loader",
-        reason="registry loader is built by another agent; skipped until present",
-    )
     from chaos.registry.loader import load_package
 
     load_package(db_session)

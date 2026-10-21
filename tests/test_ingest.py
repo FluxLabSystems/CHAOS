@@ -9,7 +9,6 @@ timestamp rather than by waiting.
 from __future__ import annotations
 
 import datetime as dt
-import importlib.util
 import json
 
 import pytest
@@ -981,16 +980,6 @@ def test_retention_deletes_raw_rows_that_never_named_a_source(db_session, writer
 # ---------------------------------------------------------------------------
 
 
-def _registry_loader_available() -> bool:
-    try:
-        return importlib.util.find_spec("chaos.registry.loader") is not None
-    except ModuleNotFoundError:
-        return False
-
-
-@pytest.mark.skipif(
-    not _registry_loader_available(), reason="registry loader not present in this working tree"
-)
 def test_end_to_end_against_the_loaded_register(loaded_registry, db_session, bus, session_factory, settings):
     """The 90-asset register must be ingestable with no per-point wiring.
 
