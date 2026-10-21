@@ -193,13 +193,29 @@ public partial class App : Application
     }
 
     /// <summary>A second launch arrived; act on it instead of starting again.</summary>
+    /// <remarks>
+    /// The second process's command line travels as the launch arguments of
+    /// the redirected activation. Environment.CommandLine here is this
+    /// process's own, and parsing it as a JSON payload always fell back to the
+    /// console - which is why the Start-menu "Annunciator" shortcut opened the
+    /// console whenever the shell was already running. The decision itself
+    /// lives in Chaos.Shell.Core (RedirectedActivation), where it is tested.
+    /// </remarks>
     private void OnRedirectedActivation(object? sender, AppActivationArguments e)
     {
+        var launchArguments = e.Data is Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch
+            ? launch.Arguments
+            : null;
+        var redirected = RedirectedActivation.Parse(launchArguments);
+
         _dispatcher.TryEnqueue(() =>
         {
-            var payload = ActivationPayload.ParseOrFocusConsole(Environment.CommandLine);
+            foreach (var notice in redirected.Notices)
+            {
+                _notices.Add(notice);
+            }
 
-            if (payload.Target == ActivationTarget.Annunciator)
+            if (redirected.Action == RedirectedAction.ShowAnnunciator)
             {
                 ShowAnnunciator();
             }

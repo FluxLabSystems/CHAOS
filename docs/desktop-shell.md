@@ -351,7 +351,12 @@ Options 2 and 3 exist for shortcuts and scripted deployments. Option 1 is the
 one to use.
 
 A second launch of the shell is redirected to the running instance rather than
-opening a second window.
+opening a second window, and the running instance acts on the switches it was
+launched with: the Start-menu **Annunciator** shortcut (`--annunciator`) opens
+or brings forward the annunciator window whether or not the shell was already
+running, `--acknowledge` does the same, and anything else focuses the console.
+A `--host` on a second launch is reported in the launcher's notices and
+otherwise ignored — the running shell keeps the gateway it started with.
 
 ---
 

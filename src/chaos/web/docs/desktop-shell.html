@@ -207,7 +207,12 @@ stored address is untouched.</li><li><strong>An environment variable.</strong> S
 <p>Options 2 and 3 exist for shortcuts and scripted deployments. Option 1 is the
 one to use.</p>
 <p>A second launch of the shell is redirected to the running instance rather than
-opening a second window.</p>
+opening a second window, and the running instance acts on the switches it was
+launched with: the Start-menu <strong>Annunciator</strong> shortcut (<code>--annunciator</code>) opens
+or brings forward the annunciator window whether or not the shell was already
+running, <code>--acknowledge</code> does the same, and anything else focuses the console.
+A <code>--host</code> on a second launch is reported in the launcher's notices and
+otherwise ignored — the running shell keeps the gateway it started with.</p>
 <hr>
 <h2 id="9-related-reading" class="doc-h"><span class="doc-h-text">9. Related reading</span><a class="doc-anchor" href="#9-related-reading" aria-label="Link to this section"></a></h2>
 <div class="doc-table-wrap"><table><thead><tr><th scope="col">Document</th><th scope="col">Why</th></tr></thead><tbody><tr><td><a href="getting-started.html">Getting started</a></td><td>First launch, first-run setup, what you should see</td></tr><tr><td><a href="operator-console.html">The operator console</a></td><td>What is inside the console window</td></tr><tr><td><a href="annunciator.html">The annunciator panel</a></td><td>What the annunciator window shows and how it behaves</td></tr><tr><td><a href="troubleshooting.html">Troubleshooting</a></td><td>When the shell shows a diagnostic instead of the console</td></tr><tr><td><a href="visual-studio.html">Building in Visual Studio 2026</a></td><td>Building and debugging the shell</td></tr></tbody></table></div></div><nav class="doc-pager" aria-label="Reading order"><a class="pager-prev" href="visual-studio.html" data-page="visual-studio"><span class="pager-role">Previous</span>Building in Visual Studio 2026</a><a class="pager-next" href="operator-console.html" data-page="operator-console"><span class="pager-role">Next</span>The operator console</a></nav></article>
