@@ -443,6 +443,7 @@ class ClearSkyForecast:
                 method=result.method,
                 assumptions=tuple(unavailable) + tuple(result.assumptions),
                 inputs=result.inputs,
+                start_kw=result.start_kw,
             )
 
         pv_kw = inputs.numeric("pv_power_kw")
@@ -532,6 +533,7 @@ class ClearSkyForecast:
             method=self.method,
             assumptions=tuple(assumptions),
             inputs=tuple(used),
+            start_kw=clearness * derate * clear_now,
         )
 
 

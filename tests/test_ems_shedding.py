@@ -578,3 +578,59 @@ def test_every_action_is_recorded(controller, db_session, loads, config):
         assert row.energy_state == "CRITICAL_RESERVE"
         assert row.reason
         assert row.occurred_at is not None
+
+
+# ---------------------------------------------------------------------------
+# SDD 33.2 rule 5: wait between restoration groups
+# ---------------------------------------------------------------------------
+
+
+def test_restoration_waits_between_groups_but_not_within_one(db_session, loads, settings, bus):
+    config = EmsConfig(restore_group_interval_s=600)
+    controller = ShedController(config, RecordingCommandPort(), settings=settings, bus=bus)
+    clock = shed_everything(controller, db_session, config)
+    healthy = make_inputs()
+    entered = at(clock)
+    start = clock + config.restore_qualification_s + 1
+
+    first = restore(controller, db_session, healthy, config, at(start), entered_at=entered)
+    assert first.performed and first.group == "R1"
+    assert first.actions[0].asset_id == GH_CLIMATE
+
+    # 200 s later R2's water pumping has cleared its 180 s high-inrush stagger
+    # but R1 has not had its 600 s verification interval.
+    second = restore(controller, db_session, healthy, config, at(start + 200), entered_at=entered)
+    assert not second.performed
+    assert "inter-group interval" in second.deferred[WATER]
+    assert "group R1" in second.deferred[WATER]
+    assert "rule 5" in second.deferred[WATER]
+
+    third = restore(controller, db_session, healthy, config, at(start + 601), entered_at=entered)
+    assert third.performed and third.group == "R2"
+    assert third.actions[0].asset_id == WATER
+
+    fourth = restore(controller, db_session, healthy, config, at(start + 1202), entered_at=entered)
+    assert fourth.performed and fourth.group == "R4"
+    assert fourth.actions[0].asset_id == IRRIGATION
+
+    # Within R4 only the inrush stagger applies: lighting (60 s) and tool
+    # charging (15 s) follow without waiting out the group interval.
+    fifth = restore(controller, db_session, healthy, config, at(start + 1202 + 61), entered_at=entered)
+    assert fifth.performed and fifth.actions[0].asset_id == GH_LIGHTING
+    sixth = restore(controller, db_session, healthy, config, at(start + 1263 + 16), entered_at=entered)
+    assert sixth.performed and sixth.actions[0].asset_id == TOOL_CHARGING
+
+    # R5 then waits for R4 to be verified even though compute has no inrush.
+    seventh = restore(controller, db_session, healthy, config, at(start + 1279 + 20), entered_at=entered)
+    assert not seventh.performed
+    assert "inter-group interval" in seventh.deferred[COMPUTE]
+    assert "group R4" in seventh.deferred[COMPUTE]
+    eighth = restore(controller, db_session, healthy, config, at(start + 1279 + 601), entered_at=entered)
+    assert eighth.performed and eighth.actions[0].asset_id == COMPUTE
+
+
+def test_group_interval_default_is_shorter_than_the_high_inrush_stagger(config):
+    """The shipped defaults make the stagger the binding wait for high-inrush
+    loads; the group interval still binds for low- and no-inrush groups."""
+    assert config.restore_group_interval_s == 120
+    assert config.stagger_s("high") > config.restore_group_interval_s > config.stagger_s("none")

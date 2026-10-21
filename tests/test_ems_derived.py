@@ -278,3 +278,27 @@ def test_load_snapshots_reflect_what_the_ems_is_holding_off(db_session, loads, c
     assert by_id[TOOL_CHARGING].restorable_in_h == pytest.approx(30.0 / 3600.0)
     assert not by_id[SPA].shed and by_id[SPA].shed_for_h is None and by_id[SPA].restorable_in_h is None
     assert by_id[IRRIGATION].tier == 2
+
+
+# ---------------------------------------------------------------------------
+# Surplus persistence (SDD 36)
+# ---------------------------------------------------------------------------
+
+
+def test_persistence_placeholder_cannot_see_a_trend(config):
+    """Naive persistence holds the present power flat, so the sustained surplus
+    equals the present surplus and the window rule cannot bite."""
+    inputs = make_inputs(pv_power_kw=20.0, battery_charge_limit_kw=5.0)
+    derived = make_derived(inputs, config)
+    sustained = derived.get("surplus_sustained_kw")
+    assert sustained.valid and sustained.kind == "forecast"
+    assert sustained.value == pytest.approx(12.5)
+    assert derived.value("surplus_power_kw") == pytest.approx(12.5)
+    assert "(1.00)" in sustained.basis
+    assert "surplus_sustained_kw" in derived.summary()
+
+
+def test_sustained_surplus_is_unobservable_without_a_surplus(config):
+    derived = make_derived(make_inputs(invalid=("battery_charge_limit_kw",)), config)
+    assert derived.value("surplus_power_kw") is None
+    assert derived.value("surplus_sustained_kw") is None

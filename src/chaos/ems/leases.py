@@ -17,6 +17,12 @@ permission to be unsafe, and it is not an interlock. Concretely:
   local controller exactly as safe as it was: nothing depended on the lease for
   protection.
 
+A grant also has to clear the SDD 36 minimum run window: the surplus must be
+forecast to persist for ``surplus_minimum_window_min`` before a surplus-driven
+load is started, so a five-minute irradiance spike never starts a large thermal
+process. The derived value ``surplus_sustained_kw`` carries that forecast and
+the lease path refuses a request it cannot cover.
+
 Dynamic priority (SDD 31.3) works the same way: a temporary tier override must
 carry a reason and an expiry, and when it expires the load simply returns to its
 base tier.
@@ -49,6 +55,8 @@ class LeaseDecision:
     reason: str = ""
     available_kw: float | None = None
     already_granted_kw: float = 0.0
+    #: Grantable surplus forecast to persist for the minimum run window (SDD 36).
+    sustained_kw: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +65,7 @@ class LeaseDecision:
             "reason": self.reason,
             "available_kw": self.available_kw,
             "already_granted_kw": self.already_granted_kw,
+            "sustained_kw": self.sustained_kw,
         }
 
 
@@ -109,6 +118,20 @@ class LeaseManager:
         if surplus is None:
             return None
         return max(surplus, 0.0) * self.config.lease_surplus_fraction
+
+    def sustained_grantable_kw(self, derived: DerivedEnergyState) -> float | None:
+        """Grantable surplus forecast to persist for the minimum run window (SDD 36).
+
+        A new grant starts a surplus-driven load, so it has to fit the surplus
+        the forecast expects to hold for ``surplus_minimum_window_min``, not
+        only the surplus of this instant. Trimming in :meth:`sweep` keeps
+        using the present surplus: an already running load is not stopped
+        for a forecast, it is stopped when the surplus is actually gone.
+        """
+        sustained = derived.value("surplus_sustained_kw")
+        if sustained is None:
+            return None
+        return max(sustained, 0.0) * self.config.lease_surplus_fraction
 
     # -- grant -----------------------------------------------------------
     def request(
@@ -199,6 +222,43 @@ class LeaseManager:
                 already=already,
             )
 
+        # SDD 36: the surplus must be forecast to persist for the minimum run
+        # window before a surplus-driven load is started.
+        window_min = self.config.surplus_minimum_window_min
+        sustained = self.sustained_grantable_kw(derived)
+        if sustained is None:
+            return self._deny(
+                session,
+                asset_id,
+                requested_kw,
+                reason,
+                requested_by,
+                now,
+                priority,
+                f"surplus is not forecast over the {window_min} min minimum run window, so no budget "
+                "can be allocated (SDD 36)",
+                available=available,
+                already=already,
+            )
+        sustained_headroom = sustained - already
+        if requested_kw > sustained_headroom:
+            return self._deny(
+                session,
+                asset_id,
+                requested_kw,
+                reason,
+                requested_by,
+                now,
+                priority,
+                f"requested {requested_kw:.2f} kW exceeds the {sustained_headroom:.2f} kW remaining of the "
+                f"{sustained:.2f} kW surplus forecast to persist for the {window_min} min minimum run window "
+                f"({already:.2f} kW already granted; SDD 36: a surplus load is not started for a short "
+                "irradiance spike)",
+                available=available,
+                already=already,
+                sustained=sustained,
+            )
+
         start = starts_at or now
         lease = PowerBudgetLease(
             lease_id=new_lease_id(now),
@@ -225,9 +285,13 @@ class LeaseManager:
         return LeaseDecision(
             granted=True,
             lease=lease,
-            reason=f"granted {requested_kw:.2f} kW of {headroom:.2f} kW available",
+            reason=(
+                f"granted {requested_kw:.2f} kW of {headroom:.2f} kW available "
+                f"({sustained_headroom:.2f} kW forecast to persist for {window_min} min)"
+            ),
             available_kw=available,
             already_granted_kw=already,
+            sustained_kw=sustained,
         )
 
     def _deny(
@@ -243,6 +307,7 @@ class LeaseManager:
         *,
         available: float | None = None,
         already: float = 0.0,
+        sustained: float | None = None,
     ) -> LeaseDecision:
         lease = PowerBudgetLease(
             lease_id=new_lease_id(now),
@@ -261,7 +326,12 @@ class LeaseManager:
         session.add(lease)
         session.flush()
         return LeaseDecision(
-            granted=False, lease=lease, reason=why, available_kw=available, already_granted_kw=already
+            granted=False,
+            lease=lease,
+            reason=why,
+            available_kw=available,
+            already_granted_kw=already,
+            sustained_kw=sustained,
         )
 
     # -- revoke / expire --------------------------------------------------

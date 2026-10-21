@@ -130,6 +130,7 @@ class DerivedEnergyState:
             "autonomy_current_h",
             "forecast_energy_margin_kwh",
             "surplus_power_kw",
+            "surplus_sustained_kw",
             "available_discharge_kw",
             "thermal_derate_pct",
         )
@@ -189,6 +190,11 @@ class ForecastResult:
     method: str
     assumptions: tuple[str, ...] = ()
     inputs: tuple[str, ...] = ()
+    #: The forecaster's own estimate of PV power at the start of the horizon,
+    #: so a caller can read the *trend* over the horizon (mean power over the
+    #: horizon relative to this) independently of the forecaster's margin.
+    #: ``None`` when the forecaster cannot say.
+    start_kw: float | None = None
 
 
 class PvForecast(Protocol):
@@ -248,6 +254,7 @@ class NaivePersistenceForecast:
                     "placeholder: no irradiance or weather model is used",
                 ),
                 inputs=("pv_power_kw",),
+                start_kw=pv_kw * config.forecast_persistence_derate,
             )
 
         today_kwh = inputs.numeric("pv_energy_today_kwh")
@@ -262,6 +269,7 @@ class NaivePersistenceForecast:
                     "placeholder: no irradiance or weather model is used",
                 ),
                 inputs=("pv_energy_today_kwh",),
+                start_kw=pv_kw * config.forecast_persistence_derate,
             )
         return ForecastResult(
             kwh=pv_kw * config.forecast_daily_equivalent_full_load_h * days,
@@ -274,6 +282,7 @@ class NaivePersistenceForecast:
                 "placeholder: no irradiance or weather model is used",
             ),
             inputs=("pv_power_kw",),
+            start_kw=pv_kw * config.forecast_persistence_derate,
         )
 
 
@@ -840,6 +849,49 @@ def compute_derived(
             inputs=("pv_power_kw", "critical_load_kw", "general_load_kw", "battery_charge_limit_kw")
             + tuple(load_input_key(asset_id, "power_kw") for asset_id in absorb.counted),
             assumptions=absorb.assumptions("absorb capacity"),
+        )
+    )
+
+    # -- Surplus persistence (SDD 36 minimum run window) -----------------
+    # The forecast's *trend* over the window (mean forecast power over the
+    # window relative to the forecaster's own present estimate) scales the
+    # present PV. The forecaster's margin cancels out of that ratio on purpose:
+    # the lease fraction already keeps room for a cloud, and SDD 36 asks
+    # whether the surplus will still be there, not how confident we are in the
+    # absolute number. The persistence placeholder has no trend (ratio 1); the
+    # clear-sky model declines through the afternoon and to zero at dusk.
+    window_h = config.surplus_minimum_window_min / 60.0
+    window = forecast.forecast(window_h, now=now, inputs=inputs, config=config)
+    sustained = None
+    trend = None
+    if surplus is not None and window.valid and window.kwh is not None and window.start_kw is not None:
+        assert pv_kw is not None and site_kw is not None and available_charge is not None
+        if window_h <= 0:
+            trend = 1.0
+        else:
+            mean_kw = window.kwh / window_h
+            trend = 1.0 if window.start_kw <= 0 else min(mean_kw / window.start_kw, 1.0)
+        sustained = max(pv_kw * trend - site_kw - available_charge, 0.0)
+    derived.add(
+        DerivedValue(
+            key="surplus_sustained_kw",
+            value=sustained,
+            unit="kW",
+            valid=sustained is not None,
+            basis=(
+                f"present PV scaled by the forecast ({window.method}) trend over the "
+                f"{config.surplus_minimum_window_min} min minimum run window"
+                + (f" ({trend:.2f})" if trend is not None else "")
+                + ", less site demand and battery charge acceptance (SDD 36: a surplus load is not "
+                "started for a short irradiance spike)"
+            ),
+            inputs=("pv_power_kw", "critical_load_kw", "general_load_kw", "battery_charge_limit_kw")
+            + tuple(key for key in window.inputs if key != "pv_power_kw"),
+            assumptions=window.assumptions
+            if window.start_kw is not None
+            else window.assumptions
+            + ("forecaster reports no present estimate, so persistence is not observable",),
+            kind="forecast",
         )
     )
 

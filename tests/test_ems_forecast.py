@@ -350,3 +350,36 @@ def test_registry_geometry_is_read_not_invented(db_session):
 def test_missing_registry_rows_are_reported(db_session):
     assert "not loaded" in site_geometry(db_session, "site.site.primary.01").source
     assert "not loaded" in array_geometry(db_session).source
+
+
+# ---------------------------------------------------------------------------
+# Surplus persistence over the SDD 36 window
+# ---------------------------------------------------------------------------
+
+
+def surplus_at(forecaster, config, when):
+    inputs = make_inputs(
+        when,
+        pv_power_kw=forecaster.clear_sky_kw(when),
+        critical_load_kw=0.5,
+        general_load_kw=0.5,
+        battery_charge_limit_kw=0.0,
+        pv_energy_today_kwh=None,
+    )
+    derived = compute_derived(inputs, config, now=when, forecast=forecaster)
+    return derived.value("surplus_power_kw"), derived.value("surplus_sustained_kw")
+
+
+def test_clear_sky_trend_shrinks_the_sustained_surplus_before_dusk(forecaster, config):
+    noon, _ = solar_noon(JUNE_SOLSTICE, SITE.latitude_deg, SITE.longitude_deg)
+    surplus_noon, sustained_noon = surplus_at(forecaster, config, noon)
+    assert surplus_noon > 0
+    # Around noon the next half hour looks like the present.
+    assert sustained_noon == pytest.approx(surplus_noon, rel=0.03)
+
+    # Five hours after noon the clear-sky curve is falling fast: the next half
+    # hour is forecast well below the present, and the sustained surplus with it.
+    late = noon + dt.timedelta(hours=5)
+    surplus_late, sustained_late = surplus_at(forecaster, config, late)
+    assert surplus_late > 0
+    assert 0 < sustained_late < 0.9 * surplus_late

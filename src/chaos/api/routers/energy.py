@@ -229,6 +229,8 @@ def get_load_budgets(session: DbSession, settings: AppSettings) -> dict[str, Any
     return {
         "energy_state": snapshot.state,
         "grantable_surplus_kw": grantable,
+        "sustained_grantable_kw": manager.sustained_grantable_kw(derived),
+        "surplus_minimum_window_min": config.surplus_minimum_window_min,
         "granted_kw": granted,
         "remaining_kw": None if grantable is None else grantable - granted,
         "surplus_fraction": config.lease_surplus_fraction,

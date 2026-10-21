@@ -16,6 +16,7 @@ from test_ems_state_machine import T0, at, make_derived, make_inputs
 
 from chaos.ems import RecordingCommandPort
 from chaos.ems.config import EmsConfig
+from chaos.ems.derived import ForecastResult
 from chaos.ems.leases import LeaseManager
 from chaos.ems.loader import effective_tier, load_schedule
 from chaos.ems.state_machine import ensure_snapshot
@@ -158,6 +159,110 @@ def test_lease_requires_a_reason(manager, db_session, config):
             derived=derived,
             now=T0,
         )
+
+
+# ---------------------------------------------------------------------------
+# SDD 36: the surplus must be forecast to persist for the minimum run window
+# ---------------------------------------------------------------------------
+
+
+class TrendForecast:
+    """A stub whose only statement is how PV trends over any horizon.
+
+    ``trend`` is the mean forecast power over the horizon relative to the
+    present; ``present=False`` models a forecaster that cannot say what the
+    present estimate is, so persistence is not observable.
+    """
+
+    method = "stub_trend"
+
+    def __init__(self, trend: float, *, present: bool = True) -> None:
+        self.trend = trend
+        self.present = present
+
+    def forecast(self, horizon_h, *, now, inputs, config) -> ForecastResult:
+        pv_kw = inputs.numeric("pv_power_kw") or 0.0
+        return ForecastResult(
+            kwh=pv_kw * self.trend * horizon_h,
+            valid=True,
+            method=self.method,
+            inputs=("pv_power_kw",),
+            start_kw=pv_kw if self.present else None,
+        )
+
+
+def trend_derived(config, trend: float, *, present: bool = True):
+    inputs = make_inputs(
+        pv_power_kw=20.0,
+        battery_charge_limit_kw=5.0,
+        battery_soc_pct=90.0,
+        battery_energy_available_kwh=576.0,
+    )
+    return make_derived(inputs, config, forecast=TrendForecast(trend, present=present))
+
+
+def request(manager, session, derived, *, kw: float, now=T0):
+    return manager.request(
+        session,
+        asset_id=WORKSHOP,
+        requested_kw=kw,
+        reason="planned welding during the high-solar window",
+        requested_by="test.operator",
+        energy_state="NORMAL",
+        derived=derived,
+        now=now,
+    )
+
+
+def test_grant_requires_the_surplus_to_persist_for_the_minimum_window(manager, db_session, config):
+    derived = trend_derived(config, 0.5)
+    # 12.5 kW of surplus now, but the forecast says PV halves within the 30 min
+    # window: 10 kW - 2.5 kW load - 5 kW charge acceptance leaves 2.5 kW, of
+    # which 80% is grantable.
+    assert derived.value("surplus_power_kw") == pytest.approx(12.5)
+    assert derived.value("surplus_sustained_kw") == pytest.approx(2.5)
+    assert manager.grantable_kw(derived) == pytest.approx(10.0)
+    assert manager.sustained_grantable_kw(derived) == pytest.approx(2.0)
+
+    denied = request(manager, db_session, derived, kw=4.0)
+    assert not denied.granted
+    assert f"{config.surplus_minimum_window_min} min minimum run window" in denied.reason
+    assert "exceeds" in denied.reason
+    assert denied.sustained_kw == pytest.approx(2.0)
+    assert db_session.get(PowerBudgetLease, denied.lease.lease_id).state == "denied"
+
+    granted = request(manager, db_session, derived, kw=2.0)
+    assert granted.granted
+    assert "forecast to persist" in granted.reason
+    assert granted.as_dict()["sustained_kw"] == pytest.approx(2.0)
+
+
+def test_grant_is_refused_when_persistence_is_not_forecast(manager, db_session, config):
+    derived = trend_derived(config, 1.0, present=False)
+    assert derived.value("surplus_power_kw") == pytest.approx(12.5)
+    assert derived.value("surplus_sustained_kw") is None
+    decision = request(manager, db_session, derived, kw=1.0)
+    assert not decision.granted
+    assert "not forecast over the" in decision.reason
+    assert "minimum run window" in decision.reason
+
+
+def test_present_surplus_still_bounds_the_grant_first(manager, db_session, config):
+    derived = trend_derived(config, 1.0)
+    decision = request(manager, db_session, derived, kw=25.0)
+    assert not decision.granted
+    assert "grantable surplus" in decision.reason
+    assert "minimum run window" not in decision.reason
+
+
+def test_sweep_trims_to_the_present_surplus_not_the_forecast(manager, db_session, config):
+    """A running lease is withdrawn when the surplus is gone, not when a
+    forecast says it will go: the window rule governs starts only."""
+    decision = grant(manager, db_session, config, kw=4.0)
+    pessimistic = trend_derived(config, 0.0)
+    assert pessimistic.value("surplus_sustained_kw") == 0.0
+    result = manager.sweep(db_session, now=at(60), energy_state="NORMAL", derived=pessimistic)
+    assert decision.lease.lease_id not in result.revoked
 
 
 # ---------------------------------------------------------------------------

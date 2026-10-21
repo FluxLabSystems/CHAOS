@@ -26,8 +26,10 @@ Invariants
   ``shed_attempt_limit`` attempts.
 * **Restoration is staged and staggered** (SDD 33, FR-103): sustained
   qualification, group order R1..R5, each asset's minimum off time, each
-  asset's restart delay, and an inrush-class stagger so discretionary loads
-  cannot restart simultaneously after an outage.
+  asset's restart delay, an inrush-class stagger so discretionary loads
+  cannot restart simultaneously after an outage, and
+  ``restore_group_interval_s`` between one restoration group and the next so
+  each group is verified before the following one starts (SDD 33.2 rule 5).
 * **Attended equipment is never restarted automatically** (SDD 33.2 rules 6, 7).
 """
 
@@ -935,7 +937,9 @@ class ShedController:
             return result
 
         headroom = derived.value("restoration_headroom_kw") or 0.0
-        last_restore_at = _last_restore_at(session)
+        last_restore = _last_restore(session)
+        last_restore_at = _aware(last_restore.occurred_at) if last_restore is not None else None
+        last_group = last_restore.group if last_restore is not None else None
         candidates, deferred, review = self._restore_candidates(states, now=now, headroom=headroom)
         result.deferred = deferred
         result.operator_review_required = review
@@ -943,10 +947,13 @@ class ShedController:
             result.reason = "no load is eligible for restoration yet"
             return result
 
-        # Anti-simultaneous-restart (FR-103): one group, and a stagger between
-        # individual starts sized by inrush class.
+        # Anti-simultaneous-restart (FR-103): one group, a stagger between
+        # individual starts sized by inrush class, and the SDD 33.2 rule 5
+        # interval between one group and the next so a group is verified
+        # before the following one starts.
         group = candidates[0].profile.restoration_group
         result.group = group
+        group_interval = self.config.restore_group_interval_s
         started = 0
         for state in candidates:
             if state.profile.restoration_group != group:
@@ -965,6 +972,12 @@ class ShedController:
                         f"{stagger} s stagger elapsed since the last restart"
                     )
                     continue
+                if last_group is not None and last_group != group and gap < group_interval:
+                    result.deferred[state.asset_id] = (
+                        f"inter-group interval: {gap:.0f} s of {group_interval} s since group {last_group} "
+                        f"was restored; group {group} waits until {last_group} is verified (SDD 33.2 rule 5)"
+                    )
+                    continue
             outcome = self._restore_one(
                 session, state, group=group, energy_state=energy_state, now=now, reason=why
             )
@@ -972,6 +985,7 @@ class ShedController:
             if outcome.outcome in _HOLDING_OUTCOMES:
                 started += 1
                 last_restore_at = now
+                last_group = group
 
         result.performed = bool(result.actions)
         if result.performed:
@@ -1184,14 +1198,18 @@ def recent_actions(
     return list(session.scalars(statement.limit(limit)))
 
 
-def _last_restore_at(session: Session) -> dt.datetime | None:
-    row = session.scalars(
+def _last_restore(session: Session) -> LoadShedAction | None:
+    """The most recent restoration that actually started a load.
+
+    A rejected restore started nothing, so it neither staggers the next start
+    nor opens a verification interval for its group.
+    """
+    return session.scalars(
         select(LoadShedAction)
-        .where(LoadShedAction.action == "restore")
+        .where(LoadShedAction.action == "restore", LoadShedAction.outcome.in_(sorted(_HOLDING_OUTCOMES)))
         .order_by(LoadShedAction.occurred_at.desc())
         .limit(1)
     ).first()
-    return _aware(row.occurred_at) if row else None
 
 
 def _group_index(group: str | None) -> int:
