@@ -195,6 +195,7 @@ run with none, come from `windows/src/Chaos.Host/appsettings.json`:
 | `Chaos:Docs:Enabled` | `true` | Serve the offline documentation site |
 | `Chaos:Docs:ListenUrl` | `http://0.0.0.0:8090` | Where the documentation site listens |
 | `Chaos:WebRootPath` | empty | Let the resolver find the console assets |
+| `Chaos:ConfigDirectory` | empty | Discover the installed `config` directory (registry, then `%ProgramData%\Project CHAOS\config`). Set it to run a checkout against a directory laid out like an install — `chaos.host.json` and `homestead.env` are then read from it |
 
 Anything can be overridden per-machine with a `CHAOS_`-prefixed environment
 variable in the project's debug properties — `CHAOS_BackendUrl`,

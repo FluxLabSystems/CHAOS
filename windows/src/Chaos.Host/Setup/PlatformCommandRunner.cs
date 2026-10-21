@@ -55,9 +55,10 @@ internal sealed partial class PlatformCommandRunner : IPlatformCommandRunner
     /// <para>
     /// The child inherits the gateway's whole environment, so a
     /// <c>CHAOS_DATABASE_URL</c> already set for the service reaches the
-    /// platform whether or not the gateway sets it. That is deliberate and
-    /// harmless: the gateway only overrides when <c>Chaos:DatabaseUrl</c> is
-    /// set, and otherwise reports whatever database the platform says it used.
+    /// platform whether or not the gateway sets it. The gateway sets it from
+    /// the one resolved answer (<see cref="Configuration.PlatformStorage"/>) -
+    /// the same value the supervised backend gets - and otherwise reports
+    /// whatever database the platform says it used.
     /// </para>
     /// </remarks>
     private const string DatabaseUrlVariable = "CHAOS_DATABASE_URL";
@@ -285,6 +286,14 @@ internal sealed partial class PlatformCommandRunner : IPlatformCommandRunner
         if (dataDirectory is not null)
         {
             environment[DataDirectoryVariable] = dataDirectory;
+        }
+
+        // The supervisor's extra environment - homestead.env on an installed
+        // node - applied last, exactly as the supervisor applies it to the
+        // backend, so setup and the running platform see one configuration.
+        foreach (var (key, value) in _runtime.Environment)
+        {
+            environment[key] = value;
         }
 
         return new ProcessStartSpec

@@ -285,8 +285,8 @@ a message naming the field you got wrong instead of *"that URL is invalid"*.
 
 | Field | Notes |
 |---|---|
-| **Database location** | A file path or a full connection URL. Empty leaves the platform's own default alone |
-| **Data directory** | The design package the registry is built from. Empty leaves the platform's default alone |
+| **Database location** | A file path or a full connection URL. Empty leaves the gateway's own answer alone: the installed database under `%ProgramData%\Project CHAOS\db` on an installed node, or the platform's default on a checkout |
+| **Data directory** | The design package the registry is built from. Empty leaves the gateway's own answer alone |
 
 **These only apply to a platform this shell starts itself.** A Windows service
 reads its own configuration, installed once by the installer, and this shell does

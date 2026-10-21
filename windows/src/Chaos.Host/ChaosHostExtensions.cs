@@ -30,6 +30,12 @@ namespace Chaos.Host;
 public static class ChaosHostExtensions
 {
     /// <summary>
+    /// The supervisor's section, relative to the gateway's <c>Chaos</c> section:
+    /// <c>Chaos:Backend</c> in a file, <c>CHAOS_Backend__*</c> as a variable.
+    /// </summary>
+    public const string BackendSectionName = "Backend";
+
+    /// <summary>
     /// Registers everything the gateway needs and applies
     /// <see cref="ChaosHostOptions.ListenUrl"/> to the web host.
     /// </summary>
@@ -40,24 +46,63 @@ public static class ChaosHostExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        // appsettings' "Chaos" section, overridden by CHAOS_-prefixed
-        // environment variables at the same level: CHAOS_BackendUrl overrides
-        // Chaos:BackendUrl, CHAOS_Routes__0__Owner overrides Chaos:Routes:0:Owner.
-        var chaosConfiguration = new ConfigurationBuilder()
-            .AddConfiguration(builder.Configuration.GetSection(ChaosHostOptions.SectionName))
-            .AddEnvironmentVariables(ChaosHostOptions.EnvironmentPrefix)
-            .Build();
+        // The installed layout first, from a bootstrap read of the Chaos
+        // section and the CHAOS_ variables: the config directory it names holds
+        // chaos.host.json, which is itself a configuration source and has to
+        // be in place before anything binds. On a checkout there is no layout
+        // and this is a no-op that /host/info explains.
+        var bootstrap = InstalledConfiguration.BuildChaosConfiguration(builder.Configuration);
+        var layout = InstalledLayoutResolver.Resolve(
+            bootstrap[nameof(ChaosHostOptions.ConfigDirectory)],
+            bootstrap[nameof(ChaosHostOptions.LogDirectory)],
+            InstalledLayoutResolver.PlatformRegistry(),
+            InstalledLayoutResolver.PlatformProgramData());
+        var hostConfigurationLoaded = InstalledConfiguration.AddHostConfigurationFile(builder.Configuration, layout);
+        var installed = InstalledConfiguration.ReadBackendEnvironment(layout, hostConfigurationLoaded, out var backendEnvironment);
+        builder.Services.AddSingleton(layout);
+        builder.Services.AddSingleton(installed);
 
-        builder.Services.AddSingleton<IValidateOptions<ChaosHostOptions>, ChaosHostOptionsValidator>();
-        builder.Services
-            .AddOptions<ChaosHostOptions>()
-            .Bind(chaosConfiguration)
-            .ValidateOnStart();
+        // appsettings' "Chaos" section (now including the installed file),
+        // overridden by CHAOS_-prefixed environment variables at the same
+        // level: CHAOS_BackendUrl overrides Chaos:BackendUrl,
+        // CHAOS_Routes__0__Owner overrides Chaos:Routes:0:Owner.
+        var chaosConfiguration = InstalledConfiguration.BuildChaosConfiguration(builder.Configuration);
 
         // The table has to exist before the pipeline is built, so it is bound
         // eagerly here rather than resolved from IOptions later.
         var options = new ChaosHostOptions();
         chaosConfiguration.Bind(options);
+
+        // One answer for "which database, which design package", handed to
+        // setup, the supervisor and the ported endpoints alike. The supervisor
+        // section is bound from the gateway's view so that CHAOS_Backend__X -
+        // the form the desktop shell sets on a child it starts - reaches it.
+        var backendSection = chaosConfiguration.GetSection(BackendSectionName);
+        var storage = PlatformStorage.Resolve(
+            options.DatabaseUrl,
+            options.DataDirectory,
+            backendSection[nameof(BackendSupervisorOptions.DatabaseUrl)],
+            backendSection[nameof(BackendSupervisorOptions.DataDirectory)],
+            backendEnvironment,
+            layout);
+        options.DatabaseUrl = storage.DatabaseUrl;
+        options.DataDirectory = storage.DataDirectory;
+        options.ConfigDirectory ??= layout.ConfigDirectory;
+        options.LogDirectory ??= layout.LogDirectory;
+        builder.Services.AddSingleton(storage);
+
+        builder.Services.AddSingleton<IValidateOptions<ChaosHostOptions>, ChaosHostOptionsValidator>();
+        builder.Services
+            .AddOptions<ChaosHostOptions>()
+            .Bind(chaosConfiguration)
+            .PostConfigure(bound =>
+            {
+                bound.DatabaseUrl = storage.DatabaseUrl;
+                bound.DataDirectory = storage.DataDirectory;
+                bound.ConfigDirectory ??= layout.ConfigDirectory;
+                bound.LogDirectory ??= layout.LogDirectory;
+            })
+            .ValidateOnStart();
 
         var table = RouteOwnershipTable.Build(
             RouteOwnershipDefaults.Manifest,
@@ -122,7 +167,7 @@ public static class ChaosHostExtensions
         // owned is inert; a route marked Dotnet with no endpoint behind it 404s,
         // which is why the startup check refuses that combination. Registering
         // first means flipping ownership is a configuration change.
-        builder.Services.AddChaosApi(api => api.SqliteDatabasePath = options.DatabaseUrl);
+        builder.Services.AddChaosApi(api => api.SqliteDatabasePath = storage.DatabaseUrl);
 
         // The real supervisor must be registered BEFORE the TryAdd below, which
         // is a fallback and not a default: TryAdd keeps whatever is already
@@ -138,7 +183,7 @@ public static class ChaosHostExtensions
         if (options.SuperviseBackend)
         {
             builder.Services.AddChaosBackendSupervisor(
-                builder.Configuration.GetSection(BackendSupervisorOptions.SectionName),
+                backendSection,
                 supervisor =>
                 {
                     // The gateway owns where the backend listens, because it is
@@ -148,6 +193,17 @@ public static class ChaosHostExtensions
                     {
                         supervisor.BindAddress = backend.Host;
                         supervisor.Port = backend.Port;
+                    }
+
+                    // And it owns the storage answer, resolved once above from
+                    // every place it can be named. homestead.env goes to the
+                    // child verbatim; a key already set from configuration
+                    // keeps its configured value.
+                    supervisor.DatabaseUrl = storage.DatabaseUrl;
+                    supervisor.DataDirectory = storage.DataDirectory;
+                    foreach (var (key, value) in backendEnvironment)
+                    {
+                        supervisor.Environment.TryAdd(key, value);
                     }
 
                     // The gateway drives the lifecycle through

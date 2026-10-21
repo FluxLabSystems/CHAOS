@@ -259,8 +259,15 @@ mean anything.
 | Shell settings | `%APPDATA%\ProjectCHAOS\Shell\settings.json` |
 | Shell window layout | `%APPDATA%\ProjectCHAOS\Shell\layout.json` |
 | Shell and platform logs | `%ProgramData%\Project CHAOS\logs` |
-| Gateway configuration | `chaos.host.json` in the install's config directory. Written once by the installer, never overwritten by an upgrade, never removed by an uninstall |
-| Install paths | The registry key `HKLM\SOFTWARE\Project CHAOS` — the installer keeps it current across upgrades so nothing hard-codes a path that an upgrade might move |
+| Gateway configuration | `%ProgramData%\Project CHAOS\config\chaos.host.json`. Written once by the installer, never overwritten by an upgrade, never removed by an uninstall. The gateway loads it at startup after its shipped defaults and before any `CHAOS_` environment variable, so an edit beats the defaults and a variable beats the edit. Restart the service after editing it |
+| Backend overrides | `%ProgramData%\Project CHAOS\config\homestead.env` — `CHAOS_<SETTING>=value` lines, shipped fully commented out. The gateway reads it at startup and hands every line to the Python backend it supervises **and** to first-run setup; it never relies on machine environment variables, which a Windows service does not see until the next boot |
+| The database | `%ProgramData%\Project CHAOS\db\homestead.db`, unless something names another one (`CHAOS_DATABASE_URL` in `homestead.env`, or `DatabaseUrl` in `chaos.host.json`). It is the same file `chaos.cmd` uses, so the service and the command line share one database |
+| Install paths | The registry key `HKLM\SOFTWARE\Project CHAOS` (`InstallDir`, `ConfigDir`, `DataDir`, `LogDir`). The gateway reads `ConfigDir` to find the two files above and `LogDir` for its log files; the installer keeps the key current across upgrades so nothing hard-codes a path that an upgrade might move |
+
+`http://<node>:8080/host/info` reports what was found and read, under
+`installation` (which directory, which files, where it looked) and `storage`
+(which database and design package, and which of the places above named them).
+Variable *names* from `homestead.env` are listed there, never their values.
 
 Settings and layout are separate files on purpose: layout is disposable cosmetic
 state rewritten on every window move; settings are deliberate operator choices
