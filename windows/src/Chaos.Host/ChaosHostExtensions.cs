@@ -40,9 +40,15 @@ public static class ChaosHostExtensions
     /// <see cref="ChaosHostOptions.ListenUrl"/> to the web host.
     /// </summary>
     /// <param name="builder">The application builder.</param>
+    /// <param name="windowsServiceLifetime">
+    /// Whether to register the Windows Service lifetime when the process was
+    /// started by the service control manager. <c>Program.cs</c> passes false
+    /// for <c>--console</c>; it is a no-op off Windows and in a console
+    /// session either way.
+    /// </param>
     /// <returns>The builder, for chaining.</returns>
     /// <exception cref="RouteOwnershipException">The route-ownership manifest is malformed or ambiguous.</exception>
-    public static WebApplicationBuilder AddChaosHost(this WebApplicationBuilder builder)
+    public static WebApplicationBuilder AddChaosHost(this WebApplicationBuilder builder, bool windowsServiceLifetime = true)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
@@ -224,7 +230,10 @@ public static class ChaosHostExtensions
         builder.Services.AddHostedService<BackendHealthMonitor>();
         builder.Services.AddHostedService<DocumentationSiteHost>();
 
-        WindowsServiceIntegration.AddWindowsServiceIfAvailable(builder);
+        if (windowsServiceLifetime)
+        {
+            WindowsServiceIntegration.AddWindowsServiceIfAvailable(builder);
+        }
 
         if (!string.IsNullOrWhiteSpace(options.ListenUrl))
         {
