@@ -172,7 +172,7 @@ them what it knows.
 
 | Mechanism | Enforces |
 |---|---|
-| `runtime.build_services` skips `EnergyManagerService` when `settings.is_secondary` | No EMS. This is in the platform, not the deployment |
+| `runtime.build_services` skips `EnergyManagerService`, `CommandDispatchService` and `MaintenanceSchedulerService` when `settings.is_secondary` | No EMS, no command dispatch, no duplicate work orders. This is in the platform, not the deployment |
 | `CHAOS_EMS_ENABLED: "false"` in the compose file | Belt and braces |
 | `CHAOS_ALLOW_PHYSICAL_CONTROL: "false"`, hard-coded, not read from `.env` | No commands |
 | MQTT ACL: `svc-twin-secondary` has no write on `cmd/` or `setpoint/` | Enforced at the broker, independently of the application |
@@ -182,12 +182,16 @@ Four independent layers, in three different systems. That redundancy is
 proportionate: the failure it prevents is two controllers fighting over a
 battery.
 
-**One gap worth stating.** `runtime.build_services` suppresses only the EMS on a
-secondary node; `CommandDispatchService` is still registered whenever MQTT is
-enabled. The application-level protection is therefore
-`CHAOS_ALLOW_PHYSICAL_CONTROL=false`, backed by the broker ACL. That is why
-the compose file hard-codes the flag rather than defaulting it, and why the ACL
-denial is not treated as belt-and-braces but as a primary control.
+**What the application itself withholds.** On a secondary node
+`runtime.build_services` registers neither the EMS, nor `CommandDispatchService`
+— so there is no second supervisory control source whatever the broker carries
+— nor the maintenance scheduler, which would raise every work order twice.
+Ingest, the alarm engine and the plugin mirror run as on the primary.
+`CHAOS_ALLOW_PHYSICAL_CONTROL=false` and the broker ACL stay in force regardless:
+the compose file hard-codes the flag rather than defaulting it, and the ACL
+denial is treated as a primary control rather than belt-and-braces, because a
+defence that lives in one branch of one Python function should never be the
+only thing between a partitioned node and a battery.
 
 ---
 
