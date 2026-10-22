@@ -26,8 +26,8 @@ Related: [Container deployment](./advanced-container-deployment.md) ·
 `chaos` is the platform's own operator command line. Its design rules explain
 why it exists at all:
 
-- **Subsystem imports are lazy.** `--help`, `init-db`, `status`, `backup` and
-  `export` keep working even when the registry loader, energy manager, alarm
+- **Subsystem imports are lazy.** `--help`, `init-db`, `status`, `backup`,
+  `restore` and `export` keep working even when the registry loader, energy manager, alarm
   engine, ingest or simulator packages are absent or broken. A missing subsystem
   is reported with an actionable message and a dedicated exit code, never a
   traceback.
@@ -85,6 +85,7 @@ does not have that subsystem installed" from "that subsystem failed".
 | `simulate` | Delegate to the simulator | None |
 | `retention` | Apply the data-retention policy | None — scheduled task |
 | `backup` | Write a portable registry and configuration archive | None — scheduled task |
+| `restore` | Restore a backup archive into an empty database (or, with `--force`, a populated one) | None — recovery procedure |
 | `status` | Node role, database, counts, energy state, active alarms | The console's Home and Assets screens |
 | `export` | Open-format export of registry and history | None |
 
@@ -165,6 +166,22 @@ hardware — as JSON and YAML that can be read with nothing but a text editor.
 The archive contains a manifest with counts, provenance and node role; a restore
 procedure; one JSON file per table; and the design package the registry was
 built from.
+
+### Restore
+
+```sh
+chaos restore var/backups/homestead-primary-<UTC>.tar.gz            # into an empty database
+chaos restore var/backups/homestead-primary-<UTC>.tar.gz --dry-run  # validate the archive only
+chaos restore var/backups/homestead-primary-<UTC>.tar.gz --force    # replace a populated database
+```
+
+`restore` reads the manifest and the per-table JSON straight from the archive
+(nothing is extracted to disk), checks the archive kind, format version and row
+counts against the files, refuses undeclared tables, and refuses a populated
+database unless `--force` is given — in which case the archived tables are
+cleared first. Rows are inserted in dependency order inside one transaction and
+the counts are checked against the manifest before it commits, so a failure
+part way through leaves the database as it was.
 
 ### The fuller backup set
 

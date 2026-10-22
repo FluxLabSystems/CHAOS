@@ -175,7 +175,7 @@ windows/
 
 deploy/          Docker Compose stacks for headless nodes (advanced)
 docs/            this documentation set — start at docs/index.md
-tests/           2250 pytest tests, all against SQLite and the in-memory bus
+tests/           2403 pytest tests, all against SQLite and the in-memory bus
 ```
 
 ---
@@ -187,29 +187,36 @@ tests/           2250 pytest tests, all against SQLite and the in-memory bus
 Registry and design-package loading · telemetry ingest with dead-lettering ·
 current-state cache · relational historian and retention · EMS state machine,
 shedding, restoration, generator coordination, black start, budget leases ·
-alarm definitions, evaluation, correlation, log notification · command path with
+alarm definitions, evaluation, correlation, notification (log, email, push) · command path with
 eight interlocks, operating modes and audit · maintenance and commissioning
 records · annunciator panel · topology and blast-radius analysis · rack
 elevation · 87 REST endpoints · a plugin system for third-party integrations ·
 the .NET gateway with first-run setup · the WinUI 3 desktop shell ·
-2250 passing Python tests.
+2403 passing Python tests.
 
 ### Partial or stubbed
 
-- **Notification backends** — `log` is wired. `email`, `push` and `voice` are
-  named but not implemented. A log line is not an alert.
-- **The NetBotz plugin's transport.** The plugin system, the sensor mapping and
-  the identity routing are complete and tested; the SNMP and HTTPS transports
-  are not. It reports `not_configured` and never reports a temperature that did
+- **Notification backends** — `log`, `email` (an SMTP relay) and `push` (an
+  ntfy-compatible HTTP endpoint) are implemented, with `sent`, `failed` and
+  `not_configured` outcomes and bounded retries. `voice` stays a stub until
+  CUCM is commissioned. A channel without settings reports `not_configured` and
+  never claims a message was sent.
+- **The NetBotz plugin's transport.** The plugin system, the sensor mapping,
+  the identity routing and the HTTPS transport (TLS always verified; the
+  readings operation is a setting read off the appliance's `/docs/rest`) are
+  complete and tested; the SNMP transport is not implemented. Without a host
+  the plugin reports `not_configured` and never reports a temperature that did
   not come from a device.
 - **Historian** is a relational table. The InfluxDB-versus-TimescaleDB decision
   is unresolved, so neither is deployed.
 - **PostGIS** geometry column is prepared but disabled; geometry is stored as
   GeoJSON.
-- **MQTT TLS** is configured and deliberately left disabled rather than
-  half-configured.
+- **MQTT TLS** — the client side is complete (`CHAOS_MQTT_TLS_CA`, `_CERT`,
+  `_KEY`); the broker's TLS listener stays disabled until certificates are
+  issued.
 - **No schema migrations.** `init-db` adds tables; it never alters them.
-- **Prometheus** scrapes only itself. The API exposes no `/metrics`.
+- **Prometheus** scrapes the API's `/metrics` and itself; no exporters are
+  deployed and most target addresses are open items.
 
 ### Not built
 

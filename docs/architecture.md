@@ -327,14 +327,14 @@ PostgreSQL, Mosquitto, Prometheus and Grafana.
 Registry and design-package loading · telemetry ingest with dead-lettering ·
 current-state cache · relational historian and retention · energy state machine,
 shedding, restoration, generator coordination, black start, budget leases ·
-alarm definitions, evaluation, correlation, log notification · command path with
+alarm definitions, evaluation, correlation, notification (log, email, push) · command path with
 eight interlocks, operating modes and audit · maintenance and commissioning
 records · annunciator panel · topology and blast-radius analysis · rack
 elevation · 87 REST endpoints under `/api/v1` · a plugin system for third-party
 integrations · the operator console · the .NET gateway with route ownership and
 first-run setup · the WinUI 3 desktop shell ·
 the command line · container deployment for both node roles · Grafana dashboards
-over real tables · 2250 Python tests.
+over real tables · 2403 Python tests.
 
 ### Stubbed or partial
 
@@ -342,12 +342,12 @@ over real tables · 2250 Python tests.
 |---|---|
 | **Backend process supervision** | Registered by the gateway and driving the backend on every start; a tripped circuit breaker stops the host with exit code 70 so the service manager can restart it |
 | **Ported .NET subsystems** | `Chaos.Api` is built, tested, registered and mapped by the gateway; no route is owned by it yet — ownership is one configuration row |
-| **Notification backends** | Only `log` is implemented. `email`, `push` and `voice` record `not_configured` and never claim success |
-| **NetBotz plugin transport** | The mapping, identity routing, API and health are complete and tested. The SNMP and HTTPS transports are not implemented; the plugin reports `not_configured` and never reports a value that did not come from a device |
-| **Prometheus** | Scrapes only itself. No exporters deployed, most target addresses are open items. The API exposes no `/metrics` |
+| **Notification backends** | `log`, `email` (SMTP) and `push` (ntfy-compatible HTTP) are implemented with `sent`/`failed`/`not_configured` outcomes and bounded retries; `voice` records `not_configured` until CUCM is commissioned and never claims success |
+| **NetBotz plugin transport** | The mapping, identity routing, API, health and the HTTPS transport (TLS always verified) are complete and tested; the SNMP transport is not implemented. Without a host the plugin reports `not_configured` and never reports a value that did not come from a device |
+| **Prometheus** | Scrapes the API's `/metrics` and itself. No exporters deployed, most target addresses are open items |
 | **Historian** | Relational, pending the InfluxDB/TimescaleDB decision |
 | **PostGIS** | Geometry column prepared and disabled; GeoJSON stored |
-| **MQTT TLS** | Configured and deliberately left disabled rather than half-configured |
+| **MQTT TLS** | Client side complete (`CHAOS_MQTT_TLS_CA`, `_CERT`, `_KEY`); the broker's listener stays disabled until certificates are issued |
 | **Migrations** | None. Alembic is declared and unused |
 | **Water, rack and lifecycle extensions** | In the design package; not merged into the registry. Consumed directly by the screens that need them |
 
@@ -384,7 +384,7 @@ Consequently most of the MVP acceptance criteria are outstanding:
 | 7 | Communications-loss and server-loss tests | **Not met** against hardware; simulated only |
 | 8 | Property map displays structures and assets | **Not met** — GeoJSON is served, nothing renders it over a basemap |
 | 9 | Every critical asset has a manual override and failure-state record | **Partial** — the schema requires it; the data is incomplete |
-| 10 | Data export and restore tested | **Partial** — export works and is tested; restore is documented, not drilled |
+| 10 | Data export and restore tested | **Partial** — export and `chaos restore` work and are tested (round trip, refusal of a populated database, `--force`, rollback); the drill in [Operations § Backup and restore](./operations.md#4-backup-and-restore) has not yet been run on real hardware |
 
 Closing these is what [Commissioning](./commissioning.md) is for, one subsystem
 at a time.

@@ -379,7 +379,7 @@ not part of `CHAOS.sln`.
 
 ### Its tests
 
-**2250 tests**, all against SQLite and an in-memory message bus — no PostgreSQL,
+**2403 tests**, all against SQLite and an in-memory message bus — no PostgreSQL,
 no broker, no hardware. That is deliberate: it is step 1 of the twelve-step
 commissioning sequence ("bench test"), and it means the whole platform is
 exercisable end to end from a laptop.

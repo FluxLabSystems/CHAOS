@@ -145,28 +145,35 @@ windows/
 
 deploy/          Docker Compose stacks for headless nodes (advanced)
 docs/            this documentation set — start at docs/index.md
-tests/           2250 pytest tests, all against SQLite and the in-memory bus</code></pre></div>
+tests/           2403 pytest tests, all against SQLite and the in-memory bus</code></pre></div>
 <hr>
 <h2 id="current-status" class="doc-h"><span class="doc-h-text">Current status</span><a class="doc-anchor" href="#current-status" aria-label="Link to this section"></a></h2>
 <h3 id="working-and-exercised-against-the-simulator" class="doc-h"><span class="doc-h-text">Working, and exercised against the simulator</span><a class="doc-anchor" href="#working-and-exercised-against-the-simulator" aria-label="Link to this section"></a></h3>
 <p>Registry and design-package loading · telemetry ingest with dead-lettering ·
 current-state cache · relational historian and retention · EMS state machine,
 shedding, restoration, generator coordination, black start, budget leases ·
-alarm definitions, evaluation, correlation, log notification · command path with
+alarm definitions, evaluation, correlation, notification (log, email, push) · command path with
 eight interlocks, operating modes and audit · maintenance and commissioning
 records · annunciator panel · topology and blast-radius analysis · rack
 elevation · 87 REST endpoints · a plugin system for third-party integrations ·
 the .NET gateway with first-run setup · the WinUI 3 desktop shell ·
-2250 passing Python tests.</p>
+2403 passing Python tests.</p>
 <h3 id="partial-or-stubbed" class="doc-h"><span class="doc-h-text">Partial or stubbed</span><a class="doc-anchor" href="#partial-or-stubbed" aria-label="Link to this section"></a></h3>
-<ul><li><strong>Notification backends</strong> — <code>log</code> is wired. <code>email</code>, <code>push</code> and <code>voice</code> are
-named but not implemented. A log line is not an alert.</li><li><strong>The NetBotz plugin's transport.</strong> The plugin system, the sensor mapping and
-the identity routing are complete and tested; the SNMP and HTTPS transports
-are not. It reports <code>not_configured</code> and never reports a temperature that did
+<ul><li><strong>Notification backends</strong> — <code>log</code>, <code>email</code> (an SMTP relay) and <code>push</code> (an
+ntfy-compatible HTTP endpoint) are implemented, with <code>sent</code>, <code>failed</code> and
+<code>not_configured</code> outcomes and bounded retries. <code>voice</code> stays a stub until
+CUCM is commissioned. A channel without settings reports <code>not_configured</code> and
+never claims a message was sent.</li><li><strong>The NetBotz plugin's transport.</strong> The plugin system, the sensor mapping,
+the identity routing and the HTTPS transport (TLS always verified; the
+readings operation is a setting read off the appliance's <code>/docs/rest</code>) are
+complete and tested; the SNMP transport is not implemented. Without a host
+the plugin reports <code>not_configured</code> and never reports a temperature that did
 not come from a device.</li><li><strong>Historian</strong> is a relational table. The InfluxDB-versus-TimescaleDB decision
 is unresolved, so neither is deployed.</li><li><strong>PostGIS</strong> geometry column is prepared but disabled; geometry is stored as
-GeoJSON.</li><li><strong>MQTT TLS</strong> is configured and deliberately left disabled rather than
-half-configured.</li><li><strong>No schema migrations.</strong> <code>init-db</code> adds tables; it never alters them.</li><li><strong>Prometheus</strong> scrapes only itself. The API exposes no <code>/metrics</code>.</li></ul>
+GeoJSON.</li><li><strong>MQTT TLS</strong> — the client side is complete (<code>CHAOS_MQTT_TLS_CA</code>, <code>_CERT</code>,
+<code>_KEY</code>); the broker's TLS listener stays disabled until certificates are
+issued.</li><li><strong>No schema migrations.</strong> <code>init-db</code> adds tables; it never alters them.</li><li><strong>Prometheus</strong> scrapes the API's <code>/metrics</code> and itself; no exporters are
+deployed and most target addresses are open items.</li></ul>
 <h3 id="not-built" class="doc-h"><span class="doc-h-text">Not built</span><a class="doc-anchor" href="#not-built" aria-label="Link to this section"></a></h3>
 <p>Home Assistant integration · Node-RED flows · property-map rendering on a real
 map · Level 4 forecasting and scenario simulation (the EMS carries a clear-sky PV
