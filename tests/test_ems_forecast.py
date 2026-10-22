@@ -102,7 +102,7 @@ def test_sun_is_below_the_horizon_at_midnight():
 def test_naive_datetimes_are_taken_as_utc():
     aware = solar_position(dt.datetime(2026, 6, 21, 12, tzinfo=dt.UTC), 45.0, 0.0)
     # The naive value is the point of the test: it must be read as UTC.
-    naive = solar_position(dt.datetime(2026, 6, 21, 12), 45.0, 0.0)  # noqa: DTZ001
+    naive = solar_position(dt.datetime(2026, 6, 21, 12), 45.0, 0.0)
     assert naive == aware
 
 
