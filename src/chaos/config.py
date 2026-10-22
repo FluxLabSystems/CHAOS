@@ -10,12 +10,33 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repository root: <root>/src/chaos/config.py -> parents[2]
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT_DIR / "data"
 SCHEMA_DIR = ROOT_DIR / "schemas"
+
+
+#: Optional strings that arrive through the environment as ``""`` when a
+#: deployment passes every setting through unconditionally (the compose files
+#: do: ``CHAOS_X: ${CHAOS_X:-}``). An empty value means "not set", never "the
+#: empty string is the credential".
+OPTIONAL_STRING_SETTINGS = (
+    "mqtt_username",
+    "mqtt_password",
+    "mqtt_tls_ca",
+    "mqtt_tls_cert",
+    "mqtt_tls_key",
+    "notify_smtp_host",
+    "notify_smtp_username",
+    "notify_smtp_password",
+    "notify_smtp_from",
+    "notify_push_url",
+    "notify_push_token",
+    "supervisor_stop_secret",
+)
 
 
 class Settings(BaseSettings):
@@ -81,6 +102,13 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_title: str = "Project CHAOS API"
     api_root_path: str = ""
+    #: Shared secret for ``POST /_supervisor/stop``, the graceful-stop route the
+    #: Windows process supervisor calls before it would otherwise have to kill
+    #: the backend. Unset (the default) means the route does not exist -- a
+    #: container or a development checkout has no supervisor, so there is
+    #: nothing to present the secret and nothing to answer it. The route is
+    #: also loopback-only; see chaos.api.app.
+    supervisor_stop_secret: str | None = None
 
     # --- Overview thresholds -------------------------------------------
     # The property overview derives a freeze/heat risk from the site's outside
@@ -144,6 +172,13 @@ class Settings(BaseSettings):
     #: The mirror engine turns plugin readings into canonical telemetry. It is
     #: a bus producer, so it is only useful where the bus is running.
     plugin_mirror_enabled: bool = True
+
+    @field_validator(*OPTIONAL_STRING_SETTINGS, mode="before")
+    @classmethod
+    def _empty_means_unset(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @property
     def is_secondary(self) -> bool:

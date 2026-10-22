@@ -883,7 +883,21 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    """Run the API (and, on the primary node, the background services)."""
+    """Run the API (and, on the primary node, the background services).
+
+    The server is driven through ``uvicorn.Server`` rather than ``uvicorn.run``
+    so that the process can be asked to stop from inside: the app's
+    ``POST /_supervisor/stop`` route (chaos.api.app) calls the hook registered
+    here as ``app.state.request_shutdown``, which flips the server's
+    ``should_exit`` flag. uvicorn then shuts down exactly as it would on
+    Ctrl-C -- the lifespan's ``finally`` stops the background services and the
+    bus -- and this command returns 0. That is what lets the Windows process
+    supervisor stop the backend without killing it.
+
+    ``--reload`` is development only. uvicorn's reloader runs the application
+    in a child process it restarts on source change, so no hook can be handed
+    to it; the stop route there falls back to interrupting the worker.
+    """
     export_setting_overrides(args)
     settings = build_settings(args)
 
@@ -894,21 +908,47 @@ def cmd_serve(args: argparse.Namespace) -> int:
     )
 
     host = args.host or settings.api_host
-    port = args.port or settings.api_port
+    # `--port 0` is a real request (bind any free port), not an absent one.
+    port = settings.api_port if args.port is None else args.port
     print(
         f"Serving {settings.api_title} v{__version__} as '{settings.node_role}' "
         f"on http://{host}:{port} (physical control "
         f"{'ENABLED' if settings.allow_physical_control else 'disabled'})"
     )
-    uvicorn.run(
-        "chaos.api.app:create_app",
-        factory=True,
-        host=host,
-        port=port,
-        reload=args.reload,
-        reload_dirs=[str(ROOT_DIR / "src")] if args.reload else None,
-        log_level=args.log_level.lower(),
+    log_level = args.log_level.lower()
+
+    if args.reload:
+        uvicorn.run(
+            "chaos.api.app:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            reload=True,
+            reload_dirs=[str(ROOT_DIR / "src")],
+            log_level=log_level,
+        )
+        return EXIT_OK
+
+    create_app = resolve_subsystem(
+        "chaos.api.app",
+        ("create_app",),
+        subsystem="API application",
+        hint="The FastAPI application lives in chaos.api; check the installation.",
     )
+    app = create_app(settings)
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level=log_level))
+
+    def request_shutdown() -> None:
+        LOG.info("Shutdown requested through the supervisor stop route")
+        server.should_exit = True
+
+    app.state.request_shutdown = request_shutdown
+    server.run()
+    if not server.started:
+        raise CommandError(
+            f"The API server did not start on http://{host}:{port}",
+            hint="Another process may hold the port, or the bind address is not local. See the log above.",
+        )
     return EXIT_OK
 
 

@@ -263,6 +263,35 @@ the Python half and pointless otherwise.
 reached through the gateway or not at all — the gateway refuses a non-loopback
 backend address unless explicitly configured otherwise.
 
+### How the supervisor stops it
+
+`serve` drives uvicorn through its `Server` object rather than `uvicorn.run`,
+and registers a shutdown hook on the application. The backend's own
+`POST /_supervisor/stop` route calls that hook, which flips uvicorn's
+`should_exit` flag: the server then shuts down exactly as it would on Ctrl-C
+— the background services and the bus are stopped in the lifespan's `finally`
+— and `serve` exits 0. That is how the gateway's process supervisor stops the
+backend without killing it.
+
+The route is guarded three ways, and all three are deliberate:
+
+| Guard | Effect |
+|---|---|
+| `CHAOS_SUPERVISOR_STOP_SECRET` unset | The route does not exist: 404, like any unknown path. A container or a development checkout has no supervisor, so nothing can stop it this way |
+| Loopback peer only | 403 from any other address. uvicorn trusts `X-Forwarded-For` from `127.0.0.1` and the gateway always sets it, so a request *relayed* through the gateway presents the LAN client's address and is refused — only the supervisor's own connection to the backend's loopback listener qualifies |
+| `X-Chaos-Supervisor-Secret` header | Compared in constant time against the setting; 403 on a mismatch |
+
+A successful call answers `202 {"stopping": true}` and the stop follows once the
+response is out. The gateway never proxies the route: `/_supervisor` is outside
+every prefix in the route-ownership manifest, and an unclaimed path is not
+forwarded. The route is absent from `/openapi.json` for the same reason it is
+absent from [API reference](./api.md#13-unlisted-operational-routes): it is
+not part of the platform API.
+
+With `--reload`, uvicorn runs the application in a child process it restarts on
+source change, so no hook can be handed to it; the route there falls back to
+interrupting the worker. Development only, as the flag says.
+
 ---
 
 ## 9. The simulator
@@ -316,6 +345,12 @@ would have run and exits `3` rather than pretending.
 (`ChaosServiceRegistration=msi`, the default) and owns its rollback; the
 switches are the hand path, and the installer's alternative
 `ChaosServiceRegistration=host` build calls exactly the same two commands.
+
+When the service stops, the gateway's supervisor asks the backend to stop
+first — `POST /_supervisor/stop` on the backend's loopback listener, with the
+secret both halves read from `CHAOS_SUPERVISOR_STOP_SECRET` — and only kills
+the process if that is not answered. See
+[§ 8 How the supervisor stops it](#how-the-supervisor-stops-it).
 
 One difference between the two paths is worth knowing: the MSI's recovery
 policy restarts the service after a crash, but does not set the failure flag, so
