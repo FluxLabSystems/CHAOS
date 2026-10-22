@@ -81,6 +81,7 @@ The ones you are most likely to touch:
 | `CHAOS_MQTT_TLS_CA` / `_CERT` / `_KEY` | unset | Paths inside the container; see **Certificates** below |
 | `CHAOS_ALLOW_PHYSICAL_CONTROL` | `false` | The safety gate. See section 6 |
 | `CHAOS_EMS_ENABLED` | `true` | Ignored on a secondary node |
+| `CHAOS_EMS_CONFIG_FILE` | unset | Optional path, inside the container, to the EMS override file (YAML or JSON). Read by the EMS from the process environment rather than through the settings model, which is why it must reach the container as an environment variable; see `docs/ems-configuration.md`. The compose file carries a commented mount for it |
 | `CHAOS_HISTORIAN_BACKEND` | `sql` | `sql` or `none`; nothing else exists and anything else is refused |
 | `CHAOS_HISTORIAN_RAW_RETENTION_DAYS` | `90` | |
 | `CHAOS_NOTIFICATION_BACKENDS` | `log` | Comma separated: `log,email,push,voice`. `email` and `push` need their `CHAOS_NOTIFY_*` settings; `voice` records `not_configured` |

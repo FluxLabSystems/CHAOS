@@ -258,6 +258,7 @@ Operating modes are `off`, `manual`, `automatic`, `scheduled`, `maintenance`,
 | `GET` | `/api/v1/energy/loads` | Load schedule with current shed state | viewer |
 | `GET` | `/api/v1/energy/shed-actions` | Shed and restore history | viewer |
 | `GET` | `/api/v1/energy/dashboard` | Aggregate for the energy screen | viewer |
+| `GET` | `/api/v1/energy/config` | Effective EMS configuration, provenance and revision (read-only) | viewer |
 
 States: `COMMISSIONING`, `MAINTENANCE`, `SURPLUS`, `NORMAL`, `CONSERVE`,
 `CRITICAL_RESERVE`, `GENERATOR_SUPPORT`, `EMERGENCY`, `BLACK_START`,

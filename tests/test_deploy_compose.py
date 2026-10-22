@@ -31,6 +31,12 @@ ENV_EXAMPLE = DEPLOY / ".env.example"
 #: sets both as ENV in deploy/Dockerfile, and they are not deployment choices.
 IMAGE_FIXED = {"CHAOS_DATA_DIR", "CHAOS_SCHEMA_DIR"}
 
+#: Names the platform reads straight from the process environment rather than
+#: through the settings model, so they are deliberately not Settings fields.
+#: The EMS override file is one: pydantic's .env handling is not consulted for
+#: it, which is exactly why compose has to pass it through.
+ENVIRONMENT_ONLY = {"CHAOS_EMS_CONFIG_FILE"}
+
 #: Values a stack fixes by its own topology; they must be present as keys but
 #: are not expected to be `${VAR}` pass-throughs.
 TOPOLOGY_FIXED = {
@@ -99,7 +105,7 @@ def test_every_documented_chaos_variable_reaches_the_twin_service(compose):
 
 @pytest.mark.parametrize("compose", [PRIMARY, SECONDARY], ids=["primary", "secondary"])
 def test_the_twin_only_receives_names_the_platform_or_its_plugins_read(compose):
-    known = _settings_env_names() | {"TZ"}
+    known = _settings_env_names() | ENVIRONMENT_ONLY | {"TZ"}
     for name in _twin_environment(compose):
         assert name in known or name.startswith("CHAOS_PLUGIN_"), (
             f"{compose.name}: {name} is set on the twin but is not a Settings field or a plugin option"

@@ -181,6 +181,7 @@ services:
       # Not running here (see CHAOS_EMS_ENABLED above); passed through so the
       # setting set is the same on both nodes.
       CHAOS_EMS_TICK_INTERVAL_S: ${CHAOS_EMS_TICK_INTERVAL_S:-5}
+      CHAOS_EMS_CONFIG_FILE: ${CHAOS_EMS_CONFIG_FILE:-}
 
       # --- Alarms and notification ------------------------------------
       # Alarms and notification are the point of this node (SDD 16.1

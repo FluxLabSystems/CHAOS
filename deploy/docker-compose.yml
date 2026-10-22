@@ -167,6 +167,10 @@ services:
       # --- EMS --------------------------------------------------------
       CHAOS_EMS_ENABLED: ${CHAOS_EMS_ENABLED:-true}
       CHAOS_EMS_TICK_INTERVAL_S: ${CHAOS_EMS_TICK_INTERVAL_S:-5}
+      # Optional override file (docs/ems-configuration.md). The EMS reads this
+      # name from the process environment, not through the settings model, so
+      # it must arrive here as an environment variable; mount the file below.
+      CHAOS_EMS_CONFIG_FILE: ${CHAOS_EMS_CONFIG_FILE:-}
 
       # --- Alarms and notification ------------------------------------
       CHAOS_ALARM_ENGINE_ENABLED: ${CHAOS_ALARM_ENGINE_ENABLED:-true}
@@ -220,6 +224,8 @@ services:
       # by the host, mounted read-only, never baked into the image. Defaults
       # to deploy/secrets/, which is gitignored apart from its placeholder.
       - ${SECRETS_DIR:-./secrets}:/run/secrets:ro
+      # The EMS override file, when CHAOS_EMS_CONFIG_FILE names one:
+      # - ./ems-config.yaml:/app/config/ems-config.yaml:ro
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${TWIN_PORT:-8000}:8000"
     healthcheck:
