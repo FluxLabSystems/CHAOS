@@ -8,7 +8,7 @@ registry, and the energy manager evaluating the resulting state.
 you should believe when you look at a screen:
 
 - **F-007** — a quarter of the shipped alarm definitions cannot fire. An alarm
-  list reading "40 defined, 0 active" is not full coverage.
+  list reading "41 defined, 0 active" is not full coverage.
 - **F-008** — losing the power container takes 71% of the homestead with it,
   **including potable water pressure**, through an electrical dependency that
   the water system is otherwise independent of.
@@ -43,6 +43,7 @@ Related: [The annunciator panel](./annunciator.md) ·
 | [F-007a](#f-007a--battery_cell_imbalance-the-original-case) | high | The same panel — the first case found |
 | [F-008](#f-008--losing-the-power-container-takes-71-of-the-homestead-including-potable-water-pressure) | **high** | **[The topology screen's blast radius](./topology-view.md#3-blast-radius)** |
 | [F-009](#f-009--the-register-cannot-express-n1-redundancy) | medium | The `caveats` on any impact result, and two blocking findings on [the rack elevation](./rack-view.md#3-it-checks-the-document-rather-than-trusting-it) |
+| [F-010](#f-010--generator_start_blocked-was-published-but-not-defined) | medium — **resolved** | Nowhere any more: the `GEN START / BLOCKED` tile on [the annunciator](./annunciator.md) lights when the EMS asserts it |
 
 ---
 
@@ -208,8 +209,10 @@ SDD section 16.1 is explicitly written about. The beacon alarm that would report
 the local siren dead is also inoperable, so the independent alerting path
 section 16.1 relies on has no health check either.
 
-An alarm list showing "40 defined, 0 active" reads as full coverage. A quarter
-of it is incapable of firing.
+An alarm list showing "41 defined, 0 active" reads as full coverage. A quarter
+of it is incapable of firing. (The count was forty when this was found; it is
+forty-one since [F-010](#f-010--generator_start_blocked-was-published-but-not-defined), and the ten
+are unchanged.)
 
 **Recommendation:** add the ten trigger points to their asset classes or
 bindings. Until then the platform reports them as `out_of_service` on the
@@ -289,6 +292,47 @@ only reason about redundancy that the data model is capable of stating.
 **Recommendation:** add a redundancy grouping to the asset schema — a group id
 plus an `n_plus` degree — so that "four inverters, N+1" and "two cords, one
 PDU" are both statable and checkable.
+
+---
+
+## F-010 — `generator_start_blocked` was published but not defined
+
+**Severity: medium — an EMS-T008 alarm that never became an alarm. Status: resolved.**
+
+SDD 39 `EMS-T008` (*generator unavailable during critical reserve*) expects an
+alarm, deeper conservation and no uncontrolled repeated start request. The
+energy manager implemented the last two and published the first: when a start
+criterion (SDD 34.1) is met and a permissive (SDD 34.2) is not, it asserts
+`generator_start_blocked` on the generator's alarm topic, at `major` severity
+in `CRITICAL_RESERVE`. But SDD 37.1 lists no such alarm, so
+`data/alarm_definitions.yaml` had no definition for the key — and an alarm
+nobody defined is not an alarm
+([Alarms § Alarms the platform raises about itself](./alarms.md#alarms-the-platform-raises-about-itself)).
+Ingest counted the publication as an unbound platform event and raised
+nothing. The condition was visible only as a line on `/api/v1/energy/dashboard`
+and a counter on `/api/v1/telemetry/stats`.
+
+**Resolution:** `generator_start_blocked` is now the forty-first definition,
+platform-owned on the same provenance rung as the `energy_state` point (F-003)
+and noted in the document as added after the v0.3 pass. It is `major`, scoped
+to `energy.generator.site.01`, raised by publication only — no trigger point,
+and a `trigger_expression` that says so, which is what keeps its annunciator
+tile serviceable rather than dark — and it escalates the way its energy peers
+do. `EMS-T008` words the expected result as a *critical* alarm; the definition
+ships at `major` because no start attempt has been made and the battery still
+carries the site, with `generator_start_failed` (critical) covering the
+exhausted attempt policy. Raising it is one line in the document, to be
+reviewed at commissioning like every other severity.
+
+The EMS now also **clears** it explicitly — when the start proceeds, when no
+start criterion remains, or when the generator is observed running — because a
+published alarm never clears on the publisher's silence. The flag that
+remembers an open assertion rides on the generator runtime persisted in the
+energy snapshot, so a restart cannot leave the alarm standing.
+
+`tests/test_ems_generator.py::test_a_blocked_start_becomes_an_alarm_row_under_the_shipped_definition`
+runs the publication through `chaos.alarms.published` end to end, and
+`test_the_block_lifting_clears_the_alarm_once` does the same for the clear.
 
 ---
 

@@ -34,9 +34,11 @@ human.</p>
 <a href="troubleshooting.html#3-an-alarm-never-fires">Troubleshooting § An alarm never fires</a></p>
 <hr>
 <h2 id="1-where-the-definitions-come-from" class="doc-h"><span class="doc-h-text">1. Where the definitions come from</span><a class="doc-anchor" href="#1-where-the-definitions-come-from" aria-label="Link to this section"></a></h2>
-<p>Forty alarm definitions ship in the design package
-(<code>data/alarm_definitions.yaml</code>) and are loaded into the platform by first-run
-setup. Each definition carries severity, scope, a trigger, a reset condition,
+<p>Forty-one alarm definitions ship in the design package
+(<code>data/alarm_definitions.yaml</code>) — forty from the v0.3 pass and
+<code>generator_start_blocked</code>, a platform-owned definition added after it
+(<a href="integration-findings.html#f-010--generator_start_blocked-was-published-but-not-defined">Integration findings § F-010</a>) —
+and are loaded into the platform by first-run setup. Each definition carries severity, scope, a trigger, a reset condition,
 operating-context behaviour, correlation hints, escalation and the operator
 context.</p>
 <p>You see them on the console's <strong>Alarms</strong> screen and, as a fixed grid, on

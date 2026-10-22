@@ -79,6 +79,9 @@ class GeneratorRuntime:
     fuel_at_start_pct: float | None = None
     runtime_at_start_h: float | None = None
     last_failure: str | None = None
+    #: True while ``generator_start_blocked`` stands asserted, so the clear is
+    #: published exactly once when the block lifts (SDD 39 EMS-T008).
+    start_blocked: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -336,6 +339,7 @@ class GeneratorCoordinator:
             self.runtime.sequence = "running"
             self.runtime.running_since = _iso(now)
             self.runtime.start_cause = "observed running without an EMS request"
+            self._clear_start_blocked("generator observed running")
             return GeneratorDecision(
                 sequence="running",
                 action="none",
@@ -347,12 +351,17 @@ class GeneratorCoordinator:
         if operator_request:
             reasons.append("operator requested generator support for a planned load")
         if not reasons:
+            self._clear_start_blocked("no start criterion remains")
             return GeneratorDecision(sequence="idle", reason="no start criterion satisfied")
 
         permissives = self.permissives(inputs, now=now)
         blocked = [p.name for p in permissives if p.blocking]
         if blocked:
-            # SDD 39 EMS-T008: no uncontrolled repeated start request.
+            # SDD 39 EMS-T008: no uncontrolled repeated start request. The
+            # alarm is re-asserted every evaluation while the block holds
+            # (chaos.alarms.published keeps one open row and counts the
+            # assertions) and cleared explicitly when it lifts.
+            self.runtime.start_blocked = True
             self._alarm(
                 "generator_start_blocked",
                 "major" if energy_state == "CRITICAL_RESERVE" else "warning",
@@ -372,7 +381,15 @@ class GeneratorCoordinator:
                 blocked_by=blocked,
             )
 
+        self._clear_start_blocked("permissives satisfied; start requested")
         return self._request_start(inputs, reasons, permissives, now=now)
+
+    def _clear_start_blocked(self, detail: str) -> None:
+        """Withdraw ``generator_start_blocked`` once, when the block has lifted."""
+        if not self.runtime.start_blocked:
+            return
+        self.runtime.start_blocked = False
+        self._event("generator_start_blocked", {"state": "cleared", "detail": detail})
 
     # -- sequence steps ---------------------------------------------------
     def _request_start(
@@ -639,9 +656,11 @@ class GeneratorCoordinator:
         """Publish a generator event on the asset's alarm topic with ``source="ems"``.
 
         Ingest routes these by source rather than resolving them to a point
-        (:mod:`chaos.ingest.service`): ``generator_start_failed`` has an alarm
-        definition and becomes a real alarm through
-        :mod:`chaos.alarms.published`; the sequence events
+        (:mod:`chaos.ingest.service`): ``generator_start_failed`` and
+        ``generator_start_blocked`` have alarm definitions and become real
+        alarms through :mod:`chaos.alarms.published` -- the blocked start is
+        cleared explicitly by :meth:`_clear_start_blocked`, because a published
+        alarm never clears on the publisher's silence; the sequence events
         (``generator_start_requested``, ``generator_stopped``, ...) have none
         and are counted as platform events, with the sequence itself recorded
         in the energy state snapshot. Nothing published here is dead-lettered.
