@@ -10,6 +10,15 @@ namespace Chaos.Host.Supervisor.Processes;
 /// reason, because "we asked nicely" and "there was nobody to ask" must not
 /// look the same in a log.
 /// </summary>
+/// <remarks>
+/// This is the SECOND of the supervisor's three stop paths. The first is the
+/// backend's own loopback stop endpoint (<c>POST /_supervisor/stop</c> with a
+/// per-launch secret, <see cref="Health.BackendStopContract"/>), which works
+/// in every run mode because it needs no console and no signal; a signal is
+/// sent only when that endpoint did not take the request. The third is the
+/// Job Object, after <c>GracefulShutdownTimeout</c>. See
+/// <c>BackendSupervisor.StopChildAsync</c>.
+/// </remarks>
 internal static partial class GracefulSignals
 {
     /// <summary>
@@ -41,14 +50,18 @@ internal static partial class GracefulSignals
     /// <item>
     /// <b>Service mode</b> — the service has no console and starts the child
     /// with <c>CreateNoWindow</c>, so the child has none either.
-    /// <c>AttachConsole</c> fails and there is nothing to send. We say so, and
-    /// the caller escalates to the Job Object after the bounded wait. This is
-    /// the honest answer, not a bug: closing this gap properly needs the child
-    /// launched via raw <c>CreateProcessW</c> with
-    /// <c>CREATE_NEW_PROCESS_GROUP</c>, or a loopback shutdown endpoint on the
-    /// platform itself - <c>src/chaos/api</c> has none today. Both are
-    /// cross-component changes; see docs/advanced-windows-packaging.md,
-    /// "Open items".
+    /// <c>AttachConsole</c> fails and there is nothing to send. We say so.
+    /// This is why the loopback stop endpoint is tried first: a service's
+    /// backend is normally stopped by that request, answers <c>202</c>, and
+    /// shuts uvicorn down itself so its lifespan cleanup runs; this branch is
+    /// reached only when the endpoint did not take the request (a backend
+    /// older than the contract, or one that is alive but not listening), and
+    /// then the caller escalates to the Job Object after the bounded wait.
+    /// Giving the child a console group of its own (raw <c>CreateProcessW</c>
+    /// with <c>CREATE_NEW_PROCESS_GROUP</c>) would make this branch useful in
+    /// service mode too; it is not done, because the endpoint covers the case.
+    /// Only a run as a real Windows service proves uvicorn's handlers execute
+    /// on that path; see docs/advanced-windows-packaging.md, "Open items".
     /// </item>
     /// <item>
     /// <b>Console mode</b> (<c>--console</c>) — the child shares our console.
@@ -131,7 +144,11 @@ internal static partial class GracefulSignals
     /// <summary>
     /// SIGTERM. .NET's <c>Process.Kill()</c> is SIGKILL, which uvicorn cannot
     /// catch, so the platform would never run its shutdown handlers. This is
-    /// the path the Linux integration test exercises.
+    /// the path <c>SystemProcessLauncherTests</c> (Chaos.Host.Supervisor.Tests)
+    /// exercises against a real <c>python3</c> child that traps the signal:
+    /// once directly through <see cref="SystemProcessLauncher"/>, and once
+    /// through the whole supervisor, asserting the child's own exit code and
+    /// that no forced termination was recorded.
     /// </summary>
     [UnsupportedOSPlatform("windows")]
     internal static partial class UnixSignals

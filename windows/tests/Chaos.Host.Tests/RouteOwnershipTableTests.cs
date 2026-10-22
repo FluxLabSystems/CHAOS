@@ -110,6 +110,26 @@ public sealed class RouteOwnershipTableTests
     }
 
     [Fact]
+    public void The_backends_stop_endpoint_is_unclaimed_so_it_can_never_be_reached_through_the_gateway()
+    {
+        // POST /_supervisor/stop is the supervisor's private channel to the
+        // backend (BackendStopContract): loopback only, per-launch secret. The
+        // manifest must never claim it, because a claimed path is a proxied
+        // path, and a proxied stop endpoint would let anyone on the LAN who
+        // guessed the secret stop the control plane. Unclaimed means it falls
+        // through to this host's own pipeline and 404s, like /metrics.
+        var table = RouteOwnershipTable.Build(RouteOwnershipDefaults.Manifest);
+
+        Assert.Null(table.Match("/_supervisor/stop"));
+        Assert.Null(table.Match("/_supervisor"));
+        Assert.Null(table.Match("/_SUPERVISOR/STOP"));
+
+        // And no row could claim it by accident: nothing in the manifest
+        // starts with the underscore prefix.
+        Assert.DoesNotContain(table.Entries, entry => entry.PathPrefix.StartsWith("/_", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void The_gateways_own_routes_are_dotnet_owned()
     {
         var table = RouteOwnershipTable.Build(RouteOwnershipDefaults.Manifest);

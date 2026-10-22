@@ -82,6 +82,10 @@ public static class ServiceCollectionExtensions
         // rotation to worry about and no socket churn from a per-probe client.
         services.TryAddSingleton<IBackendHealthProbe>(_ => new HttpBackendHealthProbe());
 
+        // The same shape for the stop request: the first of the three stop
+        // paths (loopback endpoint, process signal, Job Object).
+        services.TryAddSingleton<IBackendStopRequester>(_ => new HttpBackendStopRequester());
+
         services.TryAddSingleton<IChaosEventSink>(provider => ChaosEventSinkFactory.Create(
             provider.GetRequiredService<IOptions<BackendSupervisorOptions>>().Value,
             provider.GetRequiredService<ILoggerFactory>().CreateLogger("Chaos.Host.Supervisor.Lifecycle")));

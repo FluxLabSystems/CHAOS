@@ -53,6 +53,74 @@ internal sealed class FakeHealthProbe : IBackendHealthProbe
     }
 }
 
+/// <summary>A stop endpoint that is never there, or always takes the request.</summary>
+internal sealed class FakeStopRequester : IBackendStopRequester
+{
+    private readonly Lock _gate = new();
+    private readonly List<(Uri Endpoint, string Secret)> _requests = [];
+
+    /// <summary>What every request is answered with. Not accepted by default.</summary>
+    public BackendStopResult Answer { get; set; } =
+        new(false, "fake: this backend has no stop endpoint (HTTP 404)");
+
+    /// <summary>Runs when a request arrives, before it is answered.</summary>
+    public Action? OnRequest { get; set; }
+
+    public IReadOnlyList<(Uri Endpoint, string Secret)> Requests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return [.. _requests];
+            }
+        }
+    }
+
+    public Task<BackendStopResult> RequestStopAsync(Uri endpoint, string secret, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            _requests.Add((endpoint, secret));
+        }
+
+        OnRequest?.Invoke();
+        return Task.FromResult(Answer);
+    }
+}
+
+/// <summary>An <see cref="HttpMessageHandler"/> the test scripts, for the real HTTP stop requester.</summary>
+internal sealed class FakeHttpHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+{
+    private readonly Lock _gate = new();
+    private readonly List<(HttpMethod Method, Uri? Uri, string? Secret)> _requests = [];
+
+    public IReadOnlyList<(HttpMethod Method, Uri? Uri, string? Secret)> Requests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return [.. _requests];
+            }
+        }
+    }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var secret = request.Headers.TryGetValues(BackendStopContract.SecretHeader, out var values)
+            ? values.FirstOrDefault()
+            : null;
+
+        lock (_gate)
+        {
+            _requests.Add((request.Method, request.RequestUri, secret));
+        }
+
+        return respond(request, cancellationToken);
+    }
+}
+
 /// <summary>A runtime resolver with a fixed answer.</summary>
 internal sealed class FakeRuntimeResolver : IPythonRuntimeResolver
 {
@@ -71,6 +139,9 @@ internal sealed class FakeRuntimeResolver : IPythonRuntimeResolver
     public BackendRuntimeResolution Resolve(BackendSupervisorOptions options) => _resolution;
 
     public void Fail(string detail) => _resolution = BackendRuntimeResolution.Failure(detail, ["fake"]);
+
+    /// <summary>Resolves to <paramref name="runtime"/> instead - a real interpreter, for the real-process tests.</summary>
+    public void Use(BackendRuntimeDescriptor runtime) => _resolution = BackendRuntimeResolution.Success(runtime, ["fake: fixed"]);
 }
 
 /// <summary>Records lifecycle events so tests can assert what an operator sees.</summary>

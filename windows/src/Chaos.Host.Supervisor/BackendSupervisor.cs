@@ -41,6 +41,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
     private readonly IPythonRuntimeResolver _resolver;
     private readonly IProcessLauncher _launcher;
     private readonly IBackendHealthProbe _probe;
+    private readonly IBackendStopRequester _stopRequester;
     private readonly IClock _clock;
     private readonly IChaosEventSink _events;
     private readonly ILogger<BackendSupervisor> _logger;
@@ -75,6 +76,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         IPythonRuntimeResolver resolver,
         IProcessLauncher launcher,
         IBackendHealthProbe probe,
+        IBackendStopRequester stopRequester,
         IClock clock,
         IChaosEventSink events,
         ILogger<BackendSupervisor> logger)
@@ -83,6 +85,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
             resolver,
             launcher,
             probe,
+            stopRequester,
             clock,
             events,
             logger,
@@ -95,6 +98,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         IPythonRuntimeResolver resolver,
         IProcessLauncher launcher,
         IBackendHealthProbe probe,
+        IBackendStopRequester stopRequester,
         IClock clock,
         IChaosEventSink events,
         ILogger<BackendSupervisor> logger,
@@ -104,6 +108,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
+        _stopRequester = stopRequester ?? throw new ArgumentNullException(nameof(stopRequester));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -454,7 +459,12 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
                 $"Backend runtime: {runtime.Description}");
         }
 
-        var spec = BuildStartSpec(runtime);
+        // One secret per launch. It reaches the child through its environment
+        // and comes back in the stop request's header; it is never logged and
+        // never reported, so the only two parties that ever see it are the
+        // two that need to agree on it.
+        var stopSecret = BackendStopContract.NewSecret();
+        var spec = BuildStartSpec(runtime, stopSecret);
         ResetStandardErrorTail();
 
         ISupervisedProcess process;
@@ -490,7 +500,7 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         }
         finally
         {
-            await StopChildAsync(process, "attempt finished").ConfigureAwait(false);
+            await StopChildAsync(process, "attempt finished", stopSecret).ConfigureAwait(false);
             SetProcessId(null);
             process.Dispose();
         }
@@ -682,7 +692,27 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
     /// Ask, wait, then kill. The wait is bounded because a control system that
     /// hangs on shutdown never comes back up either.
     /// </summary>
-    private async Task StopChildAsync(ISupervisedProcess process, string why)
+    /// <remarks>
+    /// <para>
+    /// Three stop paths, tried in order, and the log says which one worked:
+    /// </para>
+    /// <list type="number">
+    /// <item><b>The loopback stop endpoint.</b> <c>POST /_supervisor/stop</c>
+    /// with the per-launch secret (<see cref="BackendStopContract"/>). The
+    /// backend answers <c>202</c> and shuts uvicorn down itself, so its
+    /// lifespan cleanup runs. This is the only path that works for a Windows
+    /// service, whose child has no console to signal.</item>
+    /// <item><b>A process signal.</b> <c>SIGTERM</c>, or a console
+    /// <c>CTRL_BREAK</c> on Windows where one can be delivered
+    /// (<see cref="GracefulSignals"/>). Tried only when the endpoint did not
+    /// take the request: a backend older than the contract answers 404, a
+    /// backend that is alive but not listening is unreachable, and either is
+    /// a reason to fall back rather than to give up.</item>
+    /// <item><b>The Job Object.</b> After <see cref="BackendSupervisorOptions.GracefulShutdownTimeout"/>
+    /// the tree is terminated. Recorded as a forced termination, because it is one.</item>
+    /// </list>
+    /// </remarks>
+    private async Task StopChildAsync(ISupervisedProcess process, string why, string stopSecret)
     {
         if (process.HasExited)
         {
@@ -694,29 +724,57 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
             process.Id,
             why);
 
-        bool asked;
-        string signalDetail;
+        // 1. The loopback stop endpoint.
+        string? askedVia = null;
+        BackendStopResult stop;
         try
         {
-            asked = process.TryRequestGracefulShutdown(out signalDetail);
+            stop = await _stopRequester
+                .RequestStopAsync(_options.StopEndpoint, stopSecret, _options.StopRequestTimeout, CancellationToken.None)
+                .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            asked = false;
-            signalDetail = $"{ex.GetType().Name}: {ex.Message}";
+            stop = new BackendStopResult(false, $"the stop request failed: {ex.GetType().Name}: {ex.Message}");
         }
 
-        if (asked)
+        if (stop.Accepted)
         {
-            _logger.LogInformation("Asked the backend to stop: {Detail}", signalDetail);
+            askedVia = "the loopback stop endpoint";
+            _logger.LogInformation("Asked the backend to stop over loopback: {Detail}", stop.Detail);
         }
         else
         {
-            _logger.LogWarning(
-                "No graceful stop channel to the backend ({Detail}). Waiting {Timeout:0.#}s, then killing " +
-                "the process tree.",
-                signalDetail,
-                _options.GracefulShutdownTimeout.TotalSeconds);
+            _logger.LogInformation(
+                "The loopback stop endpoint did not take the stop request ({Detail}); falling back to a process signal.",
+                stop.Detail);
+
+            // 2. A process signal.
+            bool asked;
+            string signalDetail;
+            try
+            {
+                asked = process.TryRequestGracefulShutdown(out signalDetail);
+            }
+            catch (Exception ex)
+            {
+                asked = false;
+                signalDetail = $"{ex.GetType().Name}: {ex.Message}";
+            }
+
+            if (asked)
+            {
+                askedVia = "a process signal";
+                _logger.LogInformation("Asked the backend to stop: {Detail}", signalDetail);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "No graceful stop channel to the backend ({Detail}). Waiting {Timeout:0.#}s, then killing " +
+                    "the process tree.",
+                    signalDetail,
+                    _options.GracefulShutdownTimeout.TotalSeconds);
+            }
         }
 
         var exited = process.WaitForExitAsync(CancellationToken.None);
@@ -736,17 +794,20 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
                 code = null;
             }
 
-            _logger.LogInformation("The backend exited cleanly with code {ExitCode}.", code);
+            var via = askedVia ?? "no graceful channel, on its own";
+            _logger.LogInformation("The backend exited cleanly with code {ExitCode} ({Via}).", code, via);
             RecordExit(
                 code,
-                $"stopped on request; exit code {code?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}");
+                $"stopped on request via {via}; exit code {code?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}");
             return;
         }
 
+        // 3. The Job Object (or the process tree, where there is no job).
         process.Kill(out var killDetail);
         var message =
             $"The backend did not exit within {Describe(_options.GracefulShutdownTimeout)} of the stop " +
-            $"request, so it was terminated: {killDetail}";
+            $"request ({(askedVia is null ? "no graceful channel was available" : "asked via " + askedVia)}), " +
+            $"so it was terminated: {killDetail}";
         _logger.LogWarning("{Message}", message);
         _events.Write(ChaosEventId.ForcedTermination, ChaosEventLevel.Warning, message);
 
@@ -758,8 +819,13 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
 
     // -- Child process specification --------------------------------------
 
-    internal ProcessStartSpec BuildStartSpec(BackendRuntimeDescriptor runtime)
+    internal ProcessStartSpec BuildStartSpec(BackendRuntimeDescriptor runtime) =>
+        BuildStartSpec(runtime, BackendStopContract.NewSecret());
+
+    internal ProcessStartSpec BuildStartSpec(BackendRuntimeDescriptor runtime, string stopSecret)
     {
+        ArgumentException.ThrowIfNullOrEmpty(stopSecret);
+
         var arguments = new List<string>(runtime.BaseArguments)
         {
             // Launch the platform through its own CLI rather than reimplementing
@@ -803,6 +869,11 @@ public sealed class BackendSupervisor : IBackendSupervisor, IBackendSupervisorDi
         {
             environment[key] = value;
         }
+
+        // After the operator's overrides, on purpose: the secret is per launch
+        // and only the supervisor knows what it will send, so a value from
+        // homestead.env would only make the stop endpoint refuse every request.
+        environment[BackendStopContract.SecretEnvironmentVariable] = stopSecret;
 
         return new ProcessStartSpec
         {
