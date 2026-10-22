@@ -169,7 +169,7 @@ flowchart TB
 
 | Level | Scope | In this repository | Status |
 |---|---|---|---|
-| 4 | Long-term models, forecasting, scenario simulation, budget linkage | The maintenance scheduler produces due-work forecasts. Nothing else | **Not built** |
+| 4 | Long-term models, forecasting, scenario simulation, budget linkage | The maintenance scheduler produces due-work forecasts, and the EMS estimates PV from solar geometry (clear-sky, no weather feed; inactive until the site survey supplies coordinates). Nothing else | **Not built** |
 | 3 | Registry, event engine, supervisory rules, dashboards, command service, alerts, work orders | `registry/`, `commands/`, `alarms/`, `maintenance/`, `api/`, `web/` | **Implemented** |
 | 2 | Energy, irrigation, greenhouse, water plant, container environment, security, spa | `ems/` only | **Energy implemented; every other coordinator not built** |
 | 1 | PLCs, inverter/BMS controls, ESP32 nodes, long-range radio, relays, environmental monitors | Out of scope — real hardware. `src/simulator/` stands in during development | **Simulated only** |
@@ -348,7 +348,9 @@ over real tables · 2250 Python tests.
 
 Home Assistant integration · Node-RED flows · property-map rendering on a real
 map · dedicated wall-display views beyond the console's wall mode · Level 4
-forecasting, prediction and scenario simulation · subsystem coordinators for
+forecasting, prediction and scenario simulation (the EMS carries a clear-sky PV
+estimate from solar geometry — no weather feed, and inactive until the site survey
+supplies coordinates) · subsystem coordinators for
 water, irrigation, greenhouse, compost, nitrogen storage, spa and security ·
 SNMP/Modbus polling of real devices (the [plugin system](./plugins.md) is where
 it would go, and the NetBotz plugin is the worked example) · camera and NVR

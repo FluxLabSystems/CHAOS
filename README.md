@@ -30,7 +30,7 @@ Three consequences run through everything here:
 
 | Capability | Where you use it |
 |---|---|
-| Asset and point registry — 90 assets, 701 points, 245 bindings | Console → **Assets** |
+| Asset and point registry — 90 assets, 702 points, 245 bindings | Console → **Assets** |
 | Telemetry ingest, current state, historian, dead letters | Console → **Home**, **Assets** |
 | Energy-management state machine, load shedding, budget leases | Console → **Energy** |
 | Alarm evaluation, incident correlation, notification | Console → **Alarms** |
@@ -212,7 +212,9 @@ the .NET gateway with first-run setup · the WinUI 3 desktop shell ·
 ### Not built
 
 Home Assistant integration · Node-RED flows · property-map rendering on a real
-map · Level 4 forecasting and scenario simulation · subsystem coordinators for
+map · Level 4 forecasting and scenario simulation (the EMS carries a clear-sky PV
+estimate from solar geometry — no weather feed, and inactive until the site survey
+supplies coordinates) · subsystem coordinators for
 water, irrigation, greenhouse, compost, nitrogen storage, spa and security ·
 SNMP/Modbus polling of real devices (the plugin system is where it would go) ·
 camera and NVR integration · voice escalation · the document library.
