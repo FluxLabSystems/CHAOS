@@ -382,9 +382,12 @@ function deadLetterCard() {
     return card({ title: 'Dead letters', status: 'unknown', children: resultProblem(result, 'ingest statistics') });
   }
   const database = result.data.database || {};
+  // `ingest` is the IngestService.stats() block, or null on a node without
+  // ingest; its counters sit under `counters` with the writer's own names.
   const ingest = result.data.ingest;
+  const counters = ingest && ingest.counters ? ingest.counters : null;
   const total = database.dead_letters;
-  const sinceStart = ingest && typeof ingest.dead_lettered === 'number' ? ingest.dead_lettered : null;
+  const sinceStart = counters && typeof counters.dead_lettered === 'number' ? counters.dead_lettered : null;
   const status = sinceStart ? 'degraded' : (total ? 'stale' : 'ok');
   return card({
     title: 'Dead letters',
@@ -403,8 +406,10 @@ function deadLetterCard() {
         ['Ingest service', result.data.ingest_running
           ? statusChip('ok', 'running')
           : statusChip(ingest ? 'degraded' : 'not_deployed', ingest ? 'stopped' : 'not on this node')],
-        ['Received / written', ingest ? `${ingest.received ?? '—'} / ${ingest.written ?? '—'}` : '—'],
-        ['Out of order · stale-marked', ingest ? `${ingest.out_of_order ?? '—'} · ${ingest.stale_marked ?? '—'}` : '—'],
+        ['Received / written', counters ? `${counters.messages_received ?? '—'} / ${counters.messages_written ?? '—'}` : '—'],
+        ['Out of order · stale-marked', counters ? `${counters.out_of_order ?? '—'} · ${counters.stale_marked ?? '—'}` : '—'],
+        ['Last message', ingest && ingest.last_message_at ? fmtAge(ingest.last_message_at) : (ingest ? 'none since start' : '—')],
+        ['Last error', ingest && ingest.last_error ? ingest.last_error : 'none'],
         ['Source', 'GET /telemetry/stats'],
       ]),
     ],

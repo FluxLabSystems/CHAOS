@@ -53,6 +53,10 @@ def test_home_reads_the_counts_the_daily_check_names():
     assert "api.deadLetters(" in text
     assert "/telemetry/stats" in api and "/telemetry/dead-letters" in api
     assert "dead_letters" in text, "the count must be the database figure, not a page length"
+    # The ingest counters live under stats.ingest.counters with the writer's
+    # own names; reading them off the top level would show dashes forever.
+    assert "ingest.counters" in text
+    assert "counters.messages_received" in text and "counters.dead_lettered" in text
     # Stale points: the API's own not-trusted list, plus the overview's age-based count.
     assert "api.stalePoints(" in text
     assert "/telemetry/stale" in api
