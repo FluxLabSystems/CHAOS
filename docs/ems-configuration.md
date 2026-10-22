@@ -237,3 +237,29 @@ calibration, and keeping the published pairing avoids presenting a hybrid as
 either source. These are textbook relationships, not a site calibration:
 cloud, snow, soiling and aerosol are not modelled, and every forecast value
 says so in its `assumptions`.
+
+### What the forecast knows about the site
+
+Both inputs come from the registry, and both are honest about their status:
+
+- **Where the site is — unknown, so the clear-sky forecast is inactive.** The
+  shipped register has no coordinates anywhere. `site.site.primary.01`
+  carries an empty `location` mapping, so the registry loader writes no
+  `locations` row for it, and `property_coordinates` is one of its
+  `open_fields`; the thirty `locations` rows the loader does write — one for
+  every asset whose record carries a `location` mapping — hold no latitude or
+  longitude either (`coordinates_status: TBD`). The forecaster therefore falls
+  back to the persistence placeholder and says why in every value:
+  *site coordinates are an open field in the register (property_coordinates);
+  clear-sky geometry unavailable*. The survey resolves it by supplying
+  latitude, longitude and elevation on the site's `location`, or as
+  `latitude` / `longitude` properties on the site asset; nothing is defaulted
+  in the meantime.
+- **How the array is rated — a target, not a procurement.**
+  `energy.pv_array.agrivoltaic_field.01` carries `rated_kwdc: 45` with
+  `rated_kwdc_status: revised_design_target`: the revised figure of the
+  energy capacity revision, [DD-001](./design-decisions/DD-001-energy-capacity-revision.md),
+  which is **unresolved** (the predecessor design was 26.4 kWdc). Every
+  clear-sky forecast names the rating and that status in its assumptions
+  (*array 45 kW (revised_design_target)*), so a reader can see the forecast
+  rests on a design target the owner has not ratified.

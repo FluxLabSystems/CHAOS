@@ -369,10 +369,18 @@ def test_registry_geometry_is_read_not_invented(db_session):
     assert not unavailable.available
     assert "property_coordinates" in unavailable.unavailable_reasons()[0]
 
-    # Once the survey lands as a locations row the geometry becomes available.
-    db_session.add(
-        Location(asset_id="site.site.primary.01", latitude=45.0, longitude=-75.0, elevation_m=120.0)
-    )
+    # A locations row without numbers -- what the loader writes for every asset
+    # whose record carries a location mapping, coordinates_status TBD -- is no
+    # better than none: still unavailable, still for the same stated reason.
+    row = Location(asset_id="site.site.primary.01")
+    db_session.add(row)
+    db_session.flush()
+    still_unavailable = registry_forecast(db_session, site_id="site.site.primary.01")
+    assert not still_unavailable.available
+    assert "property_coordinates" in still_unavailable.unavailable_reasons()[0]
+
+    # Once the survey supplies the numbers the geometry becomes available.
+    row.latitude, row.longitude, row.elevation_m = 45.0, -75.0, 120.0
     db_session.flush()
     located = registry_forecast(db_session, site_id="site.site.primary.01")
     assert located.available

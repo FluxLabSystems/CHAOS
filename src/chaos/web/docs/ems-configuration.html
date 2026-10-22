@@ -174,9 +174,31 @@ difference is far inside the uncertainty of a clear-sky fit with no site
 calibration, and keeping the published pairing avoids presenting a hybrid as
 either source. These are textbook relationships, not a site calibration:
 cloud, snow, soiling and aerosol are not modelled, and every forecast value
-says so in its <code>assumptions</code>.</p></div><nav class="doc-pager" aria-label="Reading order"><a class="pager-prev" href="advanced-windows-packaging.html" data-page="advanced-windows-packaging"><span class="pager-role">Previous</span>Windows packaging</a><a class="pager-next" href="design-decisions-dd-001-energy-capacity-revision.html" data-page="design-decisions-dd-001-energy-capacity-revision"><span class="pager-role">Next</span>DD-001: Authoritative energy design revision</a></nav></article>
+says so in its <code>assumptions</code>.</p>
+<h3 id="what-the-forecast-knows-about-the-site" class="doc-h"><span class="doc-h-text">What the forecast knows about the site</span><a class="doc-anchor" href="#what-the-forecast-knows-about-the-site" aria-label="Link to this section"></a></h3>
+<p>Both inputs come from the registry, and both are honest about their status:</p>
+<ul><li><strong>Where the site is — unknown, so the clear-sky forecast is inactive.</strong> The
+shipped register has no coordinates anywhere. <code>site.site.primary.01</code>
+carries an empty <code>location</code> mapping, so the registry loader writes no
+<code>locations</code> row for it, and <code>property_coordinates</code> is one of its
+<code>open_fields</code>; the thirty <code>locations</code> rows the loader does write — one for
+every asset whose record carries a <code>location</code> mapping — hold no latitude or
+longitude either (<code>coordinates_status: TBD</code>). The forecaster therefore falls
+back to the persistence placeholder and says why in every value:
+<em>site coordinates are an open field in the register (property_coordinates);
+clear-sky geometry unavailable</em>. The survey resolves it by supplying
+latitude, longitude and elevation on the site's <code>location</code>, or as
+<code>latitude</code> / <code>longitude</code> properties on the site asset; nothing is defaulted
+in the meantime.</li><li><strong>How the array is rated — a target, not a procurement.</strong>
+<code>energy.pv_array.agrivoltaic_field.01</code> carries <code>rated_kwdc: 45</code> with
+<code>rated_kwdc_status: revised_design_target</code>: the revised figure of the
+energy capacity revision, <a href="design-decisions-dd-001-energy-capacity-revision.html">DD-001</a>,
+which is <strong>unresolved</strong> (the predecessor design was 26.4 kWdc). Every
+clear-sky forecast names the rating and that status in its assumptions
+(<em>array 45 kW (revised_design_target)</em>), so a reader can see the forecast
+rests on a design target the owner has not ratified.</li></ul></div><nav class="doc-pager" aria-label="Reading order"><a class="pager-prev" href="advanced-windows-packaging.html" data-page="advanced-windows-packaging"><span class="pager-role">Previous</span>Windows packaging</a><a class="pager-next" href="design-decisions-dd-001-energy-capacity-revision.html" data-page="design-decisions-dd-001-energy-capacity-revision"><span class="pager-role">Next</span>DD-001: Authoritative energy design revision</a></nav></article>
 </main>
-<aside class="site-toc" aria-label="On this page"><h2>On this page</h2><ul><li data-level="2"><a href="#1-the-effective-configuration" data-anchor="1-the-effective-configuration">1. The effective configuration</a></li><li data-level="3"><a href="#where-the-variable-is-read" data-anchor="where-the-variable-is-read">Where the variable is read</a></li><li data-level="2"><a href="#2-the-file" data-anchor="2-the-file">2. The file</a></li><li data-level="2"><a href="#3-what-happens-when-the-file-is-wrong" data-anchor="3-what-happens-when-the-file-is-wrong">3. What happens when the file is wrong</a></li><li data-level="2"><a href="#4-the-thermal-derate-curves" data-anchor="4-the-thermal-derate-curves">4. The thermal derate curves</a></li><li data-level="2"><a href="#5-the-configuration-revision-sdd-39-ems-t015" data-anchor="5-the-configuration-revision-sdd-39-ems-t015">5. The configuration revision (SDD 39 EMS-T015)</a></li><li data-level="2"><a href="#6-reading-it-back" data-anchor="6-reading-it-back">6. Reading it back</a></li><li data-level="2"><a href="#7-what-this-does-not-do" data-anchor="7-what-this-does-not-do">7. What this does not do</a></li><li data-level="2"><a href="#8-the-pv-forecast-one-clear-sky-model" data-anchor="8-the-pv-forecast-one-clear-sky-model">8. The PV forecast: one clear-sky model</a></li></ul></aside>
+<aside class="site-toc" aria-label="On this page"><h2>On this page</h2><ul><li data-level="2"><a href="#1-the-effective-configuration" data-anchor="1-the-effective-configuration">1. The effective configuration</a></li><li data-level="3"><a href="#where-the-variable-is-read" data-anchor="where-the-variable-is-read">Where the variable is read</a></li><li data-level="2"><a href="#2-the-file" data-anchor="2-the-file">2. The file</a></li><li data-level="2"><a href="#3-what-happens-when-the-file-is-wrong" data-anchor="3-what-happens-when-the-file-is-wrong">3. What happens when the file is wrong</a></li><li data-level="2"><a href="#4-the-thermal-derate-curves" data-anchor="4-the-thermal-derate-curves">4. The thermal derate curves</a></li><li data-level="2"><a href="#5-the-configuration-revision-sdd-39-ems-t015" data-anchor="5-the-configuration-revision-sdd-39-ems-t015">5. The configuration revision (SDD 39 EMS-T015)</a></li><li data-level="2"><a href="#6-reading-it-back" data-anchor="6-reading-it-back">6. Reading it back</a></li><li data-level="2"><a href="#7-what-this-does-not-do" data-anchor="7-what-this-does-not-do">7. What this does not do</a></li><li data-level="2"><a href="#8-the-pv-forecast-one-clear-sky-model" data-anchor="8-the-pv-forecast-one-clear-sky-model">8. The PV forecast: one clear-sky model</a></li><li data-level="3"><a href="#what-the-forecast-knows-about-the-site" data-anchor="what-the-forecast-knows-about-the-site">What the forecast knows about the site</a></li></ul></aside>
 </div>
 <div class="site-search" id="search-overlay" hidden role="dialog" aria-modal="true" aria-label="Search the documentation">
 <div class="site-search-panel">

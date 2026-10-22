@@ -24,10 +24,16 @@ forecast, and every value it produces says so. What it adds is *geometry*:
 
 Everything the model needs about the site comes from the registry and nothing
 is invented: the site record carries the timezone and, once surveyed, the
-coordinates; the PV array record carries the rating, tilt and orientation.
-Until the owner supplies coordinates (``property_coordinates`` is an open
-field on the site asset today) the clear-sky geometry is *unavailable* and the
-forecaster falls back to the documented persistence placeholder, saying why.
+coordinates; the PV array record carries the rating, tilt and orientation. The
+shipped register has no coordinates anywhere -- the site's ``location`` mapping
+is empty, so the loader writes no ``locations`` row for it, ``property_coordinates``
+is one of its open fields, and the rows the loader does write for other assets
+carry no latitude or longitude (``coordinates_status: TBD``) -- so the
+clear-sky geometry is *unavailable* and the forecaster falls back to the
+documented persistence placeholder, saying why. The array rating it reads,
+45 kWdc, carries the status ``revised_design_target`` because the energy
+capacity revision (DD-001) is unresolved; every forecast assumption names
+that status alongside the rating.
 """
 
 from __future__ import annotations
@@ -239,9 +245,13 @@ def _number(value: Any) -> float | None:
 def site_geometry(session: Session, site_id: str) -> SiteGeometry:
     """Read the site's coordinates, elevation and timezone from the registry.
 
-    Coordinates come from the ``locations`` row the loader writes only when the
-    register actually supplies numbers; the site asset's properties are the
-    fallback. Nothing is defaulted.
+    Coordinates come from the site's ``locations`` row when the loader has
+    written one -- it writes a row for every asset whose register record
+    carries a ``location`` mapping, and fills latitude and longitude only when
+    the register supplies numbers -- with the site asset's own ``latitude`` /
+    ``longitude`` properties as the fallback. In the shipped register the
+    site's ``location`` is empty, so it has no row at all, and no row the
+    other assets get carries coordinates. Nothing is defaulted.
     """
     asset = session.get(Asset, site_id)
     if asset is None:
