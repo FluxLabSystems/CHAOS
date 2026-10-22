@@ -317,13 +317,18 @@ would have run and exits `3` rather than pretending.
 switches are the hand path, and the installer's alternative
 `ChaosServiceRegistration=host` build calls exactly the same two commands.
 
-One difference between the two paths is worth knowing: the MSI's recovery
-policy restarts the service after a crash, but does not set the failure flag, so
-a service that *stops itself with an error* — which is what the backend
-supervisor does when its circuit breaker trips, see
-[Troubleshooting § It starts, then stops](./troubleshooting.md#56-it-starts-then-stops-then-starts-again)
-— is restarted by SCM only after `sc failureflag ChaosHost 1` has been run once,
-elevated. `--install-service` does that for you.
+The two paths register the same things — the service, its recovery policy, the
+failure flag that makes SCM count a service that *stops itself with an error*
+(which is what the backend supervisor does when its circuit breaker trips, see
+[Troubleshooting § It starts, then stops](./troubleshooting.md#56-it-starts-then-stops-then-starts-again))
+and the `Project CHAOS` Event Log source — but not with the same cadence: the
+MSI's policy restarts the service after 60 s every time, `--install-service`
+after 5 s, then 15 s, then every 60 s. The MSI's failure flag and Event Log
+source are authored declaratively and have not yet been proven on a Windows
+install (see [Windows packaging § Open items](./advanced-windows-packaging.md#open-items));
+on an install made from an older MSI, or if that proof fails, `sc failureflag
+ChaosHost 1` once, elevated, is still the fix, and `--install-service` does it
+for you.
 
 ### What the gateway runs on a schedule
 

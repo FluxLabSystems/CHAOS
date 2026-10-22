@@ -198,10 +198,12 @@ public sealed class BackendSupervisorOptions
     // -- Windows Event Log -------------------------------------------------
 
     /// <summary>
-    /// Event Log source. Registered, elevated, by <c>--install-service</c>
-    /// (docs/advanced-command-line.md, "The gateway's own switches"); the MSI
-    /// does not register it, and without it lifecycle events go to the log
-    /// file only - <see cref="Events.ChaosEventSinkFactory"/> says which at startup.
+    /// Event Log source. Registered by the MSI (<c>util:EventSource</c> in
+    /// <c>windows/installer/Service.wxs</c>, whose name must match this) and,
+    /// elevated, by <c>--install-service</c> (docs/advanced-command-line.md,
+    /// "The gateway's own switches"); without it lifecycle events go to the
+    /// log file only - <see cref="Events.ChaosEventSinkFactory"/> says which
+    /// at startup.
     /// </summary>
     public string EventLogSource { get; set; } = "Project CHAOS";
 

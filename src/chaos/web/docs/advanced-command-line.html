@@ -204,13 +204,17 @@ would have run and exits <code>3</code> rather than pretending.</p>
 (<code>ChaosServiceRegistration=msi</code>, the default) and owns its rollback; the
 switches are the hand path, and the installer's alternative
 <code>ChaosServiceRegistration=host</code> build calls exactly the same two commands.</p>
-<p>One difference between the two paths is worth knowing: the MSI's recovery
-policy restarts the service after a crash, but does not set the failure flag, so
-a service that <em>stops itself with an error</em> — which is what the backend
-supervisor does when its circuit breaker trips, see
-<a href="troubleshooting.html#56-it-starts-then-stops-then-starts-again">Troubleshooting § It starts, then stops</a>
-— is restarted by SCM only after <code>sc failureflag ChaosHost 1</code> has been run once,
-elevated. <code>--install-service</code> does that for you.</p>
+<p>The two paths register the same things — the service, its recovery policy, the
+failure flag that makes SCM count a service that <em>stops itself with an error</em>
+(which is what the backend supervisor does when its circuit breaker trips, see
+<a href="troubleshooting.html#56-it-starts-then-stops-then-starts-again">Troubleshooting § It starts, then stops</a>)
+and the <code>Project CHAOS</code> Event Log source — but not with the same cadence: the
+MSI's policy restarts the service after 60 s every time, <code>--install-service</code>
+after 5 s, then 15 s, then every 60 s. The MSI's failure flag and Event Log
+source are authored declaratively and have not yet been proven on a Windows
+install (see <a href="advanced-windows-packaging.html#open-items">Windows packaging § Open items</a>);
+on an install made from an older MSI, or if that proof fails, <code>sc failureflag ChaosHost 1</code> once, elevated, is still the fix, and <code>--install-service</code> does it
+for you.</p>
 <h3 id="what-the-gateway-runs-on-a-schedule" class="doc-h"><span class="doc-h-text">What the gateway runs on a schedule</span><a class="doc-anchor" href="#what-the-gateway-runs-on-a-schedule" aria-label="Link to this section"></a></h3>
 <p>An installed node is backed up without anyone typing <a href="#5-backup">§ 5</a>. Once a
 day the gateway runs the platform's own CLI, through the same runner first-run
