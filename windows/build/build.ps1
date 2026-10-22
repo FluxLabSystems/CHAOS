@@ -246,7 +246,25 @@ function Invoke-Stage {
         Stop-Chaos -Message 'Nothing published yet.' -Hint 'Run .\build.ps1 -Task publish first, or use -Task all.'
     }
     Copy-ChaosTree -Source $hostOut -Destination $paths.Stage
-    if (Test-Path $shellOut) { Copy-ChaosTree -Source $shellOut -Destination $paths.Stage }
+    if (Test-Path $shellOut) {
+        # The shell is staged over the host's files; identical copies are fine
+        # and Copy-ChaosTree refuses differing ones.  Two files can never be
+        # identical: System.Diagnostics.EventLog.dll and its Messages resource
+        # DLL.  The host is an ASP.NET Core app and ships the shared
+        # framework's ReadyToRun copies (NU1510 refuses a package reference
+        # there); the shell gets the NuGet package's IL build through
+        # System.ServiceProcess.ServiceController.  Same assembly identity
+        # (10.0.0.0), different bytes.  The host's copies stay and the shell's
+        # are skipped: the shell binds by assembly identity through its own
+        # .deps.json, and the file it finds satisfies that.  Everything else
+        # the two publishes share must still be byte-identical, which is what
+        # the ServiceController pin in Chaos.Host.csproj is for.
+        $sharedFrameworkOverlap = @(
+            'System.Diagnostics.EventLog.dll'
+            'System.Diagnostics.EventLog.Messages.dll'
+        )
+        Copy-ChaosTree -Source $shellOut -Destination $paths.Stage -ExcludeFile $sharedFrameworkOverlap
+    }
 
     # 4. An operator CLI shim.
     #

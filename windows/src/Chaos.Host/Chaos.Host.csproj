@@ -32,7 +32,21 @@
 
   <ItemGroup>
     <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
+    <!--
+      The host and the shell are published side by side into one folder by
+      windows/build/build.ps1, which refuses two copies of a file with
+      different content. System.ServiceProcess.ServiceController reaches the
+      host through Microsoft.Extensions.Hosting.WindowsServices and the shell
+      through its own reference, so both stay on the 10.0.x servicing version
+      the shell and the supervisor pin (the first packaging run on GitHub
+      failed on exactly this: 10.0.0 here against 10.0.10 there).
+      System.Diagnostics.EventLog is not pinned here on purpose: this is an
+      ASP.NET Core app, so it ships the shared framework's copy (NU1510 refuses
+      a package reference), and the stage step keeps that copy over the
+      shell's - see Invoke-Stage in build.ps1.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.10" />
   </ItemGroup>
 
   <!--
