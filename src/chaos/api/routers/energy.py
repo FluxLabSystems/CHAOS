@@ -26,7 +26,15 @@ from sqlalchemy.orm import Session
 
 from chaos.api.deps import AppSettings, Bus, CurrentPrincipal, DbSession, OperatorPrincipal
 from chaos.config import Settings
-from chaos.ems.config import DEFAULT_CONFIG, EmsConfig, energy_state_topic
+from chaos.ems.config import (
+    EMS_CONFIG_FILE_ENV,
+    EMS_CONFIG_TARGET_TYPE,
+    EmsConfig,
+    EmsConfigError,
+    EmsConfigLoad,
+    energy_state_topic,
+    load_ems_config,
+)
 from chaos.ems.derived import DerivedEnergyState, compute_derived
 from chaos.ems.forecast import registry_forecast
 from chaos.ems.inputs import EmsInputs, gather_inputs
@@ -46,8 +54,25 @@ from chaos.models.energy import LATCHING_ENERGY_STATES, PowerBudgetLease
 router = APIRouter(prefix="/energy", tags=["energy"])
 
 
-def _config() -> EmsConfig:
-    return DEFAULT_CONFIG
+def _load_config(session: Session, settings: Settings) -> EmsConfigLoad:
+    """The effective EMS configuration, reconciled with its configuration revision.
+
+    Every endpoint evaluates with the same configuration the service runs on:
+    the defaults overridden by the file ``CHAOS_EMS_CONFIG_FILE`` names. A file
+    that cannot be applied is a deployment fault and is reported as such with
+    its reasons, never silently replaced by the defaults it was meant to
+    override.
+    """
+    try:
+        return load_ems_config(session, settings=settings)
+    except EmsConfigError as exc:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, f"EMS configuration unavailable: {exc}"
+        ) from exc
+
+
+def _config(session: Session, settings: Settings) -> EmsConfig:
+    return _load_config(session, settings).config
 
 
 def _evaluate(
@@ -58,7 +83,7 @@ def _evaluate(
     Mirrors one service tick: the live shed state feeds the derived layer and
     the PV forecast is the registry-derived clear-sky model.
     """
-    config = _config()
+    config = _config(session, settings)
     profiles = load_profiles(session)
     inputs = gather_inputs(session, now, config, load_asset_ids=[profile.asset_id for profile in profiles])
     states = current_load_states(session, inputs, now=now, config=config)
@@ -148,7 +173,7 @@ def freeze_state(
     principal: OperatorPrincipal,
 ) -> dict[str, Any]:
     now = utcnow()
-    machine = EnergyStateMachine(_config(), settings)
+    machine = EnergyStateMachine(_config(session, settings), settings)
     try:
         if payload.release:
             snapshot = machine.unfreeze(session, actor=principal.name, reason=payload.reason, now=now)
@@ -189,7 +214,7 @@ def clear_latch(
     principal: OperatorPrincipal,
 ) -> dict[str, Any]:
     now = utcnow()
-    machine = EnergyStateMachine(_config(), settings)
+    machine = EnergyStateMachine(_config(session, settings), settings)
     try:
         snapshot = machine.clear_latch(
             session,
@@ -209,6 +234,36 @@ def clear_latch(
 
 
 # ---------------------------------------------------------------------------
+# Configuration (SDD 30.2, 39 EMS-T015)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/config", summary="Effective EMS configuration and its provenance (read-only)")
+def get_config(session: DbSession, settings: AppSettings) -> dict[str, Any]:
+    """The configuration the EMS runs on, where it came from, and its revision.
+
+    Read-only: overrides are made in the file ``CHAOS_EMS_CONFIG_FILE`` names
+    and take effect when the EMS module next loads them. Reading reconciles the
+    effective configuration with ``configuration_revisions`` exactly as the
+    service does, so a node that runs no EMS (the secondary) still reports the
+    revision the configuration would be.
+    """
+    load = _load_config(session, settings)
+    session.commit()
+    body = load.as_dict()
+    body["target"] = {"target_type": EMS_CONFIG_TARGET_TYPE, "target_id": settings.site_id}
+    body["notes"] = [
+        "Every value is a commissioning parameter (SDD 30.2), never a fact about the homestead.",
+        f"Overrides come from the file {EMS_CONFIG_FILE_ENV} names, read by the EMS module; "
+        "this endpoint is read-only.",
+        "A change in the effective configuration is one auditable configuration revision "
+        "(SDD 39 EMS-T015). Approval is an owner decision made outside the platform, so "
+        "approved_by is recorded as null rather than assumed.",
+    ]
+    return body
+
+
+# ---------------------------------------------------------------------------
 # Load budgets and leases (SDD 31.4)
 # ---------------------------------------------------------------------------
 
@@ -216,7 +271,7 @@ def clear_latch(
 @router.get("/load-budgets", summary="Power budgets and active leases")
 def get_load_budgets(session: DbSession, settings: AppSettings) -> dict[str, Any]:
     now = utcnow()
-    config = _config()
+    config = _config(session, settings)
     manager = LeaseManager(config)
     _, derived, _, states = _evaluate(session, now, settings)
     snapshot = ensure_snapshot(session, now=now)
@@ -276,7 +331,7 @@ def create_reservation(
     principal: OperatorPrincipal,
 ) -> dict[str, Any]:
     now = utcnow()
-    manager = LeaseManager(_config())
+    manager = LeaseManager(_config(session, settings))
     _, derived, _, _ = _evaluate(session, now, settings)
     snapshot = ensure_snapshot(session, now=now)
     try:
@@ -310,12 +365,13 @@ def create_reservation(
 def revoke_reservation(
     lease_id: str,
     session: DbSession,
+    settings: AppSettings,
     principal: OperatorPrincipal,
     reason: Annotated[str, Query(min_length=3, description="Audit reason")],
     force: bool = False,
 ) -> dict[str, Any]:
     now = utcnow()
-    manager = LeaseManager(_config())
+    manager = LeaseManager(_config(session, settings))
     try:
         lease = manager.revoke(session, lease_id, reason=reason, actor=principal.name, now=now, force=force)
     except KeyError as exc:
@@ -340,7 +396,7 @@ def revoke_reservation(
 @router.get("/loads", summary="The load schedule with current shed state")
 def get_loads(session: DbSession, settings: AppSettings) -> dict[str, Any]:
     now = utcnow()
-    config = _config()
+    config = _config(session, settings)
     _, _, _, states = _evaluate(session, now, settings)
     session.commit()
     rows = summarise_loads(states.values())
@@ -389,7 +445,7 @@ def get_shed_actions(
 @router.get("/dashboard", summary="Energy dashboard aggregate (SDD section 38)")
 def get_dashboard(session: DbSession, settings: AppSettings, principal: CurrentPrincipal) -> dict[str, Any]:
     now = utcnow()
-    config = _config()
+    config = _config(session, settings)
     inputs, derived, _, states = _evaluate(session, now, settings)
     snapshot = ensure_snapshot(session, now=now)
     manager = LeaseManager(config)

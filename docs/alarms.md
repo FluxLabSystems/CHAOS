@@ -13,9 +13,11 @@ Related: [The annunciator panel](./annunciator.md) ·
 
 ## 1. Where the definitions come from
 
-Forty alarm definitions ship in the design package
-(`data/alarm_definitions.yaml`) and are loaded into the platform by first-run
-setup. Each definition carries severity, scope, a trigger, a reset condition,
+Forty-one alarm definitions ship in the design package
+(`data/alarm_definitions.yaml`) — forty from the v0.3 pass and
+`generator_start_blocked`, a platform-owned definition added after it
+([Integration findings § F-010](./integration-findings.md#f-010--generator_start_blocked-was-published-but-not-defined)) —
+and are loaded into the platform by first-run setup. Each definition carries severity, scope, a trigger, a reset condition,
 operating-context behaviour, correlation hints, escalation and the operator
 context.
 

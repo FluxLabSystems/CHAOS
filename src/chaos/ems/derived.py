@@ -918,9 +918,10 @@ def compute_derived(
             basis="piecewise-linear derate over the configured battery and container temperature curves, worst of the two",
             inputs=derate_inputs,
             assumptions=(
-                f"derate curves are commissioning defaults from EmsConfig, not manufacturer curves: battery "
-                f"{describe_curve(config.thermal_derate_battery_curve)}; container "
-                f"{describe_curve(config.thermal_derate_container_curve)}",
+                f"thermal derate curves in force: battery {describe_curve(config.thermal_derate_battery_curve)} "
+                f"[{config.thermal_derate_curve_basis('battery')}]; container "
+                f"{describe_curve(config.thermal_derate_container_curve)} "
+                f"[{config.thermal_derate_curve_basis('container')}]",
             ),
         )
     )

@@ -13,7 +13,7 @@ from test_ems_shedding import ALL_LOADS, COMPUTE, IRRIGATION, SPA, TOOL_CHARGING
 from test_ems_state_machine import T0, at, make_derived, make_inputs
 
 from chaos.ems import RecordingCommandPort
-from chaos.ems.config import EmsConfig
+from chaos.ems.config import EmsConfig, derate_curve_between
 from chaos.ems.derived import (
     DEFERRABLE_TIER_MIN,
     LoadSnapshot,
@@ -242,11 +242,66 @@ def test_default_curves_reproduce_the_warning_to_emergency_ramp(config):
     assert describe_curve(config.thermal_derate_battery_curve) in " ".join(derate.assumptions)
 
 
+def test_default_curves_follow_the_warning_and_emergency_thresholds():
+    """The curve is derived from the thresholds, so moving a threshold moves the ramp."""
+    config = EmsConfig(
+        battery_temp_warning_c=42.0,
+        battery_temp_emergency_c=52.0,
+        container_temp_warning_c=35.0,
+        container_temp_emergency_c=45.0,
+    )
+    assert (
+        config.thermal_derate_battery_curve
+        == derate_curve_between(42.0, 52.0)
+        == ((42.0, 0.0), (52.0, 100.0))
+    )
+    assert config.thermal_derate_container_curve == ((35.0, 0.0), (45.0, 100.0))
+    assert config.as_dict()["thermal_derate_battery_curve"] == ((42.0, 0.0), (52.0, 100.0))
+    assert (
+        "derived from battery_temp_warning_c and battery_temp_emergency_c"
+        in config.thermal_derate_curve_basis("battery")
+    )
+
+    # Battery at the old default warning threshold is now 30% into the ramp;
+    # the container reading sits exactly on its new warning threshold.
+    derived = make_derived(make_inputs(battery_temperature_max_c=45.0, container_temperature_c=35.0), config)
+    derate = derived.get("thermal_derate_pct")
+    assert derate.value == pytest.approx(30.0)
+    assert "(42 C, 0%) -> (52 C, 100%)" in " ".join(derate.assumptions)
+    assert "commissioning defaults" in " ".join(derate.assumptions)
+
+
+def test_warning_threshold_must_sit_below_the_emergency_threshold():
+    with pytest.raises(ValueError, match="battery_temp_warning_c .* must be below battery_temp_emergency_c"):
+        EmsConfig(battery_temp_warning_c=55.0)
+    with pytest.raises(ValueError, match="container_temp_warning_c"):
+        EmsConfig(container_temp_warning_c=50.0, container_temp_emergency_c=50.0)
+
+
 def test_commissioned_curve_is_honoured_and_named():
     config = EmsConfig(thermal_derate_battery_curve=((40.0, 0.0), (48.0, 30.0), (55.0, 100.0)))
     derived = make_derived(make_inputs(battery_temperature_max_c=44.0, container_temperature_c=22.0), config)
     assert derived.value("thermal_derate_pct") == pytest.approx(15.0)
-    assert "(48 C, 30%)" in " ".join(derived.get("thermal_derate_pct").assumptions)
+    assumptions = " ".join(derived.get("thermal_derate_pct").assumptions)
+    assert "(48 C, 30%)" in assumptions
+    assert "explicitly configured curve" in assumptions
+    assert "overrides the threshold-derived default" in config.thermal_derate_curve_basis("battery")
+    # The container curve is still the threshold-derived default.
+    assert "commissioning defaults" in config.thermal_derate_curve_basis("container")
+
+
+def test_explicit_curve_wins_over_a_changed_threshold():
+    """A commissioned curve is never silently replaced by the derivation."""
+    curve = ((40.0, 0.0), (48.0, 30.0), (55.0, 100.0))
+    config = EmsConfig(battery_temp_warning_c=42.0, thermal_derate_battery_curve=curve)
+    assert config.thermal_derate_battery_curve == curve
+    # Lists (what a configuration file yields) are normalised to float pairs.
+    from_file = EmsConfig(thermal_derate_container_curve=[[38, 0], [50, 100]])
+    assert from_file.thermal_derate_container_curve == ((38.0, 0.0), (50.0, 100.0))
+    with pytest.raises(ValueError, match="at least two"):
+        EmsConfig(thermal_derate_container_curve=((40.0, 0.0),))
+    with pytest.raises(ValueError, match="outside 0..100"):
+        EmsConfig(thermal_derate_container_curve=((40.0, 0.0), (50.0, 140.0)))
 
 
 def test_worst_of_battery_and_container_wins(config):

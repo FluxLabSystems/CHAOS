@@ -13,13 +13,19 @@ from __future__ import annotations
 import json
 
 import pytest
+from test_alarm_evaluator import seed_asset
 from test_ems_state_machine import T0, at, make_derived, make_inputs
 
+from chaos.alarms.definitions import sync_definitions
+from chaos.alarms.published import apply_published_alarm
 from chaos.ems import CommandOutcome, RecordingCommandPort
 from chaos.ems.config import EmsConfig
 from chaos.ems.generator import GeneratorCoordinator, GeneratorRuntime
+from chaos.envelope import EventEnvelope
+from chaos.models.alarms import Alarm
 
 GENERATOR = "energy.generator.site.01"
+BLOCKED_TOPIC = "chaos/energy/site/generator_01/alarm/generator_start_blocked"
 
 
 @pytest.fixture()
@@ -103,9 +109,99 @@ def test_unavailable_generator_blocks_the_start_and_alarms(coordinator, config, 
     assert "automatic_mode" in decision.blocked_by
     assert not port.requests
 
-    message = bus.last("chaos/energy/site/generator_01/alarm/generator_start_blocked")
+    message = bus.last(BLOCKED_TOPIC)
     assert message is not None
     assert json.loads(message.text)["detail"]["severity"] == "major"
+
+
+def published_alarms(bus, topic=BLOCKED_TOPIC) -> list[EventEnvelope]:
+    """Every envelope the coordinator published on ``topic``, oldest first."""
+    return [EventEnvelope.model_validate(json.loads(m.text)) for m in bus.published if m.topic == topic]
+
+
+@pytest.fixture()
+def alarm_store(db_session):
+    """The shipped definition set and the generator asset, as the alarm subsystem sees them."""
+    sync_definitions(db_session, strict=True)
+    seed_asset(db_session, GENERATOR, asset_class="generator")
+    db_session.flush()
+    return db_session
+
+
+def test_a_blocked_start_becomes_an_alarm_row_under_the_shipped_definition(
+    coordinator, config, port, bus, settings, alarm_store
+):
+    """EMS-T008 end to end: the publication on the alarm topic is what the alarm
+    subsystem receives, and the platform-owned definition turns it into a row."""
+    run(coordinator, low_reserve(generator_available=False), config, T0)
+    envelope = published_alarms(bus)[-1]
+    assert envelope.source == "ems" and envelope.event == "generator_start_blocked"
+
+    outcome = apply_published_alarm(alarm_store, envelope, settings=settings, bus=bus, now=T0)
+    assert outcome.action == "raised"
+    alarm = alarm_store.get(Alarm, outcome.alarm_id)
+    assert alarm.alarm_key == "generator_start_blocked"
+    assert alarm.asset_id == GENERATOR
+    assert alarm.state == "active"
+    assert alarm.point_id is None
+    # The definition's severity is the contract; the claim rides along.
+    assert alarm.severity == "major"
+    assert alarm.trigger_value["claimed_severity"] == "major"
+    assert alarm.trigger_value["published_by"] == "ems"
+    assert alarm.trigger_value["detail"]["blocked_by"] == ["automatic_mode"]
+    assert alarm.trigger_value["detail"]["energy_state"] == "CRITICAL_RESERVE"
+    assert "Generator start blocked" in alarm.message
+
+    # Every further evaluation re-asserts the same row rather than raising another.
+    run(coordinator, low_reserve(at(60), generator_available=False), config, at(60))
+    reasserted = apply_published_alarm(alarm_store, published_alarms(bus)[-1], settings=settings, now=at(60))
+    assert reasserted.action == "reasserted" and reasserted.alarm_id == outcome.alarm_id
+    assert alarm_store.query(Alarm).count() == 1
+    assert coordinator.runtime.start_blocked is True
+    assert coordinator.runtime.as_dict()["start_blocked"] is True
+
+
+def test_the_block_lifting_clears_the_alarm_once(coordinator, config, port, bus, settings, alarm_store):
+    run(coordinator, low_reserve(generator_available=False), config, T0)
+    raised = apply_published_alarm(alarm_store, published_alarms(bus)[-1], settings=settings, now=T0)
+    assert raised.action == "raised"
+
+    # The permissive returns: the start is requested and the block is withdrawn explicitly.
+    decision = run(coordinator, low_reserve(at(60)), config, at(60))
+    assert decision.action == "start_requested"
+    clear = published_alarms(bus)[-1]
+    assert clear.detail == {"state": "cleared", "detail": "permissives satisfied; start requested"}
+    cleared = apply_published_alarm(alarm_store, clear, settings=settings, now=at(60))
+    assert cleared.action == "cleared" and cleared.alarm_id == raised.alarm_id
+    assert alarm_store.get(Alarm, raised.alarm_id).state == "cleared"
+    assert coordinator.runtime.start_blocked is False
+
+    # Nothing else is published about the block once it has been withdrawn.
+    before = len(published_alarms(bus))
+    run(coordinator, low_reserve(at(90), generator_state="running", generator_power_kw=8.0), config, at(90))
+    assert len(published_alarms(bus)) == before
+
+
+def test_the_block_clears_when_no_start_criterion_remains(coordinator, config, bus):
+    run(coordinator, low_reserve(generator_available=False), config, T0)
+    assert coordinator.runtime.start_blocked is True
+    # Reserve recovers while the generator is still unavailable: no criterion, no block.
+    run(coordinator, make_inputs(at(60), generator_available=False), config, at(60), state="NORMAL")
+    clear = published_alarms(bus)[-1]
+    assert clear.detail == {"state": "cleared", "detail": "no start criterion remains"}
+    assert coordinator.runtime.start_blocked is False
+    # A fresh block later is a fresh assertion, not a leftover.
+    run(coordinator, low_reserve(at(120), generator_available=False), config, at(120))
+    assert published_alarms(bus)[-1].detail["blocked_by"] == ["automatic_mode"]
+
+
+def test_a_blocked_flag_survives_a_restart_and_the_clear_still_goes_out(config, port, settings, bus):
+    """The flag rides on the persisted runtime, so a restart cannot leave the alarm standing."""
+    restored = GeneratorRuntime.from_dict({"sequence": "idle", "start_blocked": True})
+    coordinator = GeneratorCoordinator(config, port, settings=settings, bus=bus, runtime=restored)
+    run(coordinator, make_inputs(), config, T0, state="NORMAL")
+    assert published_alarms(bus)[-1].detail["state"] == "cleared"
+    assert GeneratorRuntime.from_dict({"sequence": "idle"}).start_blocked is False
 
 
 def test_low_fuel_blocks_the_start(coordinator, config, port):
