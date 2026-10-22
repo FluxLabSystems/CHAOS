@@ -175,7 +175,7 @@ windows/
 
 deploy/          Docker Compose stacks for headless nodes (advanced)
 docs/            this documentation set — start at docs/index.md
-tests/           2418 pytest tests, all against SQLite and the in-memory bus
+tests/           2622 pytest tests, all against SQLite and the in-memory bus
 ```
 
 ---
@@ -192,7 +192,7 @@ eight interlocks, operating modes and audit · maintenance and commissioning
 records · annunciator panel · topology and blast-radius analysis · rack
 elevation · 87 REST endpoints · a plugin system for third-party integrations ·
 the .NET gateway with first-run setup · the WinUI 3 desktop shell ·
-2418 passing Python tests.
+2622 passing Python tests.
 
 ### Partial or stubbed
 

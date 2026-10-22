@@ -340,7 +340,7 @@ elevation · 87 REST endpoints under `/api/v1` · a plugin system for third-part
 integrations · the operator console · the .NET gateway with route ownership and
 first-run setup · the WinUI 3 desktop shell ·
 the command line · container deployment for both node roles · Grafana dashboards
-over real tables · 2418 Python tests.
+over real tables · 2622 Python tests.
 
 ### Stubbed or partial
 
