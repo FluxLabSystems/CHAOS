@@ -9,7 +9,7 @@
 --------------------------------------------------------------------------- */
 
 import {
-  card, clear, fmtDateTime, h, kv, resultProblem, statusChip,
+  card, clear, confirmAction, fmtDateTime, h, kv, requireRole, resultProblem, statusChip, toast,
 } from '../app.js';
 import { api } from '../api.js';
 
@@ -222,6 +222,146 @@ function jsonBlock(title, value) {
     h('pre', { text: JSON.stringify(value, null, 2) }));
 }
 
+/* ------------------------------------------------------------- documents -- */
+
+/*
+   Two kinds of documentation meet here. The design package may name
+   documents on the asset record (`asset.documentation`), and the registry's
+   documents table holds records a maintainer files from this screen:
+   manuals, drawings, photos, warranties, commissioning records. The table
+   holds metadata only — a title, a kind, a revision and where the document
+   lives. The platform stores no files, and a URI is drawn as a link only when
+   it is one; otherwise it is shown as the text it is.
+*/
+
+const LINK_SCHEMES = /^(https?|file|smb|ftp):\/\//i;
+
+function documentUri(uri) {
+  if (!uri) return h('span', { class: 'card-note', style: 'margin:0', text: 'no location recorded' });
+  if (LINK_SCHEMES.test(uri) || uri.startsWith('\\\\')) {
+    return h('a', { class: 'mono', href: uri, target: '_blank', rel: 'noopener', text: uri });
+  }
+  return h('span', { class: 'mono', text: uri });
+}
+
+function documentsCard(asset) {
+  const records = h('div');
+  const form = h('div');
+  const packageList = (asset.documentation || []).length
+    ? h('div', null,
+        h('div', { class: 'card-note', style: 'margin:0 0 .25rem', text: 'Named by the design package' }),
+        h('ul', null, asset.documentation.map((doc) => h('li', { class: 'provenance' },
+          typeof doc === 'string'
+            ? h('span', { text: doc })
+            : h('span', { text: `${doc.title || doc.doc_type || 'document'}${doc.uri ? ' — ' + doc.uri : ''}` })))))
+    : null;
+
+  async function load() {
+    records.replaceChildren(h('p', { class: 'loading', style: 'padding:.3rem 0', text: 'Loading document records…' }));
+    const [listed, kinds] = await Promise.all([api.assetDocuments(asset.asset_id), api.documentKinds()]);
+    clear(records);
+    clear(form);
+    if (!listed.ok) {
+      records.appendChild(resultProblem(listed, 'the document records'));
+      return;
+    }
+    const rows = listed.data || [];
+    records.appendChild(h('div', { class: 'card-note', style: 'margin:.4rem 0 .25rem', text: `Document records (${rows.length})` }));
+    if (!rows.length) {
+      records.appendChild(h('p', { class: 'card-note', style: 'margin:0', text: 'No manuals, drawings or commissioning records are linked yet. A maintainer can file one below.' }));
+    } else {
+      records.appendChild(h('ul', null, rows.map((doc) => documentRow(doc, load))));
+    }
+    form.appendChild(documentForm(asset, kinds.ok ? kinds.data : [], load));
+  }
+
+  load();
+  return card({
+    title: 'Documentation',
+    children: [
+      packageList,
+      records,
+      form,
+      h('p', { class: 'card-note', text: 'Records hold where a document lives, not the document: the platform stores no files.' }),
+    ],
+  });
+}
+
+function documentRow(doc, reload) {
+  const remove = h('button', { class: 'btn btn-sm btn-danger', type: 'button', text: 'Delete…' });
+  remove.addEventListener('click', async () => {
+    if (!requireRole('maintainer')) return;
+    const yes = await confirmAction({
+      title: `Delete the record "${doc.title}"`,
+      note: 'Removes the metadata record only; whatever it points at is untouched. The deletion is audited under your name.',
+      confirmLabel: 'Delete record',
+      danger: true,
+    });
+    if (!yes) return;
+    const response = await api.deleteDocument(doc.id);
+    if (response.ok) {
+      toast('success', 'Record deleted', doc.title);
+      await reload();
+    } else {
+      toast('error', 'Record not deleted', response.error || `HTTP ${response.status}`);
+    }
+  });
+  return h('li', { class: 'provenance', style: 'font-size:.82rem;margin:.3rem 0' },
+    h('div', { style: 'display:flex;gap:.5rem;align-items:center;flex-wrap:wrap' },
+      h('span', { class: 'tag', text: doc.doc_type.replace('_', ' ') }),
+      h('b', { text: doc.title }),
+      doc.revision ? h('span', { text: `rev ${doc.revision}` }) : null,
+      doc.issued_at ? h('span', { text: `issued ${fmtDateTime(doc.issued_at)}` }) : null,
+      remove),
+    h('div', null, documentUri(doc.uri)),
+    doc.notes ? h('div', { text: doc.notes }) : null,
+    h('div', { class: 'alarm-key', text: `filed ${fmtDateTime(doc.created_at)}` }));
+}
+
+function documentForm(asset, kinds, reload) {
+  const kind = h('select', { class: 'select-sm' },
+    (kinds.length ? kinds : ['other']).map((value) => h('option', { value, text: value.replace('_', ' ') })));
+  const title = h('input', { type: 'text', class: 'input', placeholder: 'title', required: true });
+  const uri = h('input', { type: 'text', class: 'input', placeholder: 'where it lives: URL, share path, shelf' });
+  const revision = h('input', { type: 'text', class: 'input', placeholder: 'revision' });
+  const issued = h('input', { type: 'date', class: 'input' });
+  const notes = h('textarea', { rows: '2', placeholder: 'notes (optional)' });
+  const outcome = h('div', { style: 'margin-top:.3rem' });
+  return h('form', { style: 'margin-top:.6rem', onsubmit: async (event) => {
+    event.preventDefault();
+    if (!requireRole('maintainer')) return;
+    const body = { asset_id: asset.asset_id, doc_type: kind.value, title: title.value.trim() };
+    if (uri.value.trim()) body.uri = uri.value.trim();
+    if (revision.value.trim()) body.revision = revision.value.trim();
+    if (issued.value) body.issued_at = new Date(`${issued.value}T00:00:00Z`).toISOString();
+    if (notes.value.trim()) body.notes = notes.value.trim();
+    const response = await api.createDocument(body);
+    clear(outcome);
+    if (response.ok) {
+      toast('success', 'Document record filed', body.title);
+      title.value = ''; uri.value = ''; revision.value = ''; issued.value = ''; notes.value = '';
+      await reload();
+    } else if (response.missing) {
+      outcome.appendChild(h('p', { class: 'card-note', style: 'margin:0', text: 'This node does not expose POST /documents. Nothing was filed.' }));
+    } else {
+      outcome.appendChild(h('p', { style: 'margin:0' },
+        statusChip('alarm', response.forbidden ? 'Refused' : `HTTP ${response.status}`), ' ', h('span', { text: response.error || '' })));
+      toast('error', 'Record not filed', response.error || `HTTP ${response.status}`);
+    }
+  } },
+    h('div', { class: 'card-note', style: 'margin:0 0 .3rem', text: 'File a document record (maintainer)' }),
+    h('div', { class: 'filters', style: 'margin:0 0 .3rem' },
+      h('label', null, h('span', { text: 'Kind' }), kind),
+      h('label', { style: 'flex:2 1 12rem' }, h('span', { text: 'Title' }), title),
+      h('label', null, h('span', { text: 'Revision' }), revision),
+      h('label', null, h('span', { text: 'Issued' }), issued)),
+    h('div', { class: 'filters', style: 'margin:0 0 .3rem' },
+      h('label', { style: 'flex:2 1 16rem' }, h('span', { text: 'Location' }), uri),
+      h('label', { style: 'flex:1 1 12rem' }, h('span', { text: 'Notes' }), notes)),
+    h('div', { class: 'pill-row' }, h('button', { class: 'btn btn-primary btn-sm', type: 'submit', text: 'File record' })),
+    outcome);
+}
+
 async function renderDetail(root, ctx, assetId) {
   clear(root);
   root.appendChild(h('p', { class: 'loading', text: `Loading ${assetId}…` }));
@@ -345,15 +485,7 @@ async function renderDetail(root, ctx, assetId) {
       : h('p', { class: 'card-note', text: 'The dependency endpoint is unavailable on this node.' }),
   });
 
-  const docCard = card({
-    title: 'Documentation',
-    children: (asset.documentation || []).length
-      ? h('ul', null, (asset.documentation || []).map((doc) => h('li', { class: 'provenance' },
-          typeof doc === 'string'
-            ? h('span', { text: doc })
-            : h('span', { text: `${doc.title || doc.doc_type || 'document'}${doc.uri ? ' — ' + doc.uri : ''}` }))))
-      : h('p', { class: 'card-note', text: 'No manuals, drawings or commissioning records are linked yet.' }),
-  });
+  const docCard = documentsCard(asset);
 
   root.appendChild(h('div', { class: 'grid grid-wide', style: 'margin-top:var(--gap)' }, relCard, depCard, docCard));
 

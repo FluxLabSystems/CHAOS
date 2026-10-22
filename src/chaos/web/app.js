@@ -275,6 +275,34 @@ export function askReason({ title, note, confirmLabel = 'Confirm', danger = fals
   });
 }
 
+/**
+ * A yes/no confirmation for the few writes whose endpoint takes no audit
+ * reason (a backup, a reload, generating due work orders). The API still
+ * records the actor; this dialog exists so a single click never fires one.
+ * Built on demand rather than declared in index.html, which the shell owns.
+ */
+export function confirmAction({ title, note, confirmLabel = 'Confirm', danger = false }) {
+  const confirm = h('button', { type: 'submit', class: danger ? 'btn btn-danger' : 'btn btn-primary',
+                                value: 'confirm', text: confirmLabel });
+  const dialog = h('dialog', { class: 'dialog' },
+    h('form', { method: 'dialog' },
+      h('h2', { text: title }),
+      h('p', { class: 'dialog-note', text: note || '' }),
+      h('div', { class: 'dialog-actions' },
+        h('button', { type: 'submit', class: 'btn', value: 'cancel', text: 'Cancel' }),
+        confirm)));
+  document.body.appendChild(dialog);
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => {
+      const yes = dialog.returnValue === 'confirm';
+      dialog.remove();
+      resolve(yes);
+    }, { once: true });
+    dialog.showModal();
+    confirm.focus();
+  });
+}
+
 /** Guard a write action behind a named operator with a sufficient role. */
 export function requireRole(minimum) {
   const who = identity.get();
@@ -485,6 +513,9 @@ const ROUTES = [
   { pattern: /^\/assets\/(.+)$/,      view: 'assets',  nav: 'assets', param: 'assetId' },
   { pattern: /^\/control$/,           view: 'control', nav: 'control' },
   { pattern: /^\/control\/(.+)$/,     view: 'control', nav: 'control', param: 'assetId' },
+  { pattern: /^\/commissioning$/,     view: 'commissioning', nav: 'commissioning' },
+  { pattern: /^\/commissioning\/(.+)$/, view: 'commissioning', nav: 'commissioning', param: 'assetId' },
+  { pattern: /^\/maintenance$/,       view: 'maintenance', nav: 'maintenance' },
 ];
 
 let activeView = null;

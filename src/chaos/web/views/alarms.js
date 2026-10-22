@@ -16,10 +16,130 @@
 --------------------------------------------------------------------------- */
 
 import {
-  askReason, clear, fmtAge, fmtDateTime, h, requireRole, resultProblem,
+  askReason, card, clear, fmtAge, fmtDateTime, h, requireRole, resultProblem,
   severityChip, statusChip, toast,
 } from '../app.js';
 import { api } from '../api.js';
+
+/* ------------------------------------------------- notification delivery --- */
+
+/*
+   SDD FR-007: every notification attempt on every channel is a row in the
+   delivery log, so "why did nobody get called" is answerable afterwards. The
+   status vocabulary is the notifier's own: `sent` only when the relay or push
+   server accepted the message, `failed` with the error when it did not, and
+   `not_configured` — naming what is missing — for a channel that has never
+   been given its settings. Nothing here promotes a row to "delivered".
+*/
+
+const DELIVERY_STATUS = {
+  sent:           { status: 'ok',          label: 'sent' },
+  failed:         { status: 'alarm',       label: 'failed' },
+  not_configured: { status: 'design_only', label: 'not configured' },
+};
+const LOG_PAGE = 50;
+const LOG_FILTERS = { channel: '', status: '' };
+
+function deliveryChip(status) {
+  const meta = DELIVERY_STATUS[status] || { status: 'unknown', label: status || 'unknown' };
+  return statusChip(meta.status, meta.label);
+}
+
+function deliveryDetail(row) {
+  const detail = row.detail && typeof row.detail === 'object' ? row.detail : {};
+  return detail.channel_detail || detail.error || detail.raw || '';
+}
+
+function deliveryStage(row) {
+  const detail = row.detail && typeof row.detail === 'object' ? row.detail : {};
+  return detail.stage === undefined || detail.stage === null ? '—' : `stage ${detail.stage}`;
+}
+
+function deliveryTable(rows, { withSubject = true } = {}) {
+  return h('div', { class: 'table-wrap' },
+    h('table', null,
+      h('thead', null, h('tr', null,
+        h('th', { text: 'When' }), h('th', { text: 'Channel' }), h('th', { text: 'Stage' }),
+        h('th', { text: 'Status' }), h('th', { text: 'Recipient' }),
+        withSubject ? h('th', { text: 'Subject' }) : null, h('th', { text: 'Detail' }))),
+      h('tbody', null, rows.map((row) => h('tr', null,
+        h('td', { text: row.sent_at ? `${fmtDateTime(row.sent_at)} · ${fmtAge(row.sent_at)}` : '—' }),
+        h('td', null, h('span', { class: 'tag', text: row.channel })),
+        h('td', { text: deliveryStage(row) }),
+        h('td', null, deliveryChip(row.status)),
+        h('td', { text: row.recipient || '—' }),
+        withSubject ? h('td', { text: row.subject || '—' }) : null,
+        h('td', { text: deliveryDetail(row) }))))));
+}
+
+/** Per-incident deliveries, fetched from GET /incidents/{id} when opened. */
+function incidentDeliveries(incidentId) {
+  const body = h('div', { style: 'margin-top:.4rem' });
+  let loaded = false;
+  const details = h('details', { class: 'raw', style: 'padding:.4rem .9rem .6rem' },
+    h('summary', { text: 'Notification deliveries for this incident' }),
+    body);
+  details.addEventListener('toggle', async () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+    body.replaceChildren(h('p', { class: 'loading', style: 'padding:.3rem 0', text: 'Loading deliveries…' }));
+    const result = await api.incident(incidentId);
+    clear(body);
+    if (!result.ok) {
+      body.appendChild(resultProblem(result, 'the incident'));
+      loaded = false;
+      return;
+    }
+    const rows = result.data.notifications || [];
+    if (!rows.length) {
+      body.appendChild(h('p', { class: 'card-note', style: 'margin:0', text: 'No delivery has been attempted for this incident yet. The notifier runs with the alarm engine; a first-stage attempt follows activation within one engine cycle.' }));
+      return;
+    }
+    body.appendChild(deliveryTable(rows, { withSubject: false }));
+  });
+  return details;
+}
+
+async function deliveryLogCard() {
+  const result = await api.notifications({ limit: LOG_PAGE, channel: LOG_FILTERS.channel, status: LOG_FILTERS.status });
+  const select = (name, label, options) => h('label', null,
+    h('span', { text: label }),
+    h('select', { class: 'select-sm', onchange: (event) => { LOG_FILTERS[name] = event.target.value; } },
+      h('option', { value: '', text: `All ${label.toLowerCase()}s` }),
+      options.map((value) => h('option', { value, text: value, selected: LOG_FILTERS[name] === value }))));
+  const host = h('div');
+  const form = h('form', { class: 'filters', style: 'margin-bottom:.6rem',
+    onsubmit: async (event) => {
+      event.preventDefault();
+      host.replaceChildren(await deliveryLogCard());
+    } },
+    select('channel', 'Channel', ['log', 'email', 'push', 'voice']),
+    select('status', 'Status', Object.keys(DELIVERY_STATUS)),
+    h('button', { class: 'btn btn-sm', type: 'submit', text: 'Apply' }));
+
+  const children = [form];
+  if (!result.ok) {
+    children.push(resultProblem(result, 'the notification delivery log'));
+  } else {
+    const rows = result.data.notifications || [];
+    const counts = rows.reduce((acc, row) => { acc[row.status] = (acc[row.status] || 0) + 1; return acc; }, {});
+    children.push(h('div', { class: 'stat-row', style: 'margin-bottom:.6rem' },
+      h('span', null, h('b', { text: String(result.data.count ?? rows.length) }), ` shown of the latest ${LOG_PAGE}`),
+      Object.entries(counts).map(([status, count]) => h('span', null, h('b', { text: String(count) }), ` ${(DELIVERY_STATUS[status] || { label: status }).label}`))));
+    if (!rows.length) {
+      children.push(h('div', { class: 'empty' },
+        h('h3', null, statusChip('no_data', 'No deliveries recorded')),
+        h('p', { text: LOG_FILTERS.channel || LOG_FILTERS.status
+          ? 'Nothing matches these filters.'
+          : 'No notification has been attempted on this node. An alarm that activated without a row here was never notified — see Troubleshooting § It fired and nobody was told.' })));
+    } else {
+      children.push(deliveryTable(rows));
+    }
+    children.push(h('p', { class: 'card-note', text: 'Source: GET /notifications, newest first. A `not configured` row names the setting the channel is missing; a `failed` row carries the relay or push server’s error and is retried on a later engine cycle, up to the retry limit.' }));
+  }
+  host.appendChild(card({ title: 'Notification delivery log', children }));
+  return host;
+}
 
 const SEVERITY_RANK = { emergency: 0, critical: 1, major: 2, warning: 3, info: 4 };
 
@@ -126,7 +246,8 @@ function incidentBlock(group, onAction) {
         ? null
         : h('span', { class: 'card-note', style: 'flex-basis:100%;margin:0',
                       text: 'These alarms have no parent incident. If several arrive together, the correlation rules may need work (SDD 14.2).' })),
-    group.alarms.map((alarm) => alarmRow(alarm, onAction)));
+    group.alarms.map((alarm) => alarmRow(alarm, onAction)),
+    group.correlated ? incidentDeliveries(group.id) : null);
 }
 
 async function loadAlarms() {
@@ -243,6 +364,8 @@ export default {
 
       root.appendChild(h('p', { class: 'card-note', style: 'margin-top:1rem',
         text: `Source: ${loaded.source}. Lifecycle: detected → active → acknowledged → mitigated → cleared → reviewed.` }));
+
+      root.appendChild(h('div', { style: 'margin-top:var(--gap)' }, await deliveryLogCard()));
       root.appendChild(h('p', { class: 'card-note', text: `Loaded ${fmtDateTime(new Date().toISOString())}` }));
     }
 

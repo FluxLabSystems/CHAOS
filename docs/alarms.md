@@ -240,8 +240,10 @@ derived from severity and `"tags": ["chaos", "<severity>", "stage-<n>"]` — wit
 | **A failed delivery is retried, bounded** | A stage counts as told on a channel once that channel's row says `sent`. A `failed` row is tried again on a later engine cycle — at most the retry limit, no sooner than the interval — and every attempt is its own row. A failed row is never mistaken for a delivered one |
 
 **Every attempt on every channel is a row**, so *"why did nobody get called"* is
-answerable after the fact. That log is on the console, and the counts by channel
-and outcome are on `/metrics`.
+answerable after the fact. That log is on the console's Alarms screen — the
+delivery log at the foot of the page, filterable by channel and status, and
+each incident's own deliveries in its panel — and the counts by channel and
+outcome are on `/metrics`.
 
 ### What this means for the acceptance criteria
 
@@ -261,7 +263,7 @@ Recorded as an open item in
 | Surface | Best for |
 |---|---|
 | [The annunciator panel](./annunciator.md) | Deciding whether anything is wrong, at a glance, from across the room. Acknowledge and reset |
-| [The console's Alarms screen](./operator-console.md#43-alarms) | Working an incident: the member alarms, their history, mitigate and review |
+| [The console's Alarms screen](./operator-console.md#43-alarms) | Working an incident: the member alarms, their history, mitigate and review, and the delivery log — what each channel said about it |
 | [Operations § Alarm floods](./operations.md#3-alarm-floods) | What to do — and what not to do — when dozens arrive at once |
 
 Every action collects a mandatory reason. The API requires it, and the dialog

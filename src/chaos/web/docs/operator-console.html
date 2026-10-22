@@ -25,7 +25,7 @@
 <nav class="site-nav" id="site-nav" aria-label="Documents"><h2>Overview</h2><ul><li><a href="index.html" data-page="index"><span class="nav-num">01</span><span>Project CHAOS documentation</span></a></li><li><a href="readme.html" data-page="readme"><span class="nav-num">02</span><span>Project CHAOS</span></a></li></ul><h2>Using CHAOS</h2><ul><li><a href="getting-started.html" data-page="getting-started"><span class="nav-num">03</span><span>Getting started</span></a></li><li><a href="visual-studio.html" data-page="visual-studio"><span class="nav-num">04</span><span>Building in Visual Studio 2026</span></a></li><li><a href="desktop-shell.html" data-page="desktop-shell"><span class="nav-num">05</span><span>The desktop shell</span></a></li><li><a href="operator-console.html" data-page="operator-console" aria-current="page"><span class="nav-num">06</span><span>The operator console</span></a></li><li><a href="annunciator.html" data-page="annunciator"><span class="nav-num">07</span><span>The annunciator panel</span></a></li><li><a href="topology-view.html" data-page="topology-view"><span class="nav-num">08</span><span>Topology and blast radius</span></a></li><li><a href="rack-view.html" data-page="rack-view"><span class="nav-num">09</span><span>Rack elevation</span></a></li></ul><h2>How the platform works</h2><ul><li><a href="architecture.html" data-page="architecture"><span class="nav-num">10</span><span>Architecture</span></a></li><li><a href="alarms.html" data-page="alarms"><span class="nav-num">11</span><span>Alarms, incidents and notification</span></a></li><li><a href="control.html" data-page="control"><span class="nav-num">12</span><span>Control, interlocks and operating modes</span></a></li><li><a href="design-package.html" data-page="design-package"><span class="nav-num">13</span><span>The design package</span></a></li><li><a href="integration-findings.html" data-page="integration-findings"><span class="nav-num">14</span><span>Integration findings</span></a></li><li><a href="plugins.html" data-page="plugins"><span class="nav-num">15</span><span>Plugins and third-party integrations</span></a></li></ul><h2>Operating the property</h2><ul><li><a href="operations.html" data-page="operations"><span class="nav-num">16</span><span>Operations runbooks</span></a></li><li><a href="troubleshooting.html" data-page="troubleshooting"><span class="nav-num">17</span><span>Troubleshooting</span></a></li><li><a href="commissioning.html" data-page="commissioning"><span class="nav-num">18</span><span>Commissioning</span></a></li><li><a href="secondary-control-node.html" data-page="secondary-control-node"><span class="nav-num">19</span><span>Secondary control node</span></a></li><li><a href="network-and-trust-boundaries.html" data-page="network-and-trust-boundaries"><span class="nav-num">20</span><span>Network and trust boundaries</span></a></li><li><a href="water-control-narrative.html" data-page="water-control-narrative"><span class="nav-num">21</span><span>Water-system control narrative</span></a></li></ul><h2>Reference</h2><ul><li><a href="api.html" data-page="api"><span class="nav-num">22</span><span>API reference</span></a></li><li><a href="design-decisions.html" data-page="design-decisions"><span class="nav-num">23</span><span>Design Decision Records</span></a></li></ul><h2>Advanced — you do not need these</h2><ul><li><a href="advanced-command-line.html" data-page="advanced-command-line"><span class="nav-num">24</span><span>Command line</span></a></li><li><a href="advanced-container-deployment.html" data-page="advanced-container-deployment"><span class="nav-num">25</span><span>Container deployment</span></a></li><li><a href="advanced-windows-packaging.html" data-page="advanced-windows-packaging"><span class="nav-num">26</span><span>Windows packaging</span></a></li></ul><h2>Design Decisions</h2><ul><li><a href="design-decisions-dd-001-energy-capacity-revision.html" data-page="design-decisions-dd-001-energy-capacity-revision"><span class="nav-num">27</span><span>DD-001: Authoritative energy design revision</span></a></li><li><a href="design-decisions-dd-002-historian-selection.html" data-page="design-decisions-dd-002-historian-selection"><span class="nav-num">28</span><span>DD-002: Time-series historian selection</span></a></li><li><a href="design-decisions-dd-003-secondary-control-node-placement.html" data-page="design-decisions-dd-003-secondary-control-node-placement"><span class="nav-num">29</span><span>DD-003: Secondary control node placement</span></a></li><li><a href="design-decisions-dd-004-controller-family.html" data-page="design-decisions-dd-004-controller-family"><span class="nav-num">30</span><span>DD-004: Standard PLC / controller family for critical local control</span></a></li></ul></nav>
 <main class="site-main" id="content" tabindex="-1">
 <article class="doc-page" id="operator-console" data-page="operator-console"><p class="doc-breadcrumb"><span>Using CHAOS</span><span>The operator console</span></p><p class="doc-source">docs/operator-console.md</p><div class="doc-body"><h1 id="the-operator-console" class="doc-h"><span class="doc-h-text">The operator console</span><a class="doc-anchor" href="#the-operator-console" aria-label="Link to this section"></a></h1>
-<p>The browser interface to Project CHAOS: eight screens, one polled overview
+<p>The browser interface to Project CHAOS: ten screens, one polled overview
 request driving the chrome, and a freshness indicator that makes it impossible
 for anything on screen to rot silently.</p>
 <p>It is served by the gateway, so it works in the desktop shell's window and in
@@ -55,8 +55,8 @@ internet and no patience.</p>
 <blockquote><p><strong>API unreachable.</strong> Showing the last values received. Do not read this screen
 as live.</p></blockquote>
 <p>Down the left, the navigation: <strong>Home</strong>, <strong>Energy</strong>, <strong>Alarms</strong>, <strong>Map</strong>,
-<strong>Topology</strong>, <strong>Rack</strong>, <strong>Assets</strong>, <strong>Control</strong>. The Alarms entry carries a
-count badge.</p>
+<strong>Topology</strong>, <strong>Rack</strong>, <strong>Assets</strong>, <strong>Control</strong>, <strong>Commissioning</strong>,
+<strong>Maintenance</strong>. The Alarms entry carries a count badge.</p>
 <h3 id="three-kinds-of-nothing" class="doc-h"><span class="doc-h-text">Three kinds of nothing</span><a class="doc-anchor" href="#three-kinds-of-nothing" aria-label="Link to this section"></a></h3>
 <p>The console never draws a zero it does not have. Across every screen:</p>
 <div class="doc-table-wrap"><table><thead><tr><th scope="col">Word</th><th scope="col">Glyph</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td>Live</td><td>●</td><td>A real measurement, with its age and quality attached</td></tr><tr><td>Stale</td><td>◐</td><td>The last value is older than its stale window. Treat it as unknown</td></tr><tr><td>No data</td><td>○</td><td>Registered, never reported</td></tr><tr><td>No points</td><td>○</td><td>Registered, and nothing is defined to report</td></tr><tr><td>Design only</td><td>◇</td><td>Exists in the design; not deployed</td></tr><tr><td>Not yet deployed</td><td>⬚</td><td>No such asset exists on the property yet</td></tr><tr><td>Alarm</td><td>▲</td><td></td></tr><tr><td>Degraded</td><td>▼</td><td></td></tr><tr><td>Unknown</td><td>?</td><td></td></tr></tbody></table></div>
@@ -68,8 +68,10 @@ amber.</p>
 <hr>
 <h2 id="3-operator-identity" class="doc-h"><span class="doc-h-text">3. Operator identity</span><a class="doc-anchor" href="#3-operator-identity" aria-label="Link to this section"></a></h2>
 <p>Press the <strong>operator button</strong>. A dialog asks for a name and a role.</p>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Role</th><th scope="col">May</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>Read everything</td></tr><tr><td><code>operator</code></td><td>Acknowledge alarms, issue commands, request budget leases, set operating modes</td></tr><tr><td><code>maintainer</code></td><td>Work orders, inspections, calibrations, commissioning records</td></tr><tr><td><code>administrator</code></td><td>Registry reload, alarm-definition reload</td></tr></tbody></table></div>
-<p>Roles are a ladder: <code>administrator</code> includes everything below it.</p>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Role</th><th scope="col">May, on the console</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>Read everything</td></tr><tr><td><code>operator</code></td><td>Acknowledge, mitigate and clear alarms; issue commands; set operating modes; request and revoke budget leases; raise and complete work orders; record inspections</td></tr><tr><td><code>maintainer</code></td><td>Record commissioning steps and commission bindings; record calibrations; add spare parts; generate the work due plans imply; file and delete document records; take a backup; reload the registry and the alarm definitions</td></tr><tr><td><code>administrator</code></td><td>Everything above. Nothing on the console needs it today; the one administrator-only call, the plugin reload, is API-only</td></tr></tbody></table></div>
+<p>Roles are a ladder: <code>administrator</code> includes everything below it. The table is
+what the API enforces, screen by screen; where this document and a router
+disagree, the router wins and this table is wrong.</p>
 <p><strong>This is not a login.</strong> The dialog says so:</p>
 <blockquote><p>Every write is audited against a named actor. Authentication terminates at the
 VPN or reverse proxy; this console only tells the API who you are. An unnamed
@@ -87,13 +89,29 @@ the interface rather than from a rejection.</p>
 <hr>
 <h2 id="4-the-screens" class="doc-h"><span class="doc-h-text">4. The screens</span><a class="doc-anchor" href="#4-the-screens" aria-label="Link to this section"></a></h2>
 <h3 id="41-home" class="doc-h"><span class="doc-h-text">4.1 Home</span><a class="doc-anchor" href="#41-home" aria-label="Link to this section"></a></h3>
-<p>The whole page is painted by one <code>GET /overview</code>.</p>
+<p>The overview tiles are painted by one <code>GET /overview</code>.</p>
 <ul><li>The site state, with the reason it is what it is.</li><li>Active critical and major alarms.</li><li>Energy reserve, with its data quality alongside — a state derived from
 degraded inputs is a guess, and the screen says so rather than presenting it
 as fact.</li><li>Communications and server status.</li><li>A per-domain roll-up.</li></ul>
 <p>Every number carries its provenance: which point it came from, how old it is,
 and what quality the platform assigned it. A number without its quality is not a
 measurement.</p>
+<p>Below the roll-up sits the rest of the
+<a href="operations.html#0-daily-and-weekly">daily check</a>, read from the telemetry and
+backup endpoints rather than from the overview, each count naming its source:</p>
+<ul><li><strong>Dead letters</strong> — the count in the database (<code>GET /telemetry/stats</code>), the
+ingest service's own counters beside it, and the <strong>dead-letter list</strong>
+itself: newest first, the ingest writer's reason code as the category, the
+topic or point, the reason, the time, with topic and reason filters and
+previous/next paging. A count that grows every day is the bad sign.</li><li><strong>Stale points</strong> — the points whose quality is <code>stale</code> or <code>bad</code>
+(<code>GET /telemetry/stale</code>), with the overview's own age-based count alongside.
+They usually agree; when they do not, the difference is the diagnosis.</li><li><strong>Backups</strong> — the newest archive in this node's backup directory with its
+manifest (when it was taken, size, tables and rows, whether the platform can
+restore it), amber when it is more than 36 hours old, and the full listing.
+A maintainer can <strong>take a backup now</strong> from the same card; the action
+confirms first, runs the same code as <code>chaos backup</code>, and shows the archive it
+wrote. The copy it writes sits in the same failure domain as the database —
+see <a href="operations.html#4-backup-and-restore">Operations § Backup and restore</a>.</li></ul>
 <h3 id="42-energy" class="doc-h"><span class="doc-h-text">4.2 Energy</span><a class="doc-anchor" href="#42-energy" aria-label="Link to this section"></a></h3>
 <p>The energy dashboard, laid out to two rules taken from the design document:</p>
 <ul><li><strong>Measured values are shown separately from calculated and forecast values.</strong>
@@ -119,6 +137,14 @@ create hundreds of separate notifications without a parent incident. See
 <p>Each alarm shows its severity as glyph plus word plus colour, its lifecycle
 state spelled out, and the operator actions available: <strong>acknowledge</strong>,
 <strong>mitigate</strong>, <strong>clear</strong>, <strong>review</strong> — each collecting a reason first.</p>
+<p>The <strong>notification delivery log</strong> is at the foot of the screen: the latest
+fifty attempts, with the channel, the escalation stage, the status, the
+recipient, the subject and the channel's own detail, filterable by channel and
+status. Each incident also opens its own deliveries from its panel. The status
+words are the notifier's: <code>sent</code> is the only success, <code>failed</code> carries the
+relay or push server's error, and <code>not configured</code> names the setting the
+channel is missing. See
+<a href="alarms.html#7-notification-and-the-honest-part">Alarms § Notification</a>.</p>
 <p>For the panel view of the same data, with a fixed grid and a horn, see
 <a href="annunciator.html">The annunciator panel</a>.</p>
 <h3 id="44-map" class="doc-h"><span class="doc-h-text">4.4 Map</span><a class="doc-anchor" href="#44-map" aria-label="Link to this section"></a></h3>
@@ -147,6 +173,14 @@ branch circuit or coordinates are still <code>TBD</code> has to be visible as su
 that is exactly what a commissioning engineer needs to know before touching it.</p>
 <p>Lifecycle status is drawn honestly: <code>planned</code>, <code>concept</code>, <code>procured</code> and
 <code>reserve</code> are all <em>design only</em>, not green.</p>
+<p>The <strong>Documentation</strong> card lists what the design package names for the asset
+and, beneath it, the <strong>document records</strong> filed for it — manuals, drawings,
+datasheets, photos, warranties, commissioning records, procedures,
+certificates — each with its kind, title, revision, issue date and where it
+lives. A location is drawn as a link only when it is one. A maintainer files a
+record from the card and deletes one after an explicit confirmation. The
+records hold where a document lives, not the document: <strong>the platform stores
+no files.</strong></p>
 <h3 id="48-control" class="doc-h"><span class="doc-h-text">4.8 Control</span><a class="doc-anchor" href="#48-control" aria-label="Link to this section"></a></h3>
 <p>The control presentation, which lays out all seven things the design document
 requires before anyone operates anything:</p>
@@ -157,7 +191,49 @@ control screen that hides its refusals teaches people to distrust it.</p>
 <p>Below that sits the command console, which shows its <strong>preflight</strong>: exactly what
 will be written to the audit log, and every reason the platform would refuse.
 Use the dry run first — it evaluates every interlock and publishes nothing.</p>
+<p>Three more writes live here:</p>
+<ul><li><strong>Operating modes.</strong> The authority card on an asset's panel sets the mode of
+the asset, its domain or the whole site; the Control page, before an asset
+is picked, shows every stored mode and sets site and domain scopes. The
+setter offers the platform's mode set, collects the mandatory reason first,
+explains that emergency latches before the request is sent, and shows the
+API's answer in full — including the <code>required</code> list a latched emergency
+returns when the condition has not been declared clear.</li><li><strong>Power-budget leases.</strong> The budget card requests a lease from the energy
+manager and revokes an active one. A denial comes back as a decision with a
+reason and the available power, and is drawn as an answer, not an error. A
+lease is an allocation, never a safety permissive.</li><li><strong>Maintainer reloads.</strong> The Control page reloads the registry from the
+design package and the alarm definitions (with the strict switch). Neither
+endpoint takes a reason, so both are confirmed explicitly; the counts and
+warnings come back on screen.</li></ul>
 <p>Full treatment: <a href="control.html">Control, interlocks and operating modes</a>.</p>
+<h3 id="49-commissioning" class="doc-h"><span class="doc-h-text">4.9 Commissioning</span><a class="doc-anchor" href="#49-commissioning" aria-label="Link to this section"></a></h3>
+<p>The twelve-step record, per asset. Pick an asset and the screen shows where it
+stands — steps passed, whether the 1–8 prerequisites are met, whether
+supervisory control is permitted, failed and outstanding steps — and the
+twelve records with their test detail.</p>
+<p>Recording a step is a form: the step (from the API's own list), the outcome
+(<code>pass</code>, <code>fail</code>, <code>blocked</code>, <code>not_run</code>), the preconditions, the injected
+condition, the expected sequence, what was observed, and evidence references.
+<code>blocked</code> and <code>not_run</code> are drawn as exactly that, never as progress, and a
+pass or fail with nothing observed is refused before it is sent.</p>
+<p>The point-bindings table shows each binding's status and whether automatic
+control is allowed, and <strong>commissions a binding</strong> with the mandatory reason.
+Allowing automatic control through it is the per-point safety gate: the API
+refuses it until the asset's prerequisites have passed, and the screen shows
+that refusal with its reason. Both writes need the <code>maintainer</code> role.</p>
+<p>Nothing on the screen performs a test. Full treatment:
+<a href="commissioning.html">Commissioning</a>.</p>
+<h3 id="410-maintenance" class="doc-h"><span class="doc-h-text">4.10 Maintenance</span><a class="doc-anchor" href="#410-maintenance" aria-label="Link to this section"></a></h3>
+<p>Plans and what they say is due, work orders, inspections, calibrations and
+spare-part stock, each list straight from the maintenance API and naming its
+endpoint; an empty table is drawn as empty, never as "all good".</p>
+<p>The primary writes are on the same screen: raise and complete a work order,
+record an inspection (a fail or advisory raises its own follow-up work order),
+record a calibration with its as-found and as-left errors, add a spare part,
+and generate the work that due plans imply. Work orders and inspections are
+<code>operator</code> writes; generating work, calibrations and spare parts need a
+<code>maintainer</code>. The screen does not poll, so a half-filled form is never redrawn
+underneath you. Creating and deleting maintenance plans stays an API call.</p>
 <hr>
 <h2 id="5-wall-display-mode" class="doc-h"><span class="doc-h-text">5. Wall-display mode</span><a class="doc-anchor" href="#5-wall-display-mode" aria-label="Link to this section"></a></h2>
 <p>The toggle in the top-right switches the whole console to a larger type scale
@@ -173,12 +249,17 @@ nominated display. See
 nothing draws it over a basemap.</li><li><strong>It does not show Grafana dashboards.</strong> Those exist for the container
 deployment and read the database directly.</li><li><strong>It cannot make an alarm fire that has no trigger point.</strong> Ten of the forty
 shipped alarm definitions are in that position today — see
-<a href="alarms.html#6-serviceability-a-dark-tile-is-a-claim">Alarms § Serviceability</a>.</li></ul>
+<a href="alarms.html#6-serviceability-a-dark-tile-is-a-claim">Alarms § Serviceability</a>.</li><li><strong>It does not restore a backup.</strong> It takes one; a restore replaces the
+database under a running platform and stays a command-line drill against a
+stopped node — <a href="operations.html#4-backup-and-restore">Operations § Backup and restore</a>.</li><li><strong>It stores no document files.</strong> Document records say where a manual or
+drawing lives; the ZFS-backed store the design document describes is not
+built.</li><li><strong>It does not create maintenance plans</strong>, and it does not perform a
+commissioning step. It records that a person did.</li></ul>
 <hr>
 <h2 id="7-related-reading" class="doc-h"><span class="doc-h-text">7. Related reading</span><a class="doc-anchor" href="#7-related-reading" aria-label="Link to this section"></a></h2>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Document</th><th scope="col">Why</th></tr></thead><tbody><tr><td><a href="annunciator.html">The annunciator panel</a></td><td>The alarm panel, its sequence and its controls</td></tr><tr><td><a href="topology-view.html">Topology and blast radius</a></td><td>The Topology screen in depth</td></tr><tr><td><a href="rack-view.html">Rack elevation</a></td><td>The Rack screen in depth</td></tr><tr><td><a href="control.html">Control</a></td><td>The Control screen in depth, and the eight interlocks</td></tr><tr><td><a href="alarms.html">Alarms</a></td><td>The alarm model behind the Alarms screen</td></tr><tr><td><a href="api.html">API reference</a></td><td>The endpoints every screen reads</td></tr></tbody></table></div></div><nav class="doc-pager" aria-label="Reading order"><a class="pager-prev" href="desktop-shell.html" data-page="desktop-shell"><span class="pager-role">Previous</span>The desktop shell</a><a class="pager-next" href="annunciator.html" data-page="annunciator"><span class="pager-role">Next</span>The annunciator panel</a></nav></article>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Document</th><th scope="col">Why</th></tr></thead><tbody><tr><td><a href="annunciator.html">The annunciator panel</a></td><td>The alarm panel, its sequence and its controls</td></tr><tr><td><a href="topology-view.html">Topology and blast radius</a></td><td>The Topology screen in depth</td></tr><tr><td><a href="rack-view.html">Rack elevation</a></td><td>The Rack screen in depth</td></tr><tr><td><a href="control.html">Control</a></td><td>The Control screen in depth, and the eight interlocks</td></tr><tr><td><a href="alarms.html">Alarms</a></td><td>The alarm model behind the Alarms screen</td></tr><tr><td><a href="commissioning.html">Commissioning</a></td><td>The twelve steps the Commissioning screen records</td></tr><tr><td><a href="operations.html">Operations runbooks</a></td><td>The daily check the Home screen was built for, and backups</td></tr><tr><td><a href="api.html">API reference</a></td><td>The endpoints every screen reads</td></tr></tbody></table></div></div><nav class="doc-pager" aria-label="Reading order"><a class="pager-prev" href="desktop-shell.html" data-page="desktop-shell"><span class="pager-role">Previous</span>The desktop shell</a><a class="pager-next" href="annunciator.html" data-page="annunciator"><span class="pager-role">Next</span>The annunciator panel</a></nav></article>
 </main>
-<aside class="site-toc" aria-label="On this page"><h2>On this page</h2><ul><li data-level="2"><a href="#1-reaching-the-console" data-anchor="1-reaching-the-console">1. Reaching the console</a></li><li data-level="2"><a href="#2-the-chrome" data-anchor="2-the-chrome">2. The chrome</a></li><li data-level="3"><a href="#three-kinds-of-nothing" data-anchor="three-kinds-of-nothing">Three kinds of nothing</a></li><li data-level="2"><a href="#3-operator-identity" data-anchor="3-operator-identity">3. Operator identity</a></li><li data-level="3"><a href="#every-write-asks-why" data-anchor="every-write-asks-why">Every write asks why</a></li><li data-level="2"><a href="#4-the-screens" data-anchor="4-the-screens">4. The screens</a></li><li data-level="3"><a href="#41-home" data-anchor="41-home">4.1 Home</a></li><li data-level="3"><a href="#42-energy" data-anchor="42-energy">4.2 Energy</a></li><li data-level="3"><a href="#43-alarms" data-anchor="43-alarms">4.3 Alarms</a></li><li data-level="3"><a href="#44-map" data-anchor="44-map">4.4 Map</a></li><li data-level="3"><a href="#45-topology" data-anchor="45-topology">4.5 Topology</a></li><li data-level="3"><a href="#46-rack" data-anchor="46-rack">4.6 Rack</a></li><li data-level="3"><a href="#47-assets" data-anchor="47-assets">4.7 Assets</a></li><li data-level="3"><a href="#48-control" data-anchor="48-control">4.8 Control</a></li><li data-level="2"><a href="#5-wall-display-mode" data-anchor="5-wall-display-mode">5. Wall-display mode</a></li><li data-level="2"><a href="#6-what-the-console-cannot-do" data-anchor="6-what-the-console-cannot-do">6. What the console cannot do</a></li><li data-level="2"><a href="#7-related-reading" data-anchor="7-related-reading">7. Related reading</a></li></ul></aside>
+<aside class="site-toc" aria-label="On this page"><h2>On this page</h2><ul><li data-level="2"><a href="#1-reaching-the-console" data-anchor="1-reaching-the-console">1. Reaching the console</a></li><li data-level="2"><a href="#2-the-chrome" data-anchor="2-the-chrome">2. The chrome</a></li><li data-level="3"><a href="#three-kinds-of-nothing" data-anchor="three-kinds-of-nothing">Three kinds of nothing</a></li><li data-level="2"><a href="#3-operator-identity" data-anchor="3-operator-identity">3. Operator identity</a></li><li data-level="3"><a href="#every-write-asks-why" data-anchor="every-write-asks-why">Every write asks why</a></li><li data-level="2"><a href="#4-the-screens" data-anchor="4-the-screens">4. The screens</a></li><li data-level="3"><a href="#41-home" data-anchor="41-home">4.1 Home</a></li><li data-level="3"><a href="#42-energy" data-anchor="42-energy">4.2 Energy</a></li><li data-level="3"><a href="#43-alarms" data-anchor="43-alarms">4.3 Alarms</a></li><li data-level="3"><a href="#44-map" data-anchor="44-map">4.4 Map</a></li><li data-level="3"><a href="#45-topology" data-anchor="45-topology">4.5 Topology</a></li><li data-level="3"><a href="#46-rack" data-anchor="46-rack">4.6 Rack</a></li><li data-level="3"><a href="#47-assets" data-anchor="47-assets">4.7 Assets</a></li><li data-level="3"><a href="#48-control" data-anchor="48-control">4.8 Control</a></li><li data-level="3"><a href="#49-commissioning" data-anchor="49-commissioning">4.9 Commissioning</a></li><li data-level="3"><a href="#410-maintenance" data-anchor="410-maintenance">4.10 Maintenance</a></li><li data-level="2"><a href="#5-wall-display-mode" data-anchor="5-wall-display-mode">5. Wall-display mode</a></li><li data-level="2"><a href="#6-what-the-console-cannot-do" data-anchor="6-what-the-console-cannot-do">6. What the console cannot do</a></li><li data-level="2"><a href="#7-related-reading" data-anchor="7-related-reading">7. Related reading</a></li></ul></aside>
 </div>
 <div class="site-search" id="search-overlay" hidden role="dialog" aria-modal="true" aria-label="Search the documentation">
 <div class="site-search-panel">

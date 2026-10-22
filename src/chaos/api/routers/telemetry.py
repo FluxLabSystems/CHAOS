@@ -280,6 +280,9 @@ def get_history(
 def list_dead_letters(
     session: DbSession,
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    offset: Annotated[
+        int, Query(ge=0, description="Rows to skip, newest first; the console pages with it")
+    ] = 0,
     topic: Annotated[str | None, Query(description="Substring match on topic")] = None,
     reason: Annotated[str | None, Query(description="Substring match on reason")] = None,
 ) -> list[DeadLetterOut]:
@@ -289,7 +292,10 @@ def list_dead_letters(
         stmt = stmt.where(IngestDeadLetter.topic.contains(topic))
     if reason:
         stmt = stmt.where(IngestDeadLetter.reason.contains(reason))
-    rows = session.execute(stmt.order_by(IngestDeadLetter.created_at.desc()).limit(limit)).scalars().all()
+    # ``id`` breaks ties so two letters written in the same instant keep one
+    # order between pages.
+    stmt = stmt.order_by(IngestDeadLetter.created_at.desc(), IngestDeadLetter.id.desc())
+    rows = session.execute(stmt.limit(limit).offset(offset)).scalars().all()
     return [
         DeadLetterOut(
             id=row.id,

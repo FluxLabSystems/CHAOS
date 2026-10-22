@@ -169,6 +169,18 @@ export async function request(path, options = {}) {
 
 export const get = (path, options) => request(path, { ...options, method: 'GET' });
 export const post = (path, body, options) => request(path, { ...options, method: 'POST', body });
+export const patch = (path, body, options) => request(path, { ...options, method: 'PATCH', body });
+export const del = (path, options) => request(path, { ...options, method: 'DELETE' });
+
+/** Build `?a=1&b=2` from an object, leaving out blank values. */
+export function query(params = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') search.set(key, value);
+  });
+  const text = search.toString();
+  return text ? `?${text}` : '';
+}
 
 /**
  * Try several endpoints in order and return the first that is not
@@ -220,14 +232,7 @@ export const api = {
   health: () => get('/health'),
 
   // Built in parallel by other agents; the console degrades when absent.
-  assets: (params = {}) => {
-    const query = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '') query.set(key, value);
-    });
-    const suffix = query.toString();
-    return get('/assets' + (suffix ? `?${suffix}` : ''));
-  },
+  assets: (params = {}) => get('/assets' + query(params)),
   asset: (assetId) => get(`/assets/${encodeURI(assetId)}`),
   assetPoints: (assetId) => get(`/assets/${encodeURI(assetId)}/points`),
   assetRelationships: (assetId) => get(`/assets/${encodeURI(assetId)}/relationships`),
@@ -261,6 +266,63 @@ export const api = {
     if (value !== undefined) body.value = value;
     return post('/commands', body);
   },
+
+  // Ingest health: the operations runbook's daily check reads these on Home.
+  telemetryStats: () => get('/telemetry/stats'),
+  stalePoints: (limit = 500) => get(`/telemetry/stale${query({ limit })}`),
+  deadLetters: ({ limit = 25, offset = 0, topic, reason } = {}) =>
+    get(`/telemetry/dead-letters${query({ limit, offset, topic, reason })}`),
+
+  // Backup archives (POST runs the same code as `chaos backup`).
+  backups: () => get('/backup'),
+  createBackup: (includeHistory = false) => post('/backup', { include_history: Boolean(includeHistory) }),
+
+  // Operating modes (SDD 11). The path segment is resolved server-side, so the
+  // scope type travels in the body to leave nothing to guessing.
+  operatingModes: () => get('/operating-modes'),
+  setOperatingMode: (scopeId, body) => post(`/operating-modes/${encodeURIComponent(scopeId)}`, body),
+
+  // Power-budget leases: an allocation, never a safety permissive (SDD 31.4).
+  requestLease: (body) => post('/energy/load-budgets/reservations', body),
+  revokeLease: (leaseId, reason) =>
+    del(`/energy/load-budgets/reservations/${encodeURIComponent(leaseId)}${query({ reason })}`),
+
+  // Maintainer reloads. Neither endpoint takes a reason; the API records the actor.
+  reloadRegistry: () => post('/registry/reload'),
+  reloadAlarmDefinitions: (strict = true) => post(`/alarms/definitions/reload${query({ strict })}`),
+
+  // Notification delivery log (SDD FR-007): every attempt on every channel.
+  notifications: (params = {}) => get(`/notifications${query(params)}`),
+  incident: (incidentId) => get(`/incidents/${encodeURIComponent(incidentId)}`),
+
+  // Commissioning (SDD 19). Point IDs carry a slash; the routes take {point_id:path}.
+  commissioningSteps: () => get('/commissioning/steps'),
+  commissioningStatus: (assetId) => get(`/commissioning/${encodeURI(assetId)}/status`),
+  commissioningRecords: (assetId) => get(`/commissioning/${encodeURI(assetId)}/records`),
+  recordCommissioningStep: (assetId, body) => post(`/commissioning/${encodeURI(assetId)}/steps`, body),
+  commissionBinding: (pointId, body) => post(`/commissioning/bindings/${encodeURI(pointId)}`, body),
+  point: (assetId, pointName) => get(`/points/${encodeURI(assetId)}/${encodeURIComponent(pointName)}`),
+
+  // Maintenance (SDD 18).
+  maintenanceDue: (horizonDays = 30) => get(`/maintenance/due${query({ horizon_days: horizonDays })}`),
+  generateWorkOrders: () => post('/maintenance/generate'),
+  maintenancePlans: (params = {}) => get(`/maintenance/plans${query(params)}`),
+  workOrders: (params = {}) => get(`/work-orders${query(params)}`),
+  createWorkOrder: (body) => post('/work-orders', body),
+  completeWorkOrder: (workOrderId, body) => post(`/work-orders/${encodeURIComponent(workOrderId)}/complete`, body),
+  inspections: (params = {}) => get(`/maintenance/inspections${query(params)}`),
+  recordInspection: (body) => post('/maintenance/inspections', body),
+  calibrations: (params = {}) => get(`/maintenance/calibrations${query(params)}`),
+  recordCalibration: (body) => post('/maintenance/calibrations', body),
+  spareParts: (belowMinimum = false) => get(`/maintenance/spare-parts${query({ below_minimum: belowMinimum })}`),
+  createSparePart: (body) => post('/maintenance/spare-parts', body),
+
+  // Document records: metadata only, no file storage (see routers/documents.py).
+  documentKinds: () => get('/documents/kinds'),
+  assetDocuments: (assetId) => get(`/assets/${encodeURI(assetId)}/documents`),
+  createDocument: (body) => post('/documents', body),
+  updateDocument: (documentId, body) => patch(`/documents/${encodeURIComponent(documentId)}`, body),
+  deleteDocument: (documentId) => del(`/documents/${encodeURIComponent(documentId)}`),
 };
 
 /* ------------------------------------------------------------ formatting -- */

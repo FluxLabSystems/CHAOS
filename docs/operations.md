@@ -32,9 +32,9 @@ Look at four things:
 | Look at | Bad sign |
 |---|---|
 | Active alarms | Anything critical or major that nobody has acknowledged |
-| The dead-letter count | A count that **grows every day**. That is a binding that was never commissioned properly, not noise |
+| The dead-letter count (the **Dead letters** card, with the list beneath it) | A count that **grows every day**. That is a binding that was never commissioned properly, not noise |
 | The energy state and how old its evaluation is | A state derived from stale inputs. The screen shows the data quality alongside the state precisely so this is visible |
-| The stale-point count | Points the platform admits it cannot see |
+| The stale-point count (the **Stale points** card) | Points the platform admits it cannot see |
 
 The freshness indicator in the top-right tells you whether what you are reading
 is live at all. If the *API unreachable* banner is showing, you are looking at a
@@ -48,8 +48,11 @@ coverage. If it changes, something changed in the design package. See
 
 ### Weekly
 
-- **Confirm the nightly backup ran** and its manifest reports no failures. There
-  is no backup action in the console today — see section 4.
+- **Confirm the nightly backup ran.** Home → **Backups** shows the newest
+  archive with its manifest and goes amber when it is more than 36 hours old;
+  for the full backup set on the container stack, read its manifest for a
+  failure count of zero. A maintainer can take an archive from the same card
+  — see section 4.
 - **Confirm the secondary node's replica is current.** Point the desktop shell's
   **Settings → Gateway** at the secondary node and compare its Assets counts
   with the primary's. Change it back afterwards.
@@ -108,8 +111,8 @@ Once the platform is up:
    has not already expired on its own time-to-live.
 2. **Distrust retained bus state.** Retained topics may describe the world as it
    was before the lights went out.
-3. **Find what the platform cannot see.** The stale-point list. Every point there
-   is *unknown*, not *normal*.
+3. **Find what the platform cannot see.** The stale-point list (Home →
+   **Stale points**). Every point there is *unknown*, not *normal*.
 4. **Walk the plant.** Confirm actual breaker, valve and equipment states against
    what the twin believes. **Correct the twin, not the plant.**
 5. **Only then** let the energy manager resume. It must not begin dispatching
@@ -213,7 +216,8 @@ power event, a comms failure, a gateway reboot.
    cause; the rest are consequences.
 3. **Ask whether the platform is the problem.** A flood with no plant symptoms is
    often ingest: a gateway republishing history with old timestamps, or a binding
-   pointed at the wrong point. Check the dead-letter list.
+   pointed at the wrong point. Check the dead-letter list (Home →
+   **Dead-letter list**).
 4. **Silence, then acknowledge, in that order.** On the annunciator, SILENCE HORN
    quiets the room without touching a single lamp, so you can think. Then
    acknowledge deliberately, tile by tile or as a set.
@@ -225,8 +229,9 @@ power event, a comms failure, a gateway reboot.
 ### Planned work: use maintenance mode, not suppression
 
 On the console's Control screen, set the scope's operating mode to
-`maintenance`. That inhibits automatic starts and modifies alarms **with the
-lockout visible**.
+`maintenance` — the setter on the asset's panel for one asset, or the one at
+the top of the Control page for a domain or the whole site. That inhibits
+automatic starts and modifies alarms **with the lockout visible**.
 
 Suppressing an alarm makes the lockout invisible, which is how a subsystem gets
 left in maintenance mode for three weeks.
@@ -235,12 +240,21 @@ left in maintenance mode for three weeks.
 
 ## 4. Backup and restore
 
-**There is no backup action in the console or the shell today.** Backups are
-produced by the platform's own tooling on a schedule, which is the right shape
-for a task that should run unattended at 02:00 — but it does mean this section
-points at [Command line](./advanced-command-line.md#5-backup) and
-[Container deployment](./advanced-container-deployment.md#7-backups) for the
-mechanics.
+A backup is taken three ways, and all three write the same archive:
+
+- **On a schedule, unattended** — the right shape for a task that should run
+  at 02:00. On Windows the gateway schedules it; on the container stack cron
+  runs `deploy/backup/backup.sh`, which wraps `chaos backup` in the fuller set
+  described below — see
+  [Container deployment § Backups](./advanced-container-deployment.md#7-backups).
+- **From the console** — Home → **Backups** → *Take a backup now*, with the
+  `maintainer` role. The action confirms first, writes one archive into this
+  node's backup directory, lists it, and is audited under your name.
+- **From the command line** — `chaos backup`, in
+  [Command line § Backup](./advanced-command-line.md#5-backup).
+
+Restoring stays a command-line procedure (4.3): it replaces the database under
+a running platform and is done against a stopped node.
 
 What matters operationally:
 
@@ -365,9 +379,9 @@ provides holdover.** It is an open item.
 1. The subsystem has passed all twelve commissioning steps. Confirm it on the
    console — the commissioning status for the asset must report supervisory
    control permitted.
-2. Enable the specific binding through the commissioning endpoint. **The
-   platform refuses if the prerequisites have not passed**, and that refusal is
-   the point of the endpoint.
+2. Enable the specific binding from the console's Commissioning screen (or
+   the commissioning endpoint). **The platform refuses if the prerequisites
+   have not passed**, and that refusal is the point of the endpoint.
 3. Only then turn on the platform-wide gate, and restart the platform so it
    takes effect.
 4. **Verify** that the platform reports physical control as enabled — the
