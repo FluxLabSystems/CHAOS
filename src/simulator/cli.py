@@ -1,10 +1,10 @@
-"""``homestead-simulator`` -- run a simulated homestead against a broker or offline.
+"""``chaos-simulator`` -- run a simulated homestead against a broker or offline.
 
 Examples::
 
-    homestead-simulator --list-scenarios
-    homestead-simulator --scenario clear_summer_day --duration 24h --speed 10000 --offline
-    homestead-simulator --scenario generator_support --broker 127.0.0.1 --port 1883 --speed 60
+    chaos-simulator --list-scenarios
+    chaos-simulator --scenario clear_summer_day --duration 24h --speed 10000 --offline
+    chaos-simulator --scenario generator_support --broker 127.0.0.1 --port 1883 --speed 60
 
 ``--offline`` uses the in-process bus, so the whole rig runs with no broker at
 all -- SDD section 19 step 1 bench testing on a laptop. Everything else is
@@ -59,7 +59,7 @@ class TopicCollector:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="homestead-simulator",
+        prog="chaos-simulator",
         description="Simulated homestead MQTT site for the Homestead Digital Twin.",
     )
     parser.add_argument("--scenario", default="clear_summer_day", help="scenario name to run")
@@ -81,7 +81,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=None, help="random seed (default: scenario's)")
     parser.add_argument("--broker", default=None, help="MQTT broker host")
     parser.add_argument("--port", type=int, default=None, help="MQTT broker port")
-    parser.add_argument("--base-topic", default=None, help="MQTT base topic (default: homestead)")
+    parser.add_argument(
+        "--base-topic", default=None, help="MQTT base topic (default: chaos, the platform's own default)"
+    )
     parser.add_argument(
         "--offline",
         action="store_true",
@@ -116,7 +118,7 @@ def build_site(args: argparse.Namespace, scenario) -> tuple[SimulatedSite, Any, 
     if args.base_topic:
         settings_kwargs["mqtt_base_topic"] = args.base_topic
     settings_kwargs["mqtt_enabled"] = not args.offline
-    settings_kwargs["mqtt_client_id"] = "homestead-simulator"
+    settings_kwargs["mqtt_client_id"] = "chaos-simulator"
     settings = Settings(**settings_kwargs)
 
     collector: TopicCollector | None = None

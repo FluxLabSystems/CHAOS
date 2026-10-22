@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -90,8 +91,12 @@ class Settings(BaseSettings):
     mqtt_enabled: bool = True
 
     # --- Historian ------------------------------------------------------
-    # "sql" writes samples to the relational historian table (works everywhere).
-    historian_backend: str = "sql"
+    # "sql" writes samples to the relational historian table (works everywhere);
+    # "none" keeps current state only and writes no samples. These are the only
+    # backends that exist: the InfluxDB-versus-TimescaleDB decision is open, and
+    # a name that nothing implements must not be accepted and stamped into
+    # point_samples_index as if it meant something.
+    historian_backend: Literal["sql", "none"] = "sql"
     historian_raw_retention_days: int = 90
 
     # --- Telemetry semantics -------------------------------------------

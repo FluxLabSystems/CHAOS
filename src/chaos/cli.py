@@ -1649,7 +1649,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Delegate to the simulator CLI.",
         description=(
             "Forward all remaining arguments to the simulator "
-            "(equivalent to 'homestead-simulator ...'). Use -- to separate flags."
+            "(equivalent to 'chaos-simulator ...'). Use -- to separate flags."
         ),
     )
     simulate.add_argument(
