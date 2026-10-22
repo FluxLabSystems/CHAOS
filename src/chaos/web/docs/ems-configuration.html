@@ -154,11 +154,29 @@ the configuration this endpoint reports.</p>
 configuration is in force at a time.</li><li>It does not change equipment-native limits. A BMS charge limit, an inverter
 rating or a generator controller's attempt policy is not an <code>EmsConfig</code>
 field and is never overridden from here (SDD 30.9, 34.3).</li><li>It does not hold the forecast's inputs. Where the site is and how the PV
-array is rated come from the registry, not from this file — see the
-<a href="design-package.html#5-preserved-conflicts">design package</a> for the array
-rating's status.</li></ul></div><nav class="doc-pager" aria-label="Reading order"><a class="pager-prev" href="advanced-windows-packaging.html" data-page="advanced-windows-packaging"><span class="pager-role">Previous</span>Windows packaging</a><a class="pager-next" href="design-decisions-dd-001-energy-capacity-revision.html" data-page="design-decisions-dd-001-energy-capacity-revision"><span class="pager-role">Next</span>DD-001: Authoritative energy design revision</a></nav></article>
+array is rated come from the registry, not from this file — see §8.</li></ul>
+<hr>
+<h2 id="8-the-pv-forecast-one-clear-sky-model" class="doc-h"><span class="doc-h-text">8. The PV forecast: one clear-sky model</span><a class="doc-anchor" href="#8-the-pv-forecast-one-clear-sky-model" aria-label="Link to this section"></a></h2>
+<p>The forecast margin (<code>forecast_persistence_derate</code>) and the horizons are the
+only forecast tunables. The model itself is fixed and shared:
+<code>chaos.ems.clearsky</code> holds the clear-sky irradiance relationships —
+extraterrestrial irradiance with the earth-sun distance factor, Kasten-Young
+air mass, the Meinel/Laue direct-normal fit with its altitude term, a 10 %
+diffuse fraction and the isotropic plane-of-array transposition — and both the
+EMS forecaster (<code>chaos.ems.forecast</code>) and the simulator's PV array
+(<code>simulator.components.solar</code>) bring their sun position to it. Before that
+module existed the two carried separate copies with different solar constants
+(1353 and 1361 W/m²) and one without the distance factor, so the simulated sky
+and the forecast of it disagreed by up to about 4 %.</p>
+<p>The solar constant is <strong>1353 W/m²</strong>, the value the Meinel fit was published
+against. The modern mean total solar irradiance is 1361 W/m²; the 0.6 %
+difference is far inside the uncertainty of a clear-sky fit with no site
+calibration, and keeping the published pairing avoids presenting a hybrid as
+either source. These are textbook relationships, not a site calibration:
+cloud, snow, soiling and aerosol are not modelled, and every forecast value
+says so in its <code>assumptions</code>.</p></div><nav class="doc-pager" aria-label="Reading order"><a class="pager-prev" href="advanced-windows-packaging.html" data-page="advanced-windows-packaging"><span class="pager-role">Previous</span>Windows packaging</a><a class="pager-next" href="design-decisions-dd-001-energy-capacity-revision.html" data-page="design-decisions-dd-001-energy-capacity-revision"><span class="pager-role">Next</span>DD-001: Authoritative energy design revision</a></nav></article>
 </main>
-<aside class="site-toc" aria-label="On this page"><h2>On this page</h2><ul><li data-level="2"><a href="#1-the-effective-configuration" data-anchor="1-the-effective-configuration">1. The effective configuration</a></li><li data-level="3"><a href="#where-the-variable-is-read" data-anchor="where-the-variable-is-read">Where the variable is read</a></li><li data-level="2"><a href="#2-the-file" data-anchor="2-the-file">2. The file</a></li><li data-level="2"><a href="#3-what-happens-when-the-file-is-wrong" data-anchor="3-what-happens-when-the-file-is-wrong">3. What happens when the file is wrong</a></li><li data-level="2"><a href="#4-the-thermal-derate-curves" data-anchor="4-the-thermal-derate-curves">4. The thermal derate curves</a></li><li data-level="2"><a href="#5-the-configuration-revision-sdd-39-ems-t015" data-anchor="5-the-configuration-revision-sdd-39-ems-t015">5. The configuration revision (SDD 39 EMS-T015)</a></li><li data-level="2"><a href="#6-reading-it-back" data-anchor="6-reading-it-back">6. Reading it back</a></li><li data-level="2"><a href="#7-what-this-does-not-do" data-anchor="7-what-this-does-not-do">7. What this does not do</a></li></ul></aside>
+<aside class="site-toc" aria-label="On this page"><h2>On this page</h2><ul><li data-level="2"><a href="#1-the-effective-configuration" data-anchor="1-the-effective-configuration">1. The effective configuration</a></li><li data-level="3"><a href="#where-the-variable-is-read" data-anchor="where-the-variable-is-read">Where the variable is read</a></li><li data-level="2"><a href="#2-the-file" data-anchor="2-the-file">2. The file</a></li><li data-level="2"><a href="#3-what-happens-when-the-file-is-wrong" data-anchor="3-what-happens-when-the-file-is-wrong">3. What happens when the file is wrong</a></li><li data-level="2"><a href="#4-the-thermal-derate-curves" data-anchor="4-the-thermal-derate-curves">4. The thermal derate curves</a></li><li data-level="2"><a href="#5-the-configuration-revision-sdd-39-ems-t015" data-anchor="5-the-configuration-revision-sdd-39-ems-t015">5. The configuration revision (SDD 39 EMS-T015)</a></li><li data-level="2"><a href="#6-reading-it-back" data-anchor="6-reading-it-back">6. Reading it back</a></li><li data-level="2"><a href="#7-what-this-does-not-do" data-anchor="7-what-this-does-not-do">7. What this does not do</a></li><li data-level="2"><a href="#8-the-pv-forecast-one-clear-sky-model" data-anchor="8-the-pv-forecast-one-clear-sky-model">8. The PV forecast: one clear-sky model</a></li></ul></aside>
 </div>
 <div class="site-search" id="search-overlay" hidden role="dialog" aria-modal="true" aria-label="Search the documentation">
 <div class="site-search-panel">

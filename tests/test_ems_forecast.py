@@ -15,6 +15,7 @@ import datetime as dt
 import pytest
 from test_ems_state_machine import T0, make_inputs
 
+from chaos.ems.clearsky import SOLAR_CONSTANT_W_M2
 from chaos.ems.config import EmsConfig
 from chaos.ems.derived import NaivePersistenceForecast, compute_derived
 from chaos.ems.forecast import (
@@ -114,8 +115,9 @@ def test_naive_datetimes_are_taken_as_utc():
 def test_clear_sky_with_the_sun_overhead_is_near_the_textbook_value():
     overhead = SolarPosition(zenith_deg=0.0, azimuth_deg=180.0, declination_deg=0.0, equation_of_time_min=0.0)
     irradiance = clear_sky_irradiance(overhead, day_of_year=172)
-    # 1353 W/m^2 x 0.7 at air mass 1, less the June earth-sun distance.
-    assert irradiance.dni == pytest.approx(1353 * 0.7 * (1 - 0.033), rel=0.02)
+    # The shared solar constant x 0.7 at air mass 1, less the June earth-sun distance.
+    assert SOLAR_CONSTANT_W_M2 == 1353.0
+    assert irradiance.dni == pytest.approx(SOLAR_CONSTANT_W_M2 * 0.7 * (1 - 0.033), rel=0.02)
     assert irradiance.dhi == pytest.approx(0.1 * irradiance.dni, rel=1e-6)
     assert irradiance.ghi == pytest.approx(1.1 * irradiance.dni, rel=1e-6)
 
@@ -132,6 +134,37 @@ def test_altitude_increases_direct_irradiance():
     sea_level = clear_sky_irradiance(low_sun, day_of_year=100, elevation_m=0.0)
     mountain = clear_sky_irradiance(low_sun, day_of_year=100, elevation_m=2000.0)
     assert mountain.dni > sea_level.dni
+
+
+def test_air_mass_is_finite_at_the_horizon_and_the_distance_factor_is_a_few_percent():
+    from chaos.ems.clearsky import earth_sun_distance_factor, kasten_young_air_mass
+
+    assert kasten_young_air_mass(0.0) == pytest.approx(1.0, abs=0.01)
+    assert 35.0 < kasten_young_air_mass(90.0) < 40.0
+    assert kasten_young_air_mass(100.0) == kasten_young_air_mass(90.0)
+    # Perihelion in early January, aphelion in early July: +/- 3.3 %.
+    assert earth_sun_distance_factor(3) == pytest.approx(1.033, abs=0.001)
+    assert earth_sun_distance_factor(185) == pytest.approx(0.967, abs=0.001)
+
+
+def test_the_simulator_and_the_forecaster_share_one_clear_sky_model():
+    """One model in chaos.ems.clearsky: the simulated sky and the forecast of it agree.
+
+    Each keeps its own solar geometry (NOAA/Meeus here, Cooper/Spencer in the
+    simulator), so the comparison is at solar noon on a south-facing plane,
+    where the geometries agree to a fraction of a degree and any remaining
+    difference would be the irradiance model.
+    """
+    from simulator.components.solar import clear_sky_poa_w_m2
+
+    latitude, longitude, tilt = 44.3, -78.3, 30.0
+    noon, position = solar_noon(JUNE_SOLSTICE, latitude, longitude)
+    irradiance = clear_sky_irradiance(position, day_of_year=noon.timetuple().tm_yday)
+    forecaster_poa = plane_of_array_w_m2(position, irradiance, tilt_deg=tilt, azimuth_deg=180.0)
+    simulator_poa, elevation = clear_sky_poa_w_m2(noon, latitude, longitude, tilt, 0.20)
+    assert elevation == pytest.approx(position.elevation_deg, abs=0.5)
+    assert simulator_poa == pytest.approx(forecaster_poa, rel=0.01)
+    assert 900.0 < simulator_poa < 1100.0
 
 
 def test_a_tilt_facing_a_low_sun_collects_more_than_a_flat_plane():

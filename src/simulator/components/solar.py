@@ -10,6 +10,12 @@ The chain is deliberately textbook and each step is named:
     -> plane-of-array irradiance -> cloud attenuation -> cell temperature
     -> DC power
 
+The geometry (declination, equation of time, hour angle, elevation and the
+south-facing incidence) is the closed-form set below. The irradiance steps --
+air mass, clear-sky direct normal, diffuse and the plane-of-array transposition
+-- come from :mod:`chaos.ems.clearsky`, the same model the energy manager's
+forecaster uses, so the simulated sky and the EMS forecast of it agree.
+
 Two power figures are kept apart, because the EMS needs both (SDD 30.5 "PV power
 available and generated") and because SDD 36 dispatches *surplus*:
 
@@ -28,11 +34,9 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
+from chaos.ems.clearsky import clear_sky_irradiance, isotropic_plane_of_array_w_m2
 from simulator.clock import local_day_index
 from simulator.components.base import Component, PointCatalog, SiteContext, clamp
-
-#: Solar constant, W/m2.
-SOLAR_CONSTANT_W_M2 = 1361.0
 
 ARRAY_ASSET = "energy.pv_array.agrivoltaic_field.01"
 ROW_ASSETS = tuple(f"energy.pv_row.agrivoltaic_field.{i:02d}" for i in range(1, 5))
@@ -119,17 +123,6 @@ def solar_elevation_deg(now: dt.datetime, latitude_deg: float, longitude_deg: fl
     return math.degrees(math.asin(clamp(sin_elev, -1.0, 1.0)))
 
 
-def air_mass(elevation_deg: float) -> float:
-    """Kasten-Young relative air mass. Large but finite near the horizon."""
-    if elevation_deg <= 0:
-        return 40.0
-    zenith = 90.0 - elevation_deg
-    return min(
-        40.0,
-        1.0 / (math.cos(math.radians(zenith)) + 0.50572 * (96.07995 - zenith) ** -1.6364),
-    )
-
-
 def clear_sky_poa_w_m2(
     now: dt.datetime,
     latitude_deg: float,
@@ -141,33 +134,29 @@ def clear_sky_poa_w_m2(
 
     Returns ``(poa_w_m2, elevation_deg)``.
 
-    * Direct beam from the Meinel clear-sky model ``1361 * 0.7 ** AM**0.678``.
-    * Diffuse taken as 10 % of the horizontal beam component (adequate for a
-      test rig; a real forecast integration replaces this later).
+    * Direct beam, diffuse and ground-reflected terms from
+      :mod:`chaos.ems.clearsky` (Meinel / Laue with Kasten-Young air mass,
+      10 % diffuse, isotropic transposition) -- the model the EMS forecaster
+      uses. The register gives no site elevation, so Laue's altitude term is
+      evaluated at sea level.
     * Incidence on a south-facing tilted plane collapses to the classic
       ``sin(d)sin(phi-beta) + cos(d)cos(phi-beta)cos(omega)`` form.
     """
     elevation = solar_elevation_deg(now, latitude_deg, longitude_deg)
     if elevation <= 0.0:
         return 0.0, elevation
-    dni = SOLAR_CONSTANT_W_M2 * 0.7 ** (air_mass(elevation) ** 0.678)
-    sin_elev = math.sin(math.radians(elevation))
-    ghi_beam = dni * sin_elev
-    dhi = 0.10 * ghi_beam
-    ghi = ghi_beam + dhi
-
     doy = now.timetuple().tm_yday
+    irradiance = clear_sky_irradiance(90.0 - elevation, day_of_year=doy)
+
     dec = math.radians(solar_declination_deg(doy))
     omega = math.radians(solar_hour_angle_deg(now, longitude_deg))
     lat_eff = math.radians(latitude_deg - tilt_deg)
     cos_incidence = math.sin(dec) * math.sin(lat_eff) + math.cos(dec) * math.cos(lat_eff) * math.cos(omega)
-    cos_incidence = max(0.0, cos_incidence)
 
-    tilt = math.radians(tilt_deg)
-    poa = (
-        dni * cos_incidence + dhi * (1.0 + math.cos(tilt)) / 2.0 + ghi * albedo * (1.0 - math.cos(tilt)) / 2.0
+    poa = isotropic_plane_of_array_w_m2(
+        irradiance, cos_incidence=cos_incidence, tilt_deg=tilt_deg, albedo=albedo
     )
-    return max(0.0, poa), elevation
+    return poa, elevation
 
 
 def cloud_attenuation(cloud_cover: float) -> float:

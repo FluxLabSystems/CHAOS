@@ -212,6 +212,28 @@ the configuration this endpoint reports.
   rating or a generator controller's attempt policy is not an `EmsConfig`
   field and is never overridden from here (SDD 30.9, 34.3).
 - It does not hold the forecast's inputs. Where the site is and how the PV
-  array is rated come from the registry, not from this file — see the
-  [design package](./design-package.md#5-preserved-conflicts) for the array
-  rating's status.
+  array is rated come from the registry, not from this file — see §8.
+
+---
+
+## 8. The PV forecast: one clear-sky model
+
+The forecast margin (`forecast_persistence_derate`) and the horizons are the
+only forecast tunables. The model itself is fixed and shared:
+`chaos.ems.clearsky` holds the clear-sky irradiance relationships —
+extraterrestrial irradiance with the earth-sun distance factor, Kasten-Young
+air mass, the Meinel/Laue direct-normal fit with its altitude term, a 10 %
+diffuse fraction and the isotropic plane-of-array transposition — and both the
+EMS forecaster (`chaos.ems.forecast`) and the simulator's PV array
+(`simulator.components.solar`) bring their sun position to it. Before that
+module existed the two carried separate copies with different solar constants
+(1353 and 1361 W/m²) and one without the distance factor, so the simulated sky
+and the forecast of it disagreed by up to about 4 %.
+
+The solar constant is **1353 W/m²**, the value the Meinel fit was published
+against. The modern mean total solar irradiance is 1361 W/m²; the 0.6 %
+difference is far inside the uncertainty of a clear-sky fit with no site
+calibration, and keeping the published pairing avoids presenting a hybrid as
+either source. These are textbook relationships, not a site calibration:
+cloud, snow, soiling and aerosol are not modelled, and every forecast value
+says so in its `assumptions`.
