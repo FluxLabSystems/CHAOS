@@ -37,7 +37,15 @@ OPTIONAL_STRING_SETTINGS = (
     "notify_push_url",
     "notify_push_token",
     "supervisor_stop_secret",
+    "backup_directory",
+    "platform_asset_id",
 )
+
+#: The registry asset that stands for the platform's own API service on the
+#: primary node. The secondary node's service has no asset in the register yet
+#: (the asset it.server.secondary_control_node.01 leaves ``services`` open), so
+#: it publishes no availability until CHAOS_PLATFORM_ASSET_ID names one.
+PRIMARY_PLATFORM_ASSET_ID = "it.application_service.rack_01.digital_twin_api_01"
 
 
 class Settings(BaseSettings):
@@ -162,6 +170,24 @@ class Settings(BaseSettings):
     notify_retry_limit: int = 3
     notify_retry_interval_s: int = 300
 
+    # --- Backups and self-monitoring -----------------------------------
+    #: Where ``chaos backup`` writes by default and where the backup-age
+    #: monitor looks. Unset means ``<workspace>/var/backups`` -- the repository
+    #: root in a checkout, ``/app/var/backups`` in the container (see
+    #: :func:`workspace_root`). The Windows product's CLI shim sends backups to
+    #: ``%ProgramData%``, so there this must name that directory.
+    backup_directory: Path | None = None
+    #: The asset whose ``backup_age_h`` point the monitor publishes. The
+    #: shipped ``backup_overdue`` alarm watches the platform's database
+    #: service, so that is the default.
+    backup_age_asset_id: str = "it.application_service.rack_01.postgres_01"
+    #: The registry asset that represents this platform instance. When MQTT is
+    #: on, the bus registers a retained ``offline`` last will on that asset's
+    #: availability topic and publishes ``online`` on connect, which is what
+    #: lets the class-scoped ``service_unavailable`` alarm fire for the API
+    #: itself. Unset: the primary's shipped asset; nothing on a secondary.
+    platform_asset_id: str | None = None
+
     # --- Plugins --------------------------------------------------------
     # Third-party integrations (SDD 26.2 vendor bindings) load through
     # chaos.plugins. Enablement is explicit and cheap to reason about:
@@ -201,6 +227,44 @@ class Settings(BaseSettings):
     @property
     def disabled_plugin_list(self) -> list[str]:
         return [p.strip().lower() for p in self.plugins_disabled.split(",") if p.strip()]
+
+    @property
+    def resolved_backup_directory(self) -> Path:
+        """``backup_directory``, or the workspace default when it is unset."""
+        if self.backup_directory:
+            return Path(self.backup_directory).expanduser()
+        return workspace_root(self) / "var" / "backups"
+
+    @property
+    def resolved_platform_asset_id(self) -> str | None:
+        """The asset this instance publishes availability for, if any."""
+        if self.platform_asset_id:
+            return self.platform_asset_id
+        return None if self.is_secondary else PRIMARY_PLATFORM_ASSET_ID
+
+
+def workspace_root(settings: Settings | None = None) -> Path:
+    """Best-effort location of the deployment working tree.
+
+    In a source checkout this is the repository root. In the container the
+    package is installed into a virtualenv, so ``ROOT_DIR`` points inside
+    ``site-packages``; the data directory's parent is the reliable anchor
+    because the image copies ``data/``, ``schemas/``, ``tools/`` and ``var/``
+    side by side under ``/app``.
+    """
+    candidates: list[Path] = []
+    data_dir = getattr(settings, "data_dir", None)
+    if data_dir:
+        parent = Path(data_dir).resolve().parent
+        if parent.is_dir():
+            candidates.append(parent)
+    candidates.append(ROOT_DIR)
+    candidates.append(Path.cwd())
+
+    for candidate in candidates:
+        if (candidate / "tools").is_dir() or (candidate / "var").is_dir():
+            return candidate
+    return candidates[0]
 
 
 @lru_cache(maxsize=1)

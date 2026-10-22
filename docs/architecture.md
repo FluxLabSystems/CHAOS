@@ -267,26 +267,32 @@ bus. This is how every control path in this repository has been exercised.
 
 ## 5. Runtime shape
 
-Background services are selected by node role and settings:
+Background services are selected by node role and settings
+(`runtime.build_services`):
 
 | Service | Runs when | Notes |
 |---|---|---|
-| Ingest | The bus is enabled | |
-| Command dispatch | The bus is enabled | **Not suppressed on a secondary node** — see below |
-| Alarm engine | The alarm engine is enabled | |
-| Energy manager | Enabled **and** not a secondary node | The only role-based suppression in the platform |
+| Ingest | The bus is enabled | Both roles |
+| Command dispatch | The bus is enabled **and** not a secondary node | One supervisory control source on the property |
+| Alarm engine | The alarm engine is enabled | Both roles: alerting is what the secondary exists for |
+| Energy manager | Enabled **and** not a secondary node | Exactly one EMS on the property |
+| Maintenance scheduler | Not a secondary node | Two schedulers would raise every work order twice |
+| Backup-age monitor | The bus is enabled **and** not a secondary node | Publishes `backup_age_h` from the primary's backup directory |
+| Plugin services and mirror | A plugin's manifest allows the role | Registered last, stopped first |
 
 **One subsystem failing to start never prevents the others**: a frozen
 greenhouse is worse than a missing dashboard. The same rule governs the gateway:
 a background service that throws must not take the host down, because the
 gateway's job during a failure is to stay up and report it.
 
-**Worth knowing:** role is enforced for the energy manager only. On a secondary
-node the command-dispatch service is still registered whenever the bus is
-enabled, so the physical-control gate is the thing standing between the
-secondary node and a second source of commands — backed by broker permissions.
+**Worth knowing:** the secondary node withholds command dispatch, the energy
+manager and the maintenance scheduler in the platform itself, and it is still
+not the only thing standing between that node and a second source of commands.
+`CHAOS_ALLOW_PHYSICAL_CONTROL` is hard-coded off in its compose file and the
+broker ACL denies its identity the command namespace, because a defence that
+lives in one branch of one Python function should never be the only one.
 [Secondary control node § How that is enforced](./secondary-control-node.md#how-that-is-enforced)
-explains why that is treated as a primary control rather than belt-and-braces.
+lists all four layers.
 
 ---
 

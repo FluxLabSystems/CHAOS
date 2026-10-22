@@ -250,27 +250,10 @@ def _create_all(db_module: Any, engine: Any, settings: Any) -> None:
 
 
 def workspace_root(settings: Any = None) -> Path:
-    """Best-effort location of the deployment working tree.
+    """Best-effort location of the deployment working tree (see chaos.config)."""
+    from chaos.config import workspace_root as _workspace_root
 
-    In a source checkout this is the repository root. In the container the
-    package is installed into a virtualenv, so ``ROOT_DIR`` points inside
-    ``site-packages``; the data directory's parent is the reliable anchor
-    because the image copies ``data/``, ``schemas/``, ``tools/`` and ``var/``
-    side by side under ``/app``.
-    """
-    candidates: list[Path] = []
-    data_dir = getattr(settings, "data_dir", None)
-    if data_dir:
-        parent = Path(data_dir).resolve().parent
-        if parent.is_dir():
-            candidates.append(parent)
-    candidates.append(ROOT_DIR)
-    candidates.append(Path.cwd())
-
-    for candidate in candidates:
-        if (candidate / "tools").is_dir() or (candidate / "var").is_dir():
-            return candidate
-    return candidates[0]
+    return _workspace_root(settings)
 
 
 def _database_hint(url: str) -> str:
@@ -1140,28 +1123,62 @@ def cmd_retention(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def cmd_backup(args: argparse.Namespace) -> int:
-    """Replicate registry and configuration outside the container.
+@dataclasses.dataclass
+class BackupResult:
+    """What :func:`run_backup` wrote, for the CLI's report and the API's response."""
 
-    SDD section 16.1 mitigation 3: critical configuration and asset data must
-    exist outside the combined battery/server container. This produces a single
-    portable ``.tar.gz`` holding the registry tables as JSON, redacted runtime
-    settings and the machine-readable design package.
+    path: Path
+    sha256: str
+    size_bytes: int
+    tables_dumped: int
+    rows_dumped: int
+    tables_absent: list[str]
+    manifest: dict[str, Any]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "path": str(self.path),
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "tables_dumped": self.tables_dumped,
+            "rows_dumped": self.rows_dumped,
+            "tables_absent": list(self.tables_absent),
+            "manifest": dict(self.manifest),
+        }
+
+
+def run_backup(
+    settings: Any,
+    output: Path | str | None = None,
+    include_history: bool = False,
+) -> BackupResult:
+    """Write a portable registry + configuration archive and return what was written.
+
+    This is ``chaos backup`` without the printing, so the API can offer the same
+    archive. ``settings`` is a :class:`chaos.config.Settings` or a database URL
+    (``str``), in which case the process settings are used with that URL.
+    ``output`` is a file path, a directory (the default name goes inside it),
+    or ``None`` for ``settings.resolved_backup_directory``.
+
+    Raises :class:`CommandError` when the archive cannot be written.
     """
-    settings = build_settings(args)
+    if isinstance(settings, str):
+        from chaos.config import Settings
+
+        settings = Settings(database_url=settings)
     metadata = _metadata()
     now = dt.datetime.now(dt.UTC)
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
 
     default_name = f"homestead-{settings.node_role}-{stamp}.tar.gz"
-    output = Path(args.output) if args.output else workspace_root(settings) / "var" / "backups" / default_name
-    if output.is_dir():
-        output = output / default_name
-    output.parent.mkdir(parents=True, exist_ok=True)
+    target = Path(output) if output else settings.resolved_backup_directory / default_name
+    if target.is_dir():
+        target = target / default_name
+    target.parent.mkdir(parents=True, exist_ok=True)
 
     groups = list(REGISTRY_TABLES) + list(ALARM_TABLES) + list(COMMAND_TABLES)
     groups += list(ENERGY_TABLES) + list(MAINTENANCE_TABLES) + list(STATE_TABLES)
-    if args.include_history:
+    if include_history:
         groups += list(HISTORY_TABLES)
 
     dumps: dict[str, list[dict[str, Any]]] = {}
@@ -1184,7 +1201,7 @@ def cmd_backup(args: argparse.Namespace) -> int:
         "node_role": settings.node_role,
         "site_id": settings.site_id,
         "database": redact_url(settings.database_url),
-        "includes_history": bool(args.include_history),
+        "includes_history": bool(include_history),
         "row_counts": {name: len(rows) for name, rows in dumps.items()},
         "tables_absent": missing_tables,
         "sdd_reference": "16.1 mitigation 3 (configuration replicated outside the container)",
@@ -1230,7 +1247,7 @@ def cmd_backup(args: argparse.Namespace) -> int:
     settings_payload["database_url"] = redact_url(settings.database_url)
 
     try:
-        with tarfile.open(output, "w:gz") as tar:
+        with tarfile.open(target, "w:gz") as tar:
             _add_bytes(tar, "manifest.json", _dumps(manifest, "json").encode("utf-8"))
             _add_bytes(tar, "RESTORE.txt", restore_text.encode("utf-8"))
             _add_bytes(tar, "settings.json", _dumps(settings_payload, "json").encode("utf-8"))
@@ -1248,16 +1265,37 @@ def cmd_backup(args: argparse.Namespace) -> int:
                     if path.is_file():
                         tar.add(path, arcname=f"design-package/schemas/{path.name}")
     except OSError as exc:
-        raise CommandError(f"Could not write {output}: {exc}") from exc
+        raise CommandError(f"Could not write {target}: {exc}") from exc
 
-    digest = hashlib.sha256(output.read_bytes()).hexdigest()
-    size_mb = output.stat().st_size / (1024 * 1024)
-    print(f"Backup   : {output}")
-    print(f"Size     : {size_mb:.2f} MiB")
-    print(f"SHA-256  : {digest}")
-    print(f"Tables   : {len(dumps)} dumped, {sum(len(r) for r in dumps.values())} rows")
-    if missing_tables:
-        print(f"Absent   : {len(missing_tables)} declared table(s) not present in this database")
+    return BackupResult(
+        path=target,
+        sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
+        size_bytes=target.stat().st_size,
+        tables_dumped=len(dumps),
+        rows_dumped=sum(len(rows) for rows in dumps.values()),
+        tables_absent=missing_tables,
+        manifest=manifest,
+    )
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    """Replicate registry and configuration outside the container.
+
+    SDD section 16.1 mitigation 3: critical configuration and asset data must
+    exist outside the combined battery/server container. This produces a single
+    portable ``.tar.gz`` holding the registry tables as JSON, redacted runtime
+    settings and the machine-readable design package. The work is
+    :func:`run_backup`; this command reports it.
+    """
+    settings = build_settings(args)
+    result = run_backup(settings, output=args.output, include_history=args.include_history)
+
+    print(f"Backup   : {result.path}")
+    print(f"Size     : {result.size_bytes / (1024 * 1024):.2f} MiB")
+    print(f"SHA-256  : {result.sha256}")
+    print(f"Tables   : {result.tables_dumped} dumped, {result.rows_dumped} rows")
+    if result.tables_absent:
+        print(f"Absent   : {len(result.tables_absent)} declared table(s) not present in this database")
     print("Copy this archive off the property and keep one offline copy (SDD 15.8, 16.1).")
     return EXIT_OK
 
@@ -1389,6 +1427,7 @@ def _status_payload(settings: Any) -> dict[str, Any]:
             "backend": settings.historian_backend,
             "raw_retention_days": settings.historian_raw_retention_days,
         },
+        "backup_directory": str(settings.resolved_backup_directory),
         "ems_enabled": bool(settings.ems_enabled and not settings.is_secondary),
         "alarm_engine_enabled": bool(settings.alarm_engine_enabled),
         "notification_backends": settings.notification_backend_list,
@@ -1489,6 +1528,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         f"  historian        : {payload['historian']['backend']}, raw retention "
         f"{payload['historian']['raw_retention_days']} d"
     )
+    print(f"  backups          : {payload['backup_directory']}")
     print(
         f"  ems              : {'enabled' if payload['ems_enabled'] else 'disabled'}"
         f"   alarms: {'enabled' if payload['alarm_engine_enabled'] else 'disabled'}"
@@ -1844,7 +1884,10 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument(
         "-o",
         "--output",
-        help="Archive path or directory (default: var/backups/homestead-<role>-<UTC>.tar.gz).",
+        help=(
+            "Archive path or directory (default: CHAOS_BACKUP_DIRECTORY, else var/backups, "
+            "with the name homestead-<role>-<UTC>.tar.gz)."
+        ),
     )
     backup.add_argument(
         "--include-history",

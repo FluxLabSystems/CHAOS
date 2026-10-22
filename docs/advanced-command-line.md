@@ -176,7 +176,19 @@ chaos backup --output /mnt/offsite/
 chaos backup --include-history     # also telemetry samples and dead letters (large)
 ```
 
-Default output is `var/backups/homestead-<role>-<UTC>.tar.gz`.
+Default output is `homestead-<role>-<UTC>.tar.gz` in the backup directory:
+`CHAOS_BACKUP_DIRECTORY` when set, otherwise `var/backups` under the working
+tree (`/app/var/backups` in the container).
+
+**The platform watches that directory.** On the primary node the backup-age
+monitor reads the newest archive's manifest there and publishes
+`backup_age_h` on the database service's asset every half minute, which is
+what lets the shipped `backup_overdue` alarm fire at 48 h. An archive written
+somewhere else with `--output` is a backup, but not one the monitor can see —
+so point `CHAOS_BACKUP_DIRECTORY` at wherever the scheduled backups land. With
+no archive at all the monitor publishes the time since the platform's first
+configuration revision, marked `uncertain`, so a node that has never been
+backed up raises the alarm rather than sitting quietly normal.
 
 **Credentials are never included.** The archive holds the registry,
 configuration and the design package — enough to rebuild the platform on new
