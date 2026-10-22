@@ -42,7 +42,7 @@
     the script writes a sitecustomize.py before pip runs, and verify-runtime.py
     asserts the user site is gone.
 
-    NATIVE WHEELS.  pydantic-core, greenlet (via SQLAlchemy), rpds-py, PyYAML,
+    NATIVE WHEELS.  pydantic-core, SQLAlchemy, MarkupSafe, rpds-py, PyYAML,
     httptools, watchfiles and websockets are compiled.  Every install below passes
     --only-binary=:all: so pip must use a cp311 win_amd64 wheel and fails loudly if
     one does not exist.  Without it pip falls back to building an sdist, and that

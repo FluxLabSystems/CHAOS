@@ -158,7 +158,7 @@ rights are not needed for either command.</p>
           web\                       the operator UI, copied in explicitly
         simulator\
         fastapi\ starlette\ uvicorn\ sqlalchemy\ pydantic\ pydantic_core\
-        paho\ yaml\ jsonschema\ httpx\ httpcore\ anyio\ greenlet\ ...
+        paho\ yaml\ jsonschema\ rpds\ httpx\ httpcore\ anyio\ alembic\ ...
         __pycache__\ everywhere      precompiled, unchecked-hash
     Scripts\
       chaos.exe                      the operator CLI entry point
@@ -243,7 +243,12 @@ binary that was never tested anywhere else.</p>
 <p><strong>Every dependency of this project publishes a <code>win_amd64</code> wheel for CPython
 3.11.</strong> Checked against live PyPI, full transitive closure, resolved for
 Windows:</p>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Compiled (<code>cp311-cp311-win_amd64</code>)</th><th scope="col">Pure Python (<code>py3-none-any</code>)</th></tr></thead><tbody><tr><td><code>greenlet</code> (via SQLAlchemy)</td><td><code>annotated-doc</code>, <code>annotated-types</code>, <code>anyio</code>, <code>attrs</code></td></tr><tr><td><code>httptools</code> (via <code>uvicorn[standard]</code>)</td><td><code>certifi</code>, <code>click</code>, <code>colorama</code>, <code>fastapi</code>, <code>h11</code></td></tr><tr><td><code>pydantic-core</code></td><td><code>httpcore</code>, <code>httpx</code>, <code>idna</code>, <code>jsonschema</code></td></tr><tr><td><code>PyYAML</code></td><td><code>jsonschema-specifications</code>, <code>paho-mqtt</code>, <code>pydantic</code></td></tr><tr><td><code>rpds-py</code> (via <code>jsonschema</code>)</td><td><code>pydantic-settings</code>, <code>python-dotenv</code>, <code>referencing</code></td></tr><tr><td><code>SQLAlchemy</code></td><td><code>starlette</code>, <code>typing-extensions</code>, <code>typing-inspection</code></td></tr><tr><td><code>watchfiles</code>, <code>websockets</code></td><td><code>uvicorn</code>, <code>alembic</code>, <code>Mako</code>, <code>MarkupSafe</code>, and the <code>chaos</code> wheel itself</td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Compiled (<code>cp311-cp311-win_amd64</code>)</th><th scope="col">Pure Python (<code>py3-none-any</code>)</th></tr></thead><tbody><tr><td><code>MarkupSafe</code> (via <code>alembic</code>)</td><td><code>annotated-doc</code>, <code>annotated-types</code>, <code>anyio</code>, <code>attrs</code></td></tr><tr><td><code>httptools</code> (via <code>uvicorn[standard]</code>)</td><td><code>certifi</code>, <code>click</code>, <code>colorama</code>, <code>fastapi</code>, <code>h11</code></td></tr><tr><td><code>pydantic-core</code></td><td><code>httpcore</code>, <code>httpx</code>, <code>idna</code>, <code>jsonschema</code></td></tr><tr><td><code>PyYAML</code></td><td><code>jsonschema-specifications</code>, <code>paho-mqtt</code>, <code>pydantic</code></td></tr><tr><td><code>rpds-py</code> (via <code>jsonschema</code>)</td><td><code>pydantic-settings</code>, <code>python-dotenv</code>, <code>referencing</code></td></tr><tr><td><code>SQLAlchemy</code></td><td><code>starlette</code>, <code>typing-extensions</code>, <code>typing-inspection</code></td></tr><tr><td><code>watchfiles</code>, <code>websockets</code></td><td><code>uvicorn</code>, <code>alembic</code>, <code>Mako</code>, and the <code>chaos</code> wheel itself</td></tr></tbody></table></div>
+<p>SQLAlchemy 2.1 pulls no <code>greenlet</code>: that dependency moved to its <code>asyncio</code>
+extra, and the platform drives the engine synchronously, so the runtime
+neither needs nor ships it. <code>verify-runtime.py</code> checks <code>rpds-py</code> (the compiled
+dependency <code>jsonschema</code> cannot import without) in its place; the first run of
+the packaging job on GitHub is what surfaced the stale expectation.</p>
 <p>The <code>postgres</code> extra (<code>-IncludePostgres</code>) is clean too: <code>psycopg</code>,
 <code>psycopg-binary</code>, <code>tzdata</code>. (<code>alembic</code> and its <code>Mako</code>/<code>MarkupSafe</code> templating
 moved into the base dependencies when <code>chaos migrate</code> arrived, so every runtime

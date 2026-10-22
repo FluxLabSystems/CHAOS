@@ -200,7 +200,7 @@ rights are not needed for either command.
           web\                       the operator UI, copied in explicitly
         simulator\
         fastapi\ starlette\ uvicorn\ sqlalchemy\ pydantic\ pydantic_core\
-        paho\ yaml\ jsonschema\ httpx\ httpcore\ anyio\ greenlet\ ...
+        paho\ yaml\ jsonschema\ rpds\ httpx\ httpcore\ anyio\ alembic\ ...
         __pycache__\ everywhere      precompiled, unchecked-hash
     Scripts\
       chaos.exe                      the operator CLI entry point
@@ -335,13 +335,19 @@ Windows:
 
 | Compiled (`cp311-cp311-win_amd64`) | Pure Python (`py3-none-any`) |
 | --- | --- |
-| `greenlet` (via SQLAlchemy) | `annotated-doc`, `annotated-types`, `anyio`, `attrs` |
+| `MarkupSafe` (via `alembic`) | `annotated-doc`, `annotated-types`, `anyio`, `attrs` |
 | `httptools` (via `uvicorn[standard]`) | `certifi`, `click`, `colorama`, `fastapi`, `h11` |
 | `pydantic-core` | `httpcore`, `httpx`, `idna`, `jsonschema` |
 | `PyYAML` | `jsonschema-specifications`, `paho-mqtt`, `pydantic` |
 | `rpds-py` (via `jsonschema`) | `pydantic-settings`, `python-dotenv`, `referencing` |
 | `SQLAlchemy` | `starlette`, `typing-extensions`, `typing-inspection` |
-| `watchfiles`, `websockets` | `uvicorn`, `alembic`, `Mako`, `MarkupSafe`, and the `chaos` wheel itself |
+| `watchfiles`, `websockets` | `uvicorn`, `alembic`, `Mako`, and the `chaos` wheel itself |
+
+SQLAlchemy 2.1 pulls no `greenlet`: that dependency moved to its `asyncio`
+extra, and the platform drives the engine synchronously, so the runtime
+neither needs nor ships it. `verify-runtime.py` checks `rpds-py` (the compiled
+dependency `jsonschema` cannot import without) in its place; the first run of
+the packaging job on GitHub is what surfaced the stale expectation.
 
 The `postgres` extra (`-IncludePostgres`) is clean too: `psycopg`,
 `psycopg-binary`, `tzdata`. (`alembic` and its `Mako`/`MarkupSafe` templating

@@ -16,7 +16,7 @@
         is the tree isolated (no PYTHONPATH, no per-user site-packages)
         does `import chaos` work
         do fastapi, sqlalchemy, pydantic, paho.mqtt, yaml, jsonschema import
-        do the COMPILED modules load (pydantic-core, greenlet, _ssl, _sqlite3)
+        do the COMPILED modules load (pydantic-core, rpds-py, _ssl, _sqlite3)
         are the operator UI assets where chaos.api.app expects them
         does `python -m chaos.cli --help` exit 0   <- how the supervisor starts it
         will Scripts\*.exe still work after the MSI moves the tree
