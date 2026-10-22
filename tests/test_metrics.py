@@ -42,7 +42,9 @@ def test_every_severity_is_reported_even_when_zero(client):
 
 
 def test_counts_come_from_the_database(client, db_session):
-    db_session.add(AlarmDefinition(alarm_key="pump.overcurrent", name="Pump overcurrent", severity="critical"))
+    db_session.add(
+        AlarmDefinition(alarm_key="pump.overcurrent", name="Pump overcurrent", severity="critical")
+    )
     db_session.flush()
     incident = Incident(title="Pump incident", severity="critical", opened_at=T0, state="open")
     db_session.add(incident)
@@ -96,7 +98,7 @@ def test_counts_come_from_the_database(client, db_session):
 
 
 def test_services_absent_from_this_node_contribute_no_series(client):
-    """"Ingest received nothing" and "there is no ingest here" are different facts."""
+    """ "Ingest received nothing" and "there is no ingest here" are different facts."""
     body = client.get("/metrics").text
     assert "chaos_ingest_running 0" in body
     assert "chaos_ingest_events_total" not in body
