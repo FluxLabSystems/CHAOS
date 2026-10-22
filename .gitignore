@@ -2,9 +2,22 @@ var/
 __pycache__/
 *.pyc
 .env
+# Certificate material mounted into the twin container at /run/secrets
+# (deploy/docker-compose.yml). The directory exists so Docker never has to
+# create it as root; nothing inside it is ever committed.
+deploy/secrets/*
+!deploy/secrets/.gitkeep
 .pytest_cache/
 *.egg-info/
 node_modules/
+
+# setuptools output at the repository root. `pip wheel` and the Windows
+# runtime builder (windows/build/python-runtime.ps1) build the wheel inside
+# the checkout and leave build/ behind; it is a copy of src/ that goes stale
+# the moment src/ changes, and it was once committed by mistake. Anchored,
+# because windows/build/ is source.
+/build/
+/dist/
 
 # .NET / Windows build output
 windows/**/bin/

@@ -23,6 +23,9 @@ from chaos.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
+#: ``source`` written into the platform's own availability envelopes.
+AVAILABILITY_SOURCE = "chaos-core"
+
 Handler = Callable[["Message"], None]
 
 
@@ -121,11 +124,33 @@ class InMemoryBus:
 
 
 class PahoBus:
-    """MQTT bus backed by paho-mqtt."""
+    """MQTT bus backed by paho-mqtt.
 
-    def __init__(self, settings: Settings | None = None, client_id: str | None = None) -> None:
+    With ``availability_asset_id`` set, the bus announces the platform itself
+    the way a gateway announces a device (SDD 8.2): a retained ``offline``
+    last will on that asset's availability topic, registered before the
+    connection is made so the *broker* publishes it if this process dies; a
+    retained ``online`` on every successful connect; and a retained
+    ``offline`` on a clean stop, since a clean DISCONNECT does not fire the
+    will. That is what lets the class-scoped ``service_unavailable`` alarm
+    cover the API service itself -- on the secondary node, which ingests the
+    broker's bridged traffic, when the primary is the thing that died.
+
+    The will's timestamp is the connect time, not the time of death: MQTT
+    hands the payload to the broker up front, and the broker cannot rewrite
+    it. Ingest records the state and marks the asset's points stale either way.
+    """
+
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        client_id: str | None = None,
+        *,
+        availability_asset_id: str | None = None,
+    ) -> None:
         self.settings = settings or get_settings()
         self.client_id = client_id or self.settings.mqtt_client_id
+        self.availability_asset_id = availability_asset_id
         self._subscriptions: list[tuple[str, Handler]] = []
         self._lock = threading.Lock()
         self._client = None
@@ -145,6 +170,12 @@ class PahoBus:
             client.username_pw_set(self.settings.mqtt_username, self.settings.mqtt_password)
         if self.settings.mqtt_tls:
             self._configure_tls(client)
+        if self.availability_asset_id:
+            # Registered before connect: the broker holds it and publishes it
+            # on an unclean disconnect, which is the only case a will exists for.
+            client.will_set(
+                self.availability_topic, self._availability_payload("offline"), qos=1, retain=True
+            )
 
         def on_connect(_client, _userdata, _flags, reason_code, *_args):
             if reason_code not in (0, "Success"):
@@ -155,6 +186,10 @@ class PahoBus:
             with self._lock:
                 for topic_filter, _ in self._subscriptions:
                     _client.subscribe(topic_filter, qos=1)
+            if self.availability_asset_id:
+                _client.publish(
+                    self.availability_topic, self._availability_payload("online"), qos=1, retain=True
+                )
 
         def on_disconnect(_client, _userdata, *args):  # pragma: no cover - network path
             self._connected.clear()
@@ -224,6 +259,23 @@ class PahoBus:
             )
             client.tls_insecure_set(True)
 
+    # -- availability of the platform itself (SDD 8.2) ------------------------
+
+    @property
+    def availability_topic(self) -> str | None:
+        if not self.availability_asset_id:
+            return None
+        from chaos import topics
+
+        return topics.availability_topic(self.availability_asset_id, self.settings.mqtt_base_topic)
+
+    def _availability_payload(self, state: str) -> bytes:
+        from chaos.envelope import AvailabilityEnvelope
+
+        return AvailabilityEnvelope(
+            asset_id=self.availability_asset_id, state=state, source=AVAILABILITY_SOURCE
+        ).to_payload()
+
     def publish(self, topic: str, payload: bytes | str, qos: int = 0, retain: bool = False) -> None:
         if self._client is None:
             raise RuntimeError("PahoBus.start() must be called before publishing")
@@ -243,6 +295,17 @@ class PahoBus:
 
     def stop(self) -> None:
         if self._client is not None:
+            if self.availability_asset_id and self._connected.is_set():
+                # A clean DISCONNECT does not fire the will; say it ourselves.
+                try:
+                    info = self._client.publish(
+                        self.availability_topic, self._availability_payload("offline"), qos=1, retain=True
+                    )
+                    wait = getattr(info, "wait_for_publish", None)
+                    if callable(wait):
+                        wait(timeout=2.0)
+                except Exception:  # pragma: no cover - the broker may already be gone
+                    logger.warning("Could not publish offline availability before disconnecting")
             self._client.loop_stop()
             self._client.disconnect()
             self._client = None
@@ -255,4 +318,4 @@ def build_bus(settings: Settings | None = None) -> MessageBus:
     if not settings.mqtt_enabled:
         logger.info("MQTT disabled; using in-memory bus")
         return InMemoryBus()
-    return PahoBus(settings)
+    return PahoBus(settings, availability_asset_id=settings.resolved_platform_asset_id)

@@ -17,7 +17,7 @@ Layout::
     components/     deterministic physical models (solar, battery, ...)
     site.py         wiring, energy balance, publishing, command handling
     scenarios.py    named reproducible scenarios for SDD section 39 cases
-    cli.py          ``homestead-simulator`` entry point
+    cli.py          ``chaos-simulator`` entry point
 
 Determinism is a hard requirement: no component reads the wall clock, every
 random draw comes from a seeded generator, and a given ``(scenario, seed)`` pair

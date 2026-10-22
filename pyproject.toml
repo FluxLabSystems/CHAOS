@@ -14,6 +14,12 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "sqlalchemy>=2.0",
+    # Schema migrations (src/chaos/migrations, `chaos migrate`). A base
+    # dependency rather than part of the postgres extra because the Windows
+    # runtime builder installs the package without extras (the product runs
+    # on SQLite), and a node that cannot move its schema forward cannot be
+    # upgraded in place whatever database it is on.
+    "alembic>=1.13",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
     "PyYAML>=6.0",
@@ -23,7 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-postgres = ["psycopg[binary]>=3.1", "alembic>=1.13"]
+postgres = ["psycopg[binary]>=3.1"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "httpx>=0.27"]
 
 [project.scripts]
@@ -50,6 +56,10 @@ chaos = [
     "web/views/*.js",
     "web/docs/*.html",
     "web/docs/assets/*",
+    # Alembic loads env.py, the revision files and the template by path, so
+    # versions/ is deliberately not a package: it ships as data instead.
+    "migrations/script.py.mako",
+    "migrations/versions/*.py",
 ]
 
 [tool.pytest.ini_options]

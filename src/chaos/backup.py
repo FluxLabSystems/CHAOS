@@ -42,7 +42,6 @@ from chaos.cli import (
     _table_names,
     open_session,
     redact_url,
-    workspace_root,
 )
 
 #: Archive file name pattern, the same whether the CLI or the API wrote it.
@@ -105,12 +104,14 @@ def backup_tables(include_history: bool) -> list[str]:
 
 
 def backup_directory(settings: Any) -> Path:
-    """Where this node keeps its archives: ``var/backups`` under the workspace root.
+    """Where this node keeps its archives.
 
-    The same default ``chaos backup`` uses, so the console's listing and the
-    scheduled task write to and read from one place.
+    ``CHAOS_BACKUP_DIRECTORY`` when it is set, else ``var/backups`` under the
+    workspace root — the same resolution ``chaos backup``, the console's
+    listing, the scheduled task and the backup-age monitor all use, so every
+    one of them writes to and reads from one place.
     """
-    return workspace_root(settings) / "var" / "backups"
+    return settings.resolved_backup_directory
 
 
 def archive_name(settings: Any, now: dt.datetime) -> str:

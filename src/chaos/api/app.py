@@ -13,15 +13,19 @@ half of the API you are talking to should be visible in the URL.
 from __future__ import annotations
 
 import importlib
+import ipaddress
 import logging
 import pkgutil
+import secrets
+import signal
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from chaos import __version__
 from chaos.api.metrics import METRICS_CONTENT_TYPE, render_metrics
@@ -41,6 +45,39 @@ WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 #: ``/points/{point_id:path}/current``. Modules may declare ``ROUTER_PRIORITY``
 #: (lower = registered earlier) so the more specific route wins.
 DEFAULT_ROUTER_PRIORITY = 100
+
+#: The graceful-stop route the process supervisor calls (docs/api.md, "Unlisted
+#: operational routes"). It sits outside every prefix in the gateway's
+#: route-ownership manifest on purpose: the gateway never proxies an unclaimed
+#: path, so the only way to reach it is a direct connection to the backend's
+#: loopback listener, which is where the supervisor lives.
+SUPERVISOR_STOP_PATH = "/_supervisor/stop"
+SUPERVISOR_SECRET_HEADER = "X-Chaos-Supervisor-Secret"
+
+
+def is_loopback_peer(host: str | None) -> bool:
+    """True for ``127.0.0.0/8``, ``::1`` and the IPv4-mapped form of either.
+
+    uvicorn's ``proxy_headers`` default trusts ``X-Forwarded-For`` from
+    ``127.0.0.1``, and the gateway always sets that header when it relays a
+    request. A request that came *through* the gateway therefore presents the
+    LAN client's address here and is refused -- which is the point: the stop
+    route is for the supervisor's own connection, never for a browser.
+    """
+    if not host:
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    return bool(address.is_loopback or (mapped is not None and mapped.is_loopback))
+
+
+def _interrupt_process() -> None:
+    """Fallback when no shutdown hook is registered: behave like Ctrl-C."""
+    logger.warning("Supervisor stop requested with no shutdown hook registered; raising SIGINT")
+    signal.raise_signal(signal.SIGINT)
 
 
 def discover_routers() -> list[APIRouter]:
@@ -164,6 +201,29 @@ def create_app(
         # values of points, never credentials. deploy/prometheus/prometheus.yml
         # scrapes it.
         return PlainTextResponse(render_metrics(app), media_type=METRICS_CONTENT_TYPE)
+
+    @app.post(SUPERVISOR_STOP_PATH, include_in_schema=False)
+    def supervisor_stop(request: Request) -> JSONResponse:
+        # Contract (shared with windows/src/Chaos.Host.Supervisor): 404 while no
+        # secret is configured, so a container or a checkout has no such route
+        # at all; 403 for a non-loopback peer or a wrong secret; 202 with
+        # {"stopping": true}, after which the server shuts down the way Ctrl-C
+        # would -- the lifespan's finally block stops the services and the bus.
+        secret = settings.supervisor_stop_secret
+        if not secret:
+            raise HTTPException(status_code=404, detail="Not Found")
+        peer = request.client.host if request.client else None
+        if not is_loopback_peer(peer):
+            raise HTTPException(status_code=403, detail="The stop route accepts loopback peers only.")
+        presented = request.headers.get(SUPERVISOR_SECRET_HEADER, "")
+        if not secrets.compare_digest(presented.encode("utf-8"), secret.encode("utf-8")):
+            raise HTTPException(status_code=403, detail="Supervisor secret mismatch.")
+        # The hook is set by `chaos serve` (it flips uvicorn's should_exit).
+        # Run after the response has gone out, so the caller sees the 202.
+        hook = getattr(app.state, "request_shutdown", None)
+        trigger = hook if callable(hook) else _interrupt_process
+        logger.info("Graceful stop requested by the supervisor from %s", peer)
+        return JSONResponse({"stopping": True}, status_code=202, background=BackgroundTask(trigger))
 
     if WEB_DIR.is_dir():
         app.mount("/ui", StaticFiles(directory=WEB_DIR, html=True), name="ui")

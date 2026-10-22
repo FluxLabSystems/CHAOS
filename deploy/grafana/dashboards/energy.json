@@ -514,13 +514,43 @@
       ]
     },
     {
+      "type": "timeseries",
+      "id": 31,
+      "title": "Forecast energy margin at each state transition",
+      "description": "forecast_energy_margin_kwh from energy_state_transitions.derived_snapshot: energy above the emergency reserve plus the 24 h PV forecast minus the 24 h load projection, as the EMS computed it at the moment it changed state. A forecast, not a measurement -- persistence or clear-sky geometry, no weather feed -- and recorded only at transitions, so a long stretch in one state shows one point. The live value, with its basis and assumptions, is on /api/v1/energy/dashboard.",
+      "datasource": { "type": "postgres", "uid": "homestead-pg" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 42 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "kwatth",
+          "custom": { "drawStyle": "points", "lineWidth": 1, "pointSize": 6, "fillOpacity": 0, "showPoints": "always" },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "homestead-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT occurred_at AS \"time\", 'forecast_energy_margin_kwh' AS metric, (derived_snapshot->>'forecast_energy_margin_kwh')::double precision AS value FROM energy_state_transitions WHERE derived_snapshot->>'forecast_energy_margin_kwh' IS NOT NULL AND $__timeFilter(occurred_at) ORDER BY occurred_at"
+        }
+      ]
+    },
+    {
       "type": "text",
       "id": 30,
       "title": "What this dashboard does not show",
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 42 },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 50 },
       "options": {
         "mode": "markdown",
-        "content": "SDD section 38 also asks for **forecast reserve**, **PV curtailment**, **per-subsystem consumption attribution** and **cost/value modelling**. None of those are implemented, so none of them have a panel here. Adding an empty panel for an unimplemented value teaches the operator to ignore empty panels, and that habit is what makes a real gap invisible during an event.\n\nAlso absent, and deliberately: a **control** widget. Grafana is a read path. Commands go through the digital twin API so that every one of them carries a named operator, a reason, an idempotency key and an audit record (SDD 5.7, FR-004).\n\nThe **authoritative energy design is still an open conflict** (SDD 30.2, open decision 22.1): the older 12 kW / 40 kWh baseline versus the revised 45 kWdc / 800 kWh design. No threshold, axis maximum or reserve calculation on this dashboard assumes either one is correct."
+        "content": "SDD section 38 also asks for **forecast reserve**, **PV curtailment**, **per-subsystem consumption attribution** and **cost/value modelling**. Of those, forecasting exists in a limited form: the EMS derives `forecast_pv_next_6h_kwh`, `forecast_pv_next_24h_kwh`, `forecast_load_next_24h_kwh` and `forecast_energy_margin_kwh` on every tick from persistence or a clear-sky geometry model -- not a weather forecast, and each value carries its basis and assumptions on `/api/v1/energy/dashboard`. Only the margin is written to PostgreSQL, and only when the state machine transitions, which is what the panel above shows. Curtailment, attribution and cost are not implemented, so they have no panel: an empty panel for an unimplemented value teaches the operator to ignore empty panels, and that habit is what makes a real gap invisible during an event.\n\nAlso absent, and deliberately: a **control** widget. Grafana is a read path. Commands go through the digital twin API so that every one of them carries a named operator, a reason, an idempotency key and an audit record (SDD 5.7, FR-004).\n\nThe **authoritative energy design is still an open conflict** (SDD 30.2, open decision 22.1): the older 12 kW / 40 kWh baseline versus the revised 45 kWdc / 800 kWh design. No threshold, axis maximum or reserve calculation on this dashboard assumes either one is correct."
       }
     }
   ]
