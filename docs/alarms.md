@@ -13,9 +13,11 @@ Related: [The annunciator panel](./annunciator.md) ·
 
 ## 1. Where the definitions come from
 
-Forty alarm definitions ship in the design package
-(`data/alarm_definitions.yaml`) and are loaded into the platform by first-run
-setup. Each definition carries severity, scope, a trigger, a reset condition,
+Forty-one alarm definitions ship in the design package
+(`data/alarm_definitions.yaml`) — forty from the v0.3 pass and
+`generator_start_blocked`, a platform-owned definition added after it
+([Integration findings § F-010](./integration-findings.md#f-010--generator_start_blocked-was-published-but-not-defined)) —
+and are loaded into the platform by first-run setup. Each definition carries severity, scope, a trigger, a reset condition,
 operating-context behaviour, correlation hints, escalation and the operator
 context.
 
@@ -185,7 +187,7 @@ fire** is reported `out_of_service` rather than dark. See
 [The annunciator panel § Out of service](./annunciator.md#6-out-of-service--the-honest-dark-tile)
 for the full rules and the list.
 
-On the shipped definition set, **ten of the forty cannot fire**, including all
+On the shipped definition set, **ten of the forty-one cannot fire**, including all
 three in the SAFETY bay. Each is enabled, appears healthy in the alarm list, and
 has a trigger point that does not exist for its asset.
 

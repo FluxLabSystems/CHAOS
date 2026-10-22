@@ -55,7 +55,11 @@ REQUIRED_IMPORTS = [
 # rather than at install time, so they get their own check.
 REQUIRED_EXTENSIONS = [
     ('pydantic_core._pydantic_core', 'pydantic-core (Rust; needs the cp311 win_amd64 wheel)'),
-    ('greenlet._greenlet', 'greenlet, pulled in by SQLAlchemy (C; cp311 win_amd64 wheel)'),
+    # SQLAlchemy 2.1 pulls greenlet only through its asyncio extra, and the
+    # platform drives the engine synchronously, so greenlet is neither
+    # needed nor shipped.  rpds-py is the hard compiled dependency that
+    # stays: jsonschema cannot import without it.
+    ('rpds.rpds', 'rpds-py, pulled in by jsonschema (Rust; cp311 win_amd64 wheel)'),
     ('_sqlite3', 'CPython sqlite3 extension + sqlite3.dll from the embeddable zip'),
     ('_ssl', 'CPython _ssl.pyd + libssl-3.dll/libcrypto-3.dll from the embeddable zip'),
     ('_socket', 'CPython _socket.pyd from the embeddable zip'),

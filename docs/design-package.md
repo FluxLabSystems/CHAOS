@@ -24,7 +24,7 @@ Related: [Getting started § What first-run setup does](./getting-started.md#4-w
 | `homestead_asset_register.yaml` | 90 assets and 99 relationships: site, container, PV, inverters, battery, rack, network, services, sensors, load groups | Yes |
 | `point_bindings.yaml` | 245 vendor/protocol bindings. Addresses are `TBD` unless the source supplied them | Yes |
 | `load_schedule.yaml` | 12 load records with tier, control method and restoration policy | Yes, by the load-schedule loader |
-| `alarm_definitions.yaml` | 40 alarm definitions with severity and operating context | Yes, by the alarm loader |
+| `alarm_definitions.yaml` | 41 alarm definitions with severity and operating context: 40 from the v0.3 pass plus the platform-owned `generator_start_blocked` | Yes, by the alarm loader |
 | `water_assets.yaml` | 47 water assets and 92 relationships | **No** — overlaid by the topology screen at render time |
 | `water_points.yaml` | Water point definitions | **No** |
 | `rack_layout.yaml` | The 42U rack proposal: 22 placements, feeds, PDUs, port plan | **No** — read directly by the rack screen |
@@ -129,6 +129,10 @@ through a point profile (`ems_site`, `ems_load`), marked with its own provenance
 rung (`reconciled_v0_4` for a definition added after the v0.3 pass). It is not a
 design proposal, so it does not wait for one. See
 [Integration findings § F-003](./integration-findings.md#f-003--energy_state-is-published-but-not-defined).
+The same rule placed the platform's own alarm definition,
+`generator_start_blocked`, in `alarm_definitions.yaml` with a note recording
+that it was added after the v0.3 pass — see
+[Integration findings § F-010](./integration-findings.md#f-010--generator_start_blocked-was-published-but-not-defined).
 
 ---
 
@@ -146,6 +150,11 @@ can show what is still undecided.
 The second one is not an abstraction. Computing it gives **98 of 137 assets
 lost, 50 of them critical** — see
 [Topology § The answer the design document asks for](./topology-view.md#4-the-answer-the-design-document-asks-for).
+
+**The energy manager's own thresholds are not in this package.** They are
+commissioning parameters in `EmsConfig`, overridable per deployment through a
+file and recorded as configuration revisions when they change — see
+[EMS configuration](./ems-configuration.md).
 
 ---
 

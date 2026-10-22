@@ -358,7 +358,7 @@ nominated display. See
   nothing draws it over a basemap.
 - **It does not show Grafana dashboards.** Those exist for the container
   deployment and read the database directly.
-- **It cannot make an alarm fire that has no trigger point.** Ten of the forty
+- **It cannot make an alarm fire that has no trigger point.** Ten of the forty-one
   shipped alarm definitions are in that position today — see
   [Alarms § Serviceability](./alarms.md#6-serviceability-a-dark-tile-is-a-claim).
 - **It does not restore a backup.** It takes one; a restore replaces the

@@ -228,6 +228,101 @@ def surplus_state(session):
     set_state(session, "NORMAL")
 
 
+# ---------------------------------------------------------------------------
+# Configuration (SDD 30.2, 39 EMS-T015)
+# ---------------------------------------------------------------------------
+
+
+def ems_config_revisions(session):
+    import sqlalchemy as sa
+
+    from chaos.models.registry import ConfigurationRevision
+
+    return list(
+        session.scalars(
+            sa.select(ConfigurationRevision)
+            .where(ConfigurationRevision.target_type == "ems_config")
+            .order_by(ConfigurationRevision.revision)
+        )
+    )
+
+
+def test_config_endpoint_reports_the_defaults_and_records_one_revision(client, db_session, monkeypatch):
+    monkeypatch.delenv("CHAOS_EMS_CONFIG_FILE", raising=False)
+    response = client.get("/api/v1/energy/config")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == {
+        "kind": "defaults",
+        "path": None,
+        "env_var": "CHAOS_EMS_CONFIG_FILE",
+        "overrides": {},
+        "changed_by": "chaos.ems.config (built-in defaults)",
+        "reason": "built-in defaults in force: CHAOS_EMS_CONFIG_FILE is not set",
+    }
+    assert body["config"]["battery_temp_warning_c"] == 45.0
+    assert body["config"]["thermal_derate_battery_curve"] == [[45.0, 0.0], [55.0, 100.0]]
+    assert body["config"]["shed_states"] == ["CONSERVE", "CRITICAL_RESERVE", "EMERGENCY", "GENERATOR_SUPPORT"]
+    assert body["approved_by"] is None
+    assert body["target"] == {"target_type": "ems_config", "target_id": "site.site.primary.01"}
+    assert body["revision"]["revision"] == 1
+    assert body["revision"]["target_type"] == "ems_config"
+    assert body["revision"]["recorded_by_this_load"] is True
+    assert any("read-only" in note for note in body["notes"])
+    assert any("approved_by is recorded as null" in note for note in body["notes"])
+
+    again = client.get("/api/v1/energy/config").json()
+    assert again["revision"]["id"] == body["revision"]["id"]
+    assert again["revision"]["recorded_by_this_load"] is False
+    assert len(ems_config_revisions(db_session)) == 1
+
+
+def test_config_endpoint_reports_file_overrides_with_their_provenance(
+    client, energy_db, db_session, tmp_path, monkeypatch
+):
+    path = tmp_path / "ems.yaml"
+    path.write_text(
+        "changed_by: owner.a\nreason: bench trial\nbattery_temp_warning_c: 42\nsurplus_minimum_window_min: 45\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CHAOS_EMS_CONFIG_FILE", str(path))
+
+    body = client.get("/api/v1/energy/config").json()
+    assert body["source"]["kind"] == "file"
+    assert body["source"]["path"] == str(path)
+    assert body["source"]["overrides"] == {"battery_temp_warning_c": 42.0, "surplus_minimum_window_min": 45}
+    assert body["source"]["changed_by"] == "owner.a"
+    assert body["source"]["reason"] == "bench trial"
+    assert body["config"]["battery_temp_warning_c"] == 42.0
+    # The derived derate curve follows the overridden threshold.
+    assert body["config"]["thermal_derate_battery_curve"] == [[42.0, 0.0], [55.0, 100.0]]
+    assert body["revision"]["revision"] == 1 and body["revision"]["recorded_by_this_load"] is True
+
+    revision = ems_config_revisions(db_session)[0]
+    assert revision.changed_by == "owner.a" and revision.reason == "bench trial"
+    assert revision.diff["changes"]["surplus_minimum_window_min"] == {"old": 30, "new": 45}
+    assert revision.diff["approved_by"] is None
+
+    # Every energy read evaluates with the same effective configuration.
+    budgets = client.get("/api/v1/energy/load-budgets").json()
+    assert budgets["surplus_minimum_window_min"] == 45
+    assert len(ems_config_revisions(db_session)) == 1
+
+
+def test_a_rejected_configuration_file_is_reported_not_replaced_by_defaults(client, tmp_path, monkeypatch):
+    path = tmp_path / "ems.yaml"
+    path.write_text("battery_temp_warning_c: hot\nnot_a_field: 1\n", encoding="utf-8")
+    monkeypatch.setenv("CHAOS_EMS_CONFIG_FILE", str(path))
+    response = client.get("/api/v1/energy/config")
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail.startswith("EMS configuration unavailable: ")
+    assert "battery_temp_warning_c: expected float, got 'hot' (str)" in detail
+    assert "not_a_field: not an EmsConfig field" in detail
+    # The other energy reads refuse to evaluate on the defaults the file meant to override.
+    assert client.get("/api/v1/energy/loads").status_code == 500
+
+
 def test_load_budgets_reports_the_grantable_surplus(client, energy_db, db_session):
     surplus_state(db_session)
     body = client.get("/api/v1/energy/load-budgets").json()

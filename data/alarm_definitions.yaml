@@ -844,6 +844,90 @@ alarms:
     notes:
       - requires_manual_reset per SDD 34.7 "Require explicit reset after repeated failure".
 
+  - alarm_key: generator_start_blocked
+    name: Generator start blocked
+    severity: major
+    domain: energy
+    asset_id: energy.generator.site.01
+    point_name: null
+    trigger:
+      operator: eq
+      value: true
+    reset:
+      operator: eq
+      value: false
+    hysteresis: null
+    on_delay_s: 0
+    off_delay_s: 0
+    trigger_expression: >-
+      Raised by publication only (source ems, chaos.alarms.published): the energy manager asserts it
+      when an SDD 34.1 start criterion is met and an SDD 34.2 permissive is not, re-asserts it each
+      evaluation while that holds, and clears it when the start proceeds or no criterion remains.
+      No point is evaluated.
+    threshold_status: not_applicable
+    threshold_basis: >-
+      No numeric threshold of its own. The start criteria and permissives it reports are the EmsConfig
+      generator parameters (generator_start_autonomy_h, generator_start_margin_kwh,
+      generator_min_fuel_pct, generator_restart_inhibit_s, ...), every one a commissioning parameter.
+    requires_manual_reset: false
+    maintenance_mode_behaviour: notify_only
+    parent_alarm_key: null
+    parent_scope: related
+    data_quality_alarm_key: energy_meter_data_invalid
+    affected_assets:
+      - energy.generator.site.01
+      - energy.ats.power_container.site_01
+      - energy.battery_bank.power_container.01
+      - energy.load.site.control_core_01
+    probable_causes:
+      - Generator not in automatic/remote-enabled mode (generator_available is not true).
+      - Fuel estimate below the start permissive.
+      - Maintenance lockout on the generator.
+      - Active shutdown-class fault, or the start-attempt limit already reached.
+      - Transfer assembly reports the generator source unavailable.
+      - Restart inhibit still running after the last stop.
+      - A permissive input is bad or stale. An unverified permissive is not a permissive.
+    automatic_action: >-
+      None beyond withholding the start request. SDD 39 EMS-T008: the EMS stays in deeper
+      conservation and makes no uncontrolled repeated start request; it re-asserts this alarm
+      each evaluation while the criteria hold and clears it when a start proceeds or no
+      criterion remains.
+    operator_action: >-
+      Restore the blocked permissive (fuel, automatic mode, lockout, transfer interface) or start
+      the generator locally. Until then treat available battery energy as the entire remaining
+      reserve.
+    procedure_ref: OP-ENERGY-GENERATOR-START-BLOCKED
+    procedure_status: not_yet_written
+    escalation_path:
+      - stage: 1
+        after_s: 0
+        channels: [log, email, push]
+        role: operator
+      - stage: 2
+        after_s: 900
+        channels: [voice]
+        role: operator
+      - stage: 3
+        after_s: 3600
+        channels: [voice]
+        role: on_call
+    renotify_after_s: 1800
+    suppression_conditions: []
+    correlation:
+      window_s: 900
+      flood_threshold: 2
+    source_sections: ['34.1', '34.2', '39']
+    enabled: true
+    notes:
+      - >-
+        Platform-owned definition added after the v0.3 pass, the same provenance rung
+        (reconciled_v0_4) energy_state carries in point_dictionary.yaml. SDD 37.1 lists no alarm for a
+        blocked start, but SDD 39 EMS-T008 requires the condition to alarm; the EMS already published it
+        and, without this definition, chaos.alarms.published counted it as an unbound platform event.
+      - >-
+        The severity the EMS claims (major in CRITICAL_RESERVE, warning elsewhere) is kept on the row for
+        the record; this definition's severity is the contract that governs.
+
   - alarm_key: generator_fuel_low
     name: Generator fuel low
     severity: warning

@@ -9,10 +9,12 @@ forecast, and every value it produces says so. What it adds is *geometry*:
   for 1950-2050. No atmospheric refraction correction is applied; the error is
   confined to the minutes around sunrise and sunset and is irrelevant to an
   energy estimate.
-* **Clear-sky irradiance** from the Meinel / Laue direct-normal model with the
-  Kasten-Young air mass, a 10 % clear-sky diffuse fraction and an isotropic
-  plane-of-array transposition with 0.2 ground albedo. These are textbook
-  clear-sky relationships, not a site calibration.
+* **Clear-sky irradiance** from :mod:`chaos.ems.clearsky`, the Meinel / Laue
+  direct-normal model with the Kasten-Young air mass, a 10 % clear-sky diffuse
+  fraction and an isotropic plane-of-array transposition with 0.2 ground
+  albedo. The simulator's PV array uses the same module, so the simulated sky
+  and the forecast of it agree. These are textbook clear-sky relationships,
+  not a site calibration.
 * **Persistence of the clearness index.** The measured PV power is compared
   with the clear-sky power at the same instant and that ratio -- how cloudy it
   is *now* -- is assumed to persist over the horizon. For the day horizon the
@@ -22,10 +24,16 @@ forecast, and every value it produces says so. What it adds is *geometry*:
 
 Everything the model needs about the site comes from the registry and nothing
 is invented: the site record carries the timezone and, once surveyed, the
-coordinates; the PV array record carries the rating, tilt and orientation.
-Until the owner supplies coordinates (``property_coordinates`` is an open
-field on the site asset today) the clear-sky geometry is *unavailable* and the
-forecaster falls back to the documented persistence placeholder, saying why.
+coordinates; the PV array record carries the rating, tilt and orientation. The
+shipped register has no coordinates anywhere -- the site's ``location`` mapping
+is empty, so the loader writes no ``locations`` row for it, ``property_coordinates``
+is one of its open fields, and the rows the loader does write for other assets
+carry no latitude or longitude (``coordinates_status: TBD``) -- so the
+clear-sky geometry is *unavailable* and the forecaster falls back to the
+documented persistence placeholder, saying why. The array rating it reads,
+45 kWdc, carries the status ``revised_design_target`` because the energy
+capacity revision (DD-001) is unresolved; every forecast assumption names
+that status alongside the rating.
 """
 
 from __future__ import annotations
@@ -37,17 +45,13 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from chaos.ems import clearsky
+from chaos.ems.clearsky import GROUND_ALBEDO, ClearSkyIrradiance, isotropic_plane_of_array_w_m2
 from chaos.ems.config import EmsConfig
 from chaos.ems.derived import ForecastResult, NaivePersistenceForecast, PvForecast
 from chaos.ems.inputs import PV_ARRAY, EmsInputs
 from chaos.models.registry import Asset, Location
 
-#: Solar constant used by the Meinel / Laue clear-sky model (W/m^2).
-SOLAR_CONSTANT_W_M2 = 1353.0
-#: Clear-sky diffuse irradiance as a fraction of the direct-horizontal component.
-CLEAR_SKY_DIFFUSE_FRACTION = 0.10
-#: Isotropic ground-reflected fraction for the plane-of-array transposition.
-GROUND_ALBEDO = 0.20
 #: Below this fraction of the array rating the clear-sky power is too small to
 #: anchor a clearness index (twilight, or the minutes around sunrise).
 CLEARNESS_MIN_CLEAR_FRACTION = 0.05
@@ -169,41 +173,21 @@ def solar_position(when: dt.datetime, latitude_deg: float, longitude_deg: float)
     )
 
 
-@dataclass(frozen=True)
-class ClearSkyIrradiance:
-    """Clear-sky components in W/m^2."""
-
-    dni: float
-    dhi: float
-    ghi: float
-
-
 def clear_sky_irradiance(
     position: SolarPosition, *, day_of_year: int, elevation_m: float = 0.0
 ) -> ClearSkyIrradiance:
-    """Meinel / Laue direct-normal clear-sky model with Kasten-Young air mass.
-
-    ``DNI = E0 * ((1 - 0.14 h) * 0.7 ** (AM ** 0.678) + 0.14 h)`` with ``h`` the
-    site elevation in km and ``E0`` the solar constant corrected for the
-    earth-sun distance. Diffuse is taken as 10 % of the direct-horizontal
-    component, the usual clear-sky approximation.
-    """
+    """The shared Meinel / Laue clear-sky model (:mod:`chaos.ems.clearsky`) at this sun position."""
     if not position.above_horizon:
-        return ClearSkyIrradiance(0.0, 0.0, 0.0)
-    zenith = position.zenith_deg
-    cos_zenith = math.cos(math.radians(zenith))
-    air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith) ** -1.6364)
-    altitude_km = max(elevation_m, 0.0) / 1000.0
-    extraterrestrial = SOLAR_CONSTANT_W_M2 * (1.0 + 0.033 * math.cos(2.0 * math.pi * day_of_year / 365.0))
-    dni = extraterrestrial * ((1.0 - 0.14 * altitude_km) * 0.7 ** (air_mass**0.678) + 0.14 * altitude_km)
-    dhi = CLEAR_SKY_DIFFUSE_FRACTION * dni * cos_zenith
-    return ClearSkyIrradiance(dni=dni, dhi=dhi, ghi=dni * cos_zenith + dhi)
+        return clearsky.ZERO_IRRADIANCE
+    return clearsky.clear_sky_irradiance(
+        position.zenith_deg, day_of_year=day_of_year, elevation_m=elevation_m
+    )
 
 
 def plane_of_array_w_m2(
     position: SolarPosition, irradiance: ClearSkyIrradiance, *, tilt_deg: float, azimuth_deg: float
 ) -> float:
-    """Isotropic-sky transposition onto a fixed tilted plane."""
+    """Isotropic-sky transposition onto a fixed plane facing ``azimuth_deg``, tilted ``tilt_deg``."""
     if not position.above_horizon:
         return 0.0
     zenith = math.radians(position.zenith_deg)
@@ -211,10 +195,9 @@ def plane_of_array_w_m2(
     cos_incidence = math.cos(zenith) * math.cos(tilt) + math.sin(zenith) * math.sin(tilt) * math.cos(
         math.radians(position.azimuth_deg - azimuth_deg)
     )
-    beam = irradiance.dni * max(cos_incidence, 0.0)
-    sky = irradiance.dhi * (1.0 + math.cos(tilt)) / 2.0
-    ground = irradiance.ghi * GROUND_ALBEDO * (1.0 - math.cos(tilt)) / 2.0
-    return beam + sky + ground
+    return isotropic_plane_of_array_w_m2(
+        irradiance, cos_incidence=cos_incidence, tilt_deg=tilt_deg, albedo=GROUND_ALBEDO
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -262,9 +245,13 @@ def _number(value: Any) -> float | None:
 def site_geometry(session: Session, site_id: str) -> SiteGeometry:
     """Read the site's coordinates, elevation and timezone from the registry.
 
-    Coordinates come from the ``locations`` row the loader writes only when the
-    register actually supplies numbers; the site asset's properties are the
-    fallback. Nothing is defaulted.
+    Coordinates come from the site's ``locations`` row when the loader has
+    written one -- it writes a row for every asset whose register record
+    carries a ``location`` mapping, and fills latitude and longitude only when
+    the register supplies numbers -- with the site asset's own ``latitude`` /
+    ``longitude`` properties as the fallback. In the shipped register the
+    site's ``location`` is empty, so it has no row at all, and no row the
+    other assets get carries coordinates. Nothing is defaulted.
     """
     asset = session.get(Asset, site_id)
     if asset is None:

@@ -77,7 +77,8 @@ does not have that subsystem installed" from "that subsystem failed".
 
 | Command | Purpose | GUI equivalent |
 |---|---|---|
-| `init-db` | Create every platform table | First-run setup |
+| `init-db` | Create every platform table and record the schema revision | First-run setup |
+| `migrate` | Apply pending schema migrations in place (Alembic) | None — upgrade procedure |
 | `load-registry` | Load the design package into the registry | First-run setup |
 | `load-all` | Registry + load schedule + alarm definitions | First-run setup |
 | `validate` | Validate the design package against its schemas | Runs in CI |
@@ -103,6 +104,24 @@ chaos init-db             # idempotent; creates tables, never alters them
 chaos load-all            # registry + load schedule + alarm definitions
 chaos status              # confirm what landed
 ```
+
+### Moving an existing schema forward
+
+```sh
+chaos migrate             # apply every pending revision; a no-op when at head
+chaos migrate --stamp     # record head without running anything
+```
+
+`init-db` never alters a table that exists, so a change to an existing table
+ships as an Alembic revision under `src/chaos/migrations` and `migrate` is what
+applies it. The two cooperate: `init-db` records the revision of the schema it
+built (head on a fresh database; the baseline when tables already existed, so
+that `migrate` carries them the rest of the way), and `migrate` refuses an
+unstamped database that already holds tables rather than trying to create them
+twice — the message names both ways out. There is no `alembic.ini`: the
+script location, the database URL and the metadata all come from the platform's
+own settings and models. Take a backup first; a failed migration leaves the
+database at the last completed revision.
 
 `load-all --skip-missing` skips stages whose subsystem is not installed rather
 than failing — which is what the gateway uses, because a node without the alarm
@@ -157,7 +176,19 @@ chaos backup --output /mnt/offsite/
 chaos backup --include-history     # also telemetry samples and dead letters (large)
 ```
 
-Default output is `var/backups/homestead-<role>-<UTC>.tar.gz`.
+Default output is `homestead-<role>-<UTC>.tar.gz` in the backup directory:
+`CHAOS_BACKUP_DIRECTORY` when set, otherwise `var/backups` under the working
+tree (`/app/var/backups` in the container).
+
+**The platform watches that directory.** On the primary node the backup-age
+monitor reads the newest archive's manifest there and publishes
+`backup_age_h` on the database service's asset every half minute, which is
+what lets the shipped `backup_overdue` alarm fire at 48 h. An archive written
+somewhere else with `--output` is a backup, but not one the monitor can see —
+so point `CHAOS_BACKUP_DIRECTORY` at wherever the scheduled backups land. With
+no archive at all the monitor publishes the time since the platform's first
+configuration revision, marked `uncertain`, so a node that has never been
+backed up raises the alarm rather than sitting quietly normal.
 
 **Credentials are never included.** The archive holds the registry,
 configuration and the design package — enough to rebuild the platform on new
@@ -263,6 +294,35 @@ the Python half and pointless otherwise.
 reached through the gateway or not at all — the gateway refuses a non-loopback
 backend address unless explicitly configured otherwise.
 
+### How the supervisor stops it
+
+`serve` drives uvicorn through its `Server` object rather than `uvicorn.run`,
+and registers a shutdown hook on the application. The backend's own
+`POST /_supervisor/stop` route calls that hook, which flips uvicorn's
+`should_exit` flag: the server then shuts down exactly as it would on Ctrl-C
+— the background services and the bus are stopped in the lifespan's `finally`
+— and `serve` exits 0. That is how the gateway's process supervisor stops the
+backend without killing it.
+
+The route is guarded three ways, and all three are deliberate:
+
+| Guard | Effect |
+|---|---|
+| `CHAOS_SUPERVISOR_STOP_SECRET` unset | The route does not exist: 404, like any unknown path. A container or a development checkout has no supervisor, so nothing can stop it this way |
+| Loopback peer only | 403 from any other address. uvicorn trusts `X-Forwarded-For` from `127.0.0.1` and the gateway always sets it, so a request *relayed* through the gateway presents the LAN client's address and is refused — only the supervisor's own connection to the backend's loopback listener qualifies |
+| `X-Chaos-Supervisor-Secret` header | Compared in constant time against the setting; 403 on a mismatch |
+
+A successful call answers `202 {"stopping": true}` and the stop follows once the
+response is out. The gateway never proxies the route: `/_supervisor` is outside
+every prefix in the route-ownership manifest, and an unclaimed path is not
+forwarded. The route is absent from `/openapi.json` for the same reason it is
+absent from [API reference](./api.md#13-unlisted-operational-routes): it is
+not part of the platform API.
+
+With `--reload`, uvicorn runs the application in a child process it restarts on
+source change, so no hook can be handed to it; the route there falls back to
+interrupting the worker. Development only, as the flag says.
+
 ---
 
 ## 9. The simulator
@@ -317,6 +377,12 @@ would have run and exits `3` rather than pretending.
 switches are the hand path, and the installer's alternative
 `ChaosServiceRegistration=host` build calls exactly the same two commands.
 
+When the service stops, the gateway's supervisor asks the backend to stop
+first — `POST /_supervisor/stop` on the backend's loopback listener, with the
+secret both halves read from `CHAOS_SUPERVISOR_STOP_SECRET` — and only kills
+the process if that is not answered. See
+[§ 8 How the supervisor stops it](#how-the-supervisor-stops-it).
+
 The two paths register the same things — the service, its recovery policy, the
 failure flag that makes SCM count a service that *stops itself with an error*
 (which is what the backend supervisor does when its circuit breaker trips, see
@@ -350,7 +416,10 @@ run's result under `maintenance` — the archive path and its SHA-256, what was
 pruned, the retention counts, and any error in the CLI's own words — and the
 command transcript is appended to `logs\chaos-setup.log`. A failed backup is an
 error in `chaos-host.log` and a `lastRun` that says so; the next run is still
-scheduled.
+scheduled. The gateway also hands the supervised backend the same folder as
+`CHAOS_BACKUP_DIRECTORY` (unless `homestead.env` sets it), so the backup-age
+monitor behind the `backup_overdue` alarm watches the archives this schedule
+writes and not an empty folder under Program Files.
 
 On a development checkout there is no installed layout and so no backup
 directory; the schedule is off and `/host/info` says why. Set

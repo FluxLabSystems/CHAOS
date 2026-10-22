@@ -102,40 +102,130 @@ services:
       mosquitto:
         condition: service_started
     environment:
+      # Every CHAOS_* setting the platform reads (src/chaos/config.py) is passed
+      # through here, most with a default so that deploy/.env decides and an
+      # unset optional arrives as "" -- which the platform reads as unset.
+      # tests/test_deploy_compose.py fails when a setting is added to the
+      # platform and not here. The exceptions are the values fixed by this
+      # stack's own topology (role, database, broker host, listen address) and
+      # the two directories the image sets as ENV (CHAOS_DATA_DIR,
+      # CHAOS_SCHEMA_DIR).
       TZ: ${TZ:-America/Toronto}
+
+      # --- Identity ---------------------------------------------------
       CHAOS_NODE_ROLE: primary
       CHAOS_SITE_ID: ${CHAOS_SITE_ID:-site.site.primary.01}
       CHAOS_TIMEZONE: ${TZ:-America/Toronto}
+
+      # --- Storage ----------------------------------------------------
       CHAOS_DATABASE_URL: >-
         postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-homestead}
+      CHAOS_SQL_ECHO: ${CHAOS_SQL_ECHO:-false}
+
+      # --- MQTT -------------------------------------------------------
       CHAOS_MQTT_HOST: mosquitto
-      CHAOS_MQTT_PORT: 1883
+      # 1883 on the compose network; 8883 once the broker's TLS listener is
+      # enabled (deploy/mosquitto/README.md) and CHAOS_MQTT_TLS is true.
+      CHAOS_MQTT_PORT: ${CHAOS_MQTT_PORT:-1883}
       CHAOS_MQTT_USERNAME: ${CHAOS_MQTT_USERNAME:?set a per-service MQTT identity}
       CHAOS_MQTT_PASSWORD: ${CHAOS_MQTT_PASSWORD:?set a per-service MQTT secret}
       CHAOS_MQTT_TLS: ${CHAOS_MQTT_TLS:-false}
+      # Paths as the container sees them: SECRETS_DIR is mounted read-only
+      # at /run/secrets below.
+      CHAOS_MQTT_TLS_CA: ${CHAOS_MQTT_TLS_CA:-}
+      CHAOS_MQTT_TLS_CERT: ${CHAOS_MQTT_TLS_CERT:-}
+      CHAOS_MQTT_TLS_KEY: ${CHAOS_MQTT_TLS_KEY:-}
+      CHAOS_MQTT_TLS_INSECURE: ${CHAOS_MQTT_TLS_INSECURE:-false}
       CHAOS_MQTT_CLIENT_ID: chaos-primary
       CHAOS_MQTT_BASE_TOPIC: ${CHAOS_MQTT_BASE_TOPIC:-homestead}
       CHAOS_MQTT_ENABLED: ${CHAOS_MQTT_ENABLED:-true}
+
+      # --- Historian and telemetry semantics --------------------------
       CHAOS_HISTORIAN_BACKEND: ${CHAOS_HISTORIAN_BACKEND:-sql}
       CHAOS_HISTORIAN_RAW_RETENTION_DAYS: ${CHAOS_HISTORIAN_RAW_RETENTION_DAYS:-90}
+      CHAOS_DEFAULT_STALE_AFTER_S: ${CHAOS_DEFAULT_STALE_AFTER_S:-60}
+
+      # --- API --------------------------------------------------------
+      CHAOS_API_HOST: 0.0.0.0
+      CHAOS_API_PORT: 8000
+      CHAOS_API_TITLE: ${CHAOS_API_TITLE:-Project CHAOS API}
+      CHAOS_API_ROOT_PATH: ${CHAOS_API_ROOT_PATH:-}
+      # The graceful-stop route exists only while this is set; it is for the
+      # Windows process supervisor, and a container has none.
+      CHAOS_SUPERVISOR_STOP_SECRET: ${CHAOS_SUPERVISOR_STOP_SECRET:-}
+
+      # --- Overview thresholds ----------------------------------------
+      CHAOS_OVERVIEW_FREEZE_RISK_C: ${CHAOS_OVERVIEW_FREEZE_RISK_C:-2.0}
+      CHAOS_OVERVIEW_HEAT_RISK_C: ${CHAOS_OVERVIEW_HEAT_RISK_C:-32.0}
+
+      # --- Control safety ---------------------------------------------
       # Physical control stays off until the subsystem has passed the SDD
       # section 19 commissioning sequence. Changing this is a deliberate act.
       CHAOS_ALLOW_PHYSICAL_CONTROL: ${CHAOS_ALLOW_PHYSICAL_CONTROL:-false}
+      CHAOS_COMMAND_DEFAULT_TTL_S: ${CHAOS_COMMAND_DEFAULT_TTL_S:-300}
+
+      # --- EMS --------------------------------------------------------
       CHAOS_EMS_ENABLED: ${CHAOS_EMS_ENABLED:-true}
+      CHAOS_EMS_TICK_INTERVAL_S: ${CHAOS_EMS_TICK_INTERVAL_S:-5}
+      # Optional override file (docs/ems-configuration.md). The EMS reads this
+      # name from the process environment, not through the settings model, so
+      # it must arrive here as an environment variable; mount the file below.
+      CHAOS_EMS_CONFIG_FILE: ${CHAOS_EMS_CONFIG_FILE:-}
+
+      # --- Alarms and notification ------------------------------------
       CHAOS_ALARM_ENGINE_ENABLED: ${CHAOS_ALARM_ENGINE_ENABLED:-true}
       CHAOS_NOTIFICATION_BACKENDS: ${CHAOS_NOTIFICATION_BACKENDS:-log}
-      # Third-party integrations (docs/plugins.md). The disabled list always
-      # wins, so one entry here removes a misbehaving vendor plugin from a
-      # running deployment without rebuilding the image.
+      CHAOS_NOTIFY_EMAIL_RECIPIENTS: ${CHAOS_NOTIFY_EMAIL_RECIPIENTS:-}
+      CHAOS_NOTIFY_PUSH_TARGETS: ${CHAOS_NOTIFY_PUSH_TARGETS:-}
+      CHAOS_NOTIFY_SMTP_HOST: ${CHAOS_NOTIFY_SMTP_HOST:-}
+      CHAOS_NOTIFY_SMTP_PORT: ${CHAOS_NOTIFY_SMTP_PORT:-587}
+      CHAOS_NOTIFY_SMTP_SECURITY: ${CHAOS_NOTIFY_SMTP_SECURITY:-starttls}
+      CHAOS_NOTIFY_SMTP_USERNAME: ${CHAOS_NOTIFY_SMTP_USERNAME:-}
+      CHAOS_NOTIFY_SMTP_PASSWORD: ${CHAOS_NOTIFY_SMTP_PASSWORD:-}
+      CHAOS_NOTIFY_SMTP_FROM: ${CHAOS_NOTIFY_SMTP_FROM:-}
+      CHAOS_NOTIFY_SMTP_TIMEOUT_S: ${CHAOS_NOTIFY_SMTP_TIMEOUT_S:-10.0}
+      CHAOS_NOTIFY_PUSH_URL: ${CHAOS_NOTIFY_PUSH_URL:-}
+      CHAOS_NOTIFY_PUSH_TOKEN: ${CHAOS_NOTIFY_PUSH_TOKEN:-}
+      CHAOS_NOTIFY_PUSH_TIMEOUT_S: ${CHAOS_NOTIFY_PUSH_TIMEOUT_S:-10.0}
+      CHAOS_NOTIFY_RETRY_LIMIT: ${CHAOS_NOTIFY_RETRY_LIMIT:-3}
+      CHAOS_NOTIFY_RETRY_INTERVAL_S: ${CHAOS_NOTIFY_RETRY_INTERVAL_S:-300}
+
+      # --- Backups and self-monitoring --------------------------------
+      # Where `chaos backup` writes and where the backup-age monitor looks;
+      # deploy/backup/backup.sh writes there too. Inside the twin-var volume.
+      CHAOS_BACKUP_DIRECTORY: ${CHAOS_BACKUP_DIRECTORY:-/app/var/backups}
+      CHAOS_BACKUP_AGE_ASSET_ID: ${CHAOS_BACKUP_AGE_ASSET_ID:-it.application_service.rack_01.postgres_01}
+      # Empty means the platform's own default for the primary role: the
+      # register's digital_twin_api_01 asset.
+      CHAOS_PLATFORM_ASSET_ID: ${CHAOS_PLATFORM_ASSET_ID:-}
+
+      # --- Plugins (docs/plugins.md) ----------------------------------
+      # The disabled list always wins, so one entry here removes a
+      # misbehaving vendor plugin from a running deployment without
+      # rebuilding the image.
       CHAOS_PLUGINS_ENABLED: ${CHAOS_PLUGINS_ENABLED:-*}
       CHAOS_PLUGINS_DISABLED: ${CHAOS_PLUGINS_DISABLED:-}
+      CHAOS_PLUGIN_OPTIONS: ${CHAOS_PLUGIN_OPTIONS:-}
       CHAOS_PLUGIN_MIRROR_ENABLED: ${CHAOS_PLUGIN_MIRROR_ENABLED:-true}
+      # The shipped NetBotz plugin. Credentials are per-key variables, never
+      # part of CHAOS_PLUGIN_OPTIONS; the CA file lives under /run/secrets.
       CHAOS_PLUGIN_NETBOTZ_TRANSPORT: ${CHAOS_PLUGIN_NETBOTZ_TRANSPORT:-none}
       CHAOS_PLUGIN_NETBOTZ_HOST: ${CHAOS_PLUGIN_NETBOTZ_HOST:-}
-      CHAOS_API_HOST: 0.0.0.0
-      CHAOS_API_PORT: 8000
+      CHAOS_PLUGIN_NETBOTZ_USERNAME: ${CHAOS_PLUGIN_NETBOTZ_USERNAME:-}
+      CHAOS_PLUGIN_NETBOTZ_PASSWORD: ${CHAOS_PLUGIN_NETBOTZ_PASSWORD:-}
+      CHAOS_PLUGIN_NETBOTZ_CA_FILE: ${CHAOS_PLUGIN_NETBOTZ_CA_FILE:-}
+      CHAOS_PLUGIN_NETBOTZ_READINGS_PATH: ${CHAOS_PLUGIN_NETBOTZ_READINGS_PATH:-}
+      CHAOS_PLUGIN_NETBOTZ_ENCLOSURE_ID: ${CHAOS_PLUGIN_NETBOTZ_ENCLOSURE_ID:-}
+      CHAOS_PLUGIN_NETBOTZ_POLL_INTERVAL_S: ${CHAOS_PLUGIN_NETBOTZ_POLL_INTERVAL_S:-30}
     volumes:
       - twin-var:/app/var
+      # Certificates and keys the platform reads by path: the broker CA
+      # bundle, the twin's client certificate and key, the NetBotz CA. Owned
+      # by the host, mounted read-only, never baked into the image. Defaults
+      # to deploy/secrets/, which is gitignored apart from its placeholder.
+      - ${SECRETS_DIR:-./secrets}:/run/secrets:ro
+      # The EMS override file, when CHAOS_EMS_CONFIG_FILE names one:
+      # - ./ems-config.yaml:/app/config/ems-config.yaml:ro
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${TWIN_PORT:-8000}:8000"
     healthcheck:

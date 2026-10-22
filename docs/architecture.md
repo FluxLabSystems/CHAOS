@@ -267,26 +267,32 @@ bus. This is how every control path in this repository has been exercised.
 
 ## 5. Runtime shape
 
-Background services are selected by node role and settings:
+Background services are selected by node role and settings
+(`runtime.build_services`):
 
 | Service | Runs when | Notes |
 |---|---|---|
-| Ingest | The bus is enabled | |
-| Command dispatch | The bus is enabled | **Not suppressed on a secondary node** — see below |
-| Alarm engine | The alarm engine is enabled | |
-| Energy manager | Enabled **and** not a secondary node | The only role-based suppression in the platform |
+| Ingest | The bus is enabled | Both roles |
+| Command dispatch | The bus is enabled **and** not a secondary node | One supervisory control source on the property |
+| Alarm engine | The alarm engine is enabled | Both roles: alerting is what the secondary exists for |
+| Energy manager | Enabled **and** not a secondary node | Exactly one EMS on the property |
+| Maintenance scheduler | Not a secondary node | Two schedulers would raise every work order twice |
+| Backup-age monitor | The bus is enabled **and** not a secondary node | Publishes `backup_age_h` from the primary's backup directory |
+| Plugin services and mirror | A plugin's manifest allows the role | Registered last, stopped first |
 
 **One subsystem failing to start never prevents the others**: a frozen
 greenhouse is worse than a missing dashboard. The same rule governs the gateway:
 a background service that throws must not take the host down, because the
 gateway's job during a failure is to stay up and report it.
 
-**Worth knowing:** role is enforced for the energy manager only. On a secondary
-node the command-dispatch service is still registered whenever the bus is
-enabled, so the physical-control gate is the thing standing between the
-secondary node and a second source of commands — backed by broker permissions.
+**Worth knowing:** the secondary node withholds command dispatch, the energy
+manager and the maintenance scheduler in the platform itself, and it is still
+not the only thing standing between that node and a second source of commands.
+`CHAOS_ALLOW_PHYSICAL_CONTROL` is hard-coded off in its compose file and the
+broker ACL denies its identity the command namespace, because a defence that
+lives in one branch of one Python function should never be the only one.
 [Secondary control node § How that is enforced](./secondary-control-node.md#how-that-is-enforced)
-explains why that is treated as a primary control rather than belt-and-braces.
+lists all four layers.
 
 ---
 
@@ -297,7 +303,7 @@ explains why that is treated as a primary control rather than belt-and-braces.
 | Database | SQLite by default; PostgreSQL supported |
 | Historian | A relational table. The InfluxDB-versus-TimescaleDB decision is unresolved, so neither is deployed |
 | Geospatial | PostGIS is installed and the geometry column prepared, but geometry is stored as GeoJSON and the generated column is commented out |
-| Migrations | **None.** Table creation adds tables; it never alters them |
+| Migrations | Alembic, configured in code under `src/chaos/migrations` with a baseline equal to the schema `init-db` builds. `chaos migrate` applies what is pending; `init-db` records the revision it produced |
 
 The relational historian is a real limitation, not a finished choice. It is
 adequate for commissioning and for the secondary node; it is not adequate for
@@ -334,7 +340,7 @@ elevation · 87 REST endpoints under `/api/v1` · a plugin system for third-part
 integrations · the operator console · the .NET gateway with route ownership and
 first-run setup · the WinUI 3 desktop shell ·
 the command line · container deployment for both node roles · Grafana dashboards
-over real tables · 2418 Python tests.
+over real tables · 2622 Python tests.
 
 ### Stubbed or partial
 
@@ -348,7 +354,7 @@ over real tables · 2418 Python tests.
 | **Historian** | Relational, pending the InfluxDB/TimescaleDB decision |
 | **PostGIS** | Geometry column prepared and disabled; GeoJSON stored |
 | **MQTT TLS** | Client side complete (`CHAOS_MQTT_TLS_CA`, `_CERT`, `_KEY`); the broker's listener stays disabled until certificates are issued |
-| **Migrations** | None. Alembic is declared and unused |
+| **Migrations** | The environment, the baseline revision and `chaos migrate` exist and are tested on SQLite; no revision beyond the baseline has been needed yet, so a migration that alters a populated PostgreSQL historian has not been exercised |
 | **Water, rack and lifecycle extensions** | In the design package; not merged into the registry. Consumed directly by the screens that need them |
 
 ### Not built
@@ -378,8 +384,8 @@ Consequently most of the MVP acceptance criteria are outstanding:
 | 1 | Registry contains all installed core assets | **Met for what is designed** — 90 assets, though most are `planned`, not installed |
 | 2 | Live energy, water, rack, weather and alarm state | **Not met** — needs hardware |
 | 3 | Telemetry follows one documented schema | **Met** |
-| 4 | Critical alarms work during internet loss | **Not met** — a log line is not an alert |
-| 5 | Home automation, flows, dashboards and the API backed up automatically | **Partial** — dashboards and the API yes; the others do not exist |
+| 4 | Critical alarms work during internet loss | **Not met** — the `email` and `push` channels exist and run against a relay or push server on the property network, but neither is configured or proven here; `voice` is a stub. A log line is not an alert. See [Alarms § Notification](./alarms.md#7-notification-and-the-honest-part) |
+| 5 | Home automation, flows, dashboards and the API backed up automatically | **Partial** — the registry and configuration archive is scheduled on Windows by the gateway and by cron on containers (`deploy/backup/backup.sh`, which also takes the database and the dashboards); the platform watches the result and raises `backup_overdue` at 48 h. Home Assistant and Node-RED do not exist, so they are not backed up |
 | 6 | One physical subsystem controlled with acknowledgement and audit | **Not met** — needs hardware |
 | 7 | Communications-loss and server-loss tests | **Not met** against hardware; simulated only |
 | 8 | Property map displays structures and assets | **Not met** — GeoJSON is served, nothing renders it over a basemap |

@@ -358,7 +358,7 @@
       "type": "stat",
       "id": 41,
       "title": "Scrape targets up",
-      "description": "Only Prometheus itself is scraped today. Every other job in deploy/prometheus/prometheus.yml is commented out because its exporter is not deployed or its address is an open item.",
+      "description": "Two jobs are scraped today: Prometheus itself and the platform's own /metrics on twin:8000 (job chaos). Every other job in deploy/prometheus/prometheus.yml is commented out because its exporter is not deployed or its address is an open item.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 0, "y": 49 },
       "options": {
@@ -375,7 +375,8 @@
             "mode": "absolute",
             "steps": [
               { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
+              { "color": "orange", "value": 1 },
+              { "color": "green", "value": 2 }
             ]
           },
           "mappings": []
@@ -424,13 +425,126 @@
       ]
     },
     {
+      "type": "timeseries",
+      "id": 43,
+      "title": "Active alarms by severity (platform /metrics)",
+      "description": "chaos_alarms_active from the platform's own /metrics: open alarms in an active lifecycle state, by severity. The same count as the PostgreSQL panel at the top, read the other way round -- a gap here with alarms still open in the database means the API stopped answering.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 54 },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "chaos_alarms_active",
+          "legendFormat": "{{severity}}",
+          "editorMode": "code"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 44,
+      "title": "Dead letters and open incidents (platform /metrics)",
+      "description": "chaos_ingest_dead_letters (rows kept for diagnosis: a message arrived and could not be resolved to a registry point, which during commissioning is far more common than a dead sensor) and chaos_incidents_open (correlated incidents still open).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 54 },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "chaos_ingest_dead_letters",
+          "legendFormat": "dead letters",
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "chaos_incidents_open",
+          "legendFormat": "open incidents",
+          "editorMode": "code"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "id": 45,
+      "title": "Ingest subscriber (platform /metrics)",
+      "description": "chaos_ingest_running: 1 while the MQTT ingest subscriber is running on the scraped node. Absent entirely when ingest is not registered there (CHAOS_MQTT_ENABLED=false), which the exposition says in a comment rather than reporting a zero.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 54 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "not registered",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "stopped", "color": "red" },
+                "1": { "text": "running", "color": "green" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "chaos_ingest_running",
+          "legendFormat": "ingest",
+          "editorMode": "code"
+        }
+      ]
+    },
+    {
       "type": "text",
       "id": 50,
       "title": "What is not monitored yet",
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 54 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 61 },
       "options": {
         "mode": "markdown",
-        "content": "SDD section 8.7 asks Prometheus to cover servers and VMs, switches and access points, UPS and PDUs, NetBotz, storage arrays and ZFS pools, application services, gateway health and backup jobs. **None of those are being scraped today.** Each needs an exporter that is not deployed, and most need a management address that `data/homestead_asset_register.yaml` deliberately records as TBD.\n\nThe digital twin API does **not** expose `/metrics`. Application-level health on this dashboard comes from PostgreSQL, which is where the platform actually records what it did.\n\nThe two jobs that would change this dashboard most, in order: `snmp_exporter` against the UPS, PDUs and NetBotz on VLAN 10, and `node_exporter` on the R740xd and on the secondary control node."
+        "content": "SDD section 8.7 asks Prometheus to cover servers and VMs, switches and access points, UPS and PDUs, NetBotz, storage arrays and ZFS pools, application services, gateway health and backup jobs. **Of those, only the platform's own application service is scraped today**, through its `/metrics` (the panels above). Everything else needs an exporter that is not deployed, and most need a management address that `data/homestead_asset_register.yaml` deliberately records as TBD.\n\n`/metrics` carries the platform's own counters -- active alarms by severity, open incidents, dead letters, ingest and mirror counters, notification outcomes, plugin health -- and never point values. Point values, command history and EMS state are read from PostgreSQL, which is where the platform records what it did; the Prometheus series are the second opinion on whether it is still doing it.\n\nThe two jobs that would change this dashboard most, in order: `snmp_exporter` against the UPS, PDUs and NetBotz on VLAN 10, and `node_exporter` on the R740xd and on the secondary control node."
       }
     }
   ]

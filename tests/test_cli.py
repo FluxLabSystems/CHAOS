@@ -44,6 +44,7 @@ def run(*argv: str) -> int:
 
 SUBCOMMANDS = (
     "init-db",
+    "migrate",
     "load-registry",
     "load-all",
     "validate",

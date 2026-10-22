@@ -254,7 +254,7 @@ Make a real alarm fire and follow it all the way out.
 properly.
 **Record:** alarm key, trigger, notification channels and their delivery times.
 
-Before you start: check the tile is not `OUT OF SVC`. Ten of the forty shipped
+Before you start: check the tile is not `OUT OF SVC`. Ten of the forty-one shipped
 definitions cannot fire at all —
 [The annunciator panel § Out of service](./annunciator.md#6-out-of-service--the-honest-dark-tile).
 

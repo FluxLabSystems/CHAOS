@@ -188,4 +188,47 @@ public sealed class InstalledConfigurationTests
             Environment.SetEnvironmentVariable(logLevelVariable, null);
         }
     }
+
+    [Fact]
+    public async Task The_backend_is_told_the_scheduled_backup_folder_unless_homestead_env_names_one()
+    {
+        using var temp = TempInstalledLayout.Create()
+            .WithBackendEnvironment("""
+                CHAOS_MQTT_ENABLED=false
+                """);
+
+        var backend = new FakeSupervisedBackend();
+        using var factory = ChaosHostFactory.For()
+            .WithSupervisedBackend(backend)
+            .With("ConfigDirectory", temp.ConfigDirectory)
+            .Build();
+
+        var gateway = factory.Services.GetRequiredService<IOptions<ChaosHostOptions>>().Value;
+        Assert.Equal(Path.Combine(temp.Root, "backups"), gateway.Backup.Directory);
+
+        // The folder the nightly backup writes to is the folder the backend's
+        // backup-age monitor is told to watch.
+        var supervisor = factory.Services.GetRequiredService<IOptions<BackendSupervisorOptions>>().Value;
+        Assert.Equal(gateway.Backup.Directory, supervisor.Environment[ChaosHostExtensions.BackendBackupDirectoryVariable]);
+
+        await TestExtensions.WaitUntilAsync(() => Task.FromResult(backend.Processes.Count > 0), "the backend to be launched");
+        Assert.Equal(gateway.Backup.Directory, backend.Processes[0].Spec.Environment[ChaosHostExtensions.BackendBackupDirectoryVariable]);
+    }
+
+    [Fact]
+    public void A_backup_directory_in_homestead_env_wins_over_the_gateway_s()
+    {
+        using var temp = TempInstalledLayout.Create()
+            .WithBackendEnvironment("""
+                CHAOS_BACKUP_DIRECTORY=D:/archives/chaos
+                """);
+
+        using var factory = ChaosHostFactory.For()
+            .WithSupervisedBackend(new FakeSupervisedBackend())
+            .With("ConfigDirectory", temp.ConfigDirectory)
+            .Build();
+
+        var supervisor = factory.Services.GetRequiredService<IOptions<BackendSupervisorOptions>>().Value;
+        Assert.Equal("D:/archives/chaos", supervisor.Environment[ChaosHostExtensions.BackendBackupDirectoryVariable]);
+    }
 }

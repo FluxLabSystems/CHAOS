@@ -1,7 +1,7 @@
 """Background-service lifecycle.
 
 Every long-running subsystem (MQTT ingest, EMS, alarm engine, maintenance
-scheduler) implements :class:`BackgroundService`. The API lifespan starts them
+scheduler, backup-age monitor) implements :class:`BackgroundService`. The API lifespan starts them
 on the primary node; the secondary control node starts a reduced set so it can
 keep alerting and bridging when the power container is lost (SDD section 16.1).
 
@@ -137,6 +137,17 @@ def build_services(
             manager.register(MaintenanceSchedulerService(session_factory, bus, settings))
         except Exception:
             logger.exception("Maintenance scheduler unavailable")
+
+    # The backup-age monitor publishes backup_age_h for the primary's own
+    # backup directory. It is a bus producer, so it needs the bus; and it
+    # describes the primary's backups, so the secondary does not run it.
+    if settings.mqtt_enabled and not settings.is_secondary:
+        try:
+            from chaos.ingest.backup_age import BackupAgeService
+
+            manager.register(BackupAgeService(session_factory, bus, settings))
+        except Exception:
+            logger.exception("Backup-age monitor unavailable")
 
     if plugins is not None:
         _register_plugin_services(manager, settings, session_factory, bus, plugins)

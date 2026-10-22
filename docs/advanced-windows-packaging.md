@@ -107,6 +107,19 @@ manual on 8090, both private-profile only.
 Order matters in one place only: `stage` lays down `app\` before the runtime is
 copied in, and `smoke` needs a staged tree to run against.
 
+`stage` copies the two published applications **flat into one root** (the
+supervisor finds `python\python.exe` relative to `AppContext.BaseDirectory`), and
+refuses any file the host and the shell both ship with different content, so a
+dependency the two resolve at different versions stops the build instead of one
+copy silently overwriting the other. That is why `Chaos.Host.csproj` pins
+`System.ServiceProcess.ServiceController` to the same 10.0.x servicing version the
+shell references. One pair of files is excepted by name: the host, an ASP.NET
+Core application, ships the shared framework's ReadyToRun build of
+`System.Diagnostics.EventLog.dll` (and its `.Messages.dll`), while the shell gets
+the NuGet package's IL build through `ServiceController`. Same assembly identity,
+different bytes, never alignable — so the host's copies stay and the shell's are
+skipped; the shell binds by assembly identity through its own `.deps.json`.
+
 **`restore`, `build` and `test` duplicate what Visual Studio already does.**
 They exist for CI and for a release machine with no IDE. If you are at a
 keyboard with Visual Studio open, use Solution Explorer and Test Explorer
@@ -200,7 +213,7 @@ rights are not needed for either command.
           web\                       the operator UI, copied in explicitly
         simulator\
         fastapi\ starlette\ uvicorn\ sqlalchemy\ pydantic\ pydantic_core\
-        paho\ yaml\ jsonschema\ httpx\ httpcore\ anyio\ greenlet\ ...
+        paho\ yaml\ jsonschema\ rpds\ httpx\ httpcore\ anyio\ alembic\ ...
         __pycache__\ everywhere      precompiled, unchecked-hash
     Scripts\
       chaos.exe                      the operator CLI entry point
@@ -335,16 +348,24 @@ Windows:
 
 | Compiled (`cp311-cp311-win_amd64`) | Pure Python (`py3-none-any`) |
 | --- | --- |
-| `greenlet` (via SQLAlchemy) | `annotated-doc`, `annotated-types`, `anyio`, `attrs` |
+| `MarkupSafe` (via `alembic`) | `annotated-doc`, `annotated-types`, `anyio`, `attrs` |
 | `httptools` (via `uvicorn[standard]`) | `certifi`, `click`, `colorama`, `fastapi`, `h11` |
 | `pydantic-core` | `httpcore`, `httpx`, `idna`, `jsonschema` |
 | `PyYAML` | `jsonschema-specifications`, `paho-mqtt`, `pydantic` |
 | `rpds-py` (via `jsonschema`) | `pydantic-settings`, `python-dotenv`, `referencing` |
 | `SQLAlchemy` | `starlette`, `typing-extensions`, `typing-inspection` |
-| `watchfiles`, `websockets` | `uvicorn`, and the `chaos` wheel itself |
+| `watchfiles`, `websockets` | `uvicorn`, `alembic`, `Mako`, and the `chaos` wheel itself |
+
+SQLAlchemy 2.1 pulls no `greenlet`: that dependency moved to its `asyncio`
+extra, and the platform drives the engine synchronously, so the runtime
+neither needs nor ships it. `verify-runtime.py` checks `rpds-py` (the compiled
+dependency `jsonschema` cannot import without) in its place; the first run of
+the packaging job on GitHub is what surfaced the stale expectation.
 
 The `postgres` extra (`-IncludePostgres`) is clean too: `psycopg`,
-`psycopg-binary`, `alembic`, `Mako`, `MarkupSafe`, `tzdata`.
+`psycopg-binary`, `tzdata`. (`alembic` and its `Mako`/`MarkupSafe` templating
+moved into the base dependencies when `chaos migrate` arrived, so every runtime
+ships them.)
 
 One dependency deserves a note. `uvicorn[standard]` pulls `uvloop`, which has
 **no Windows wheel and never will** — it is a libuv binding for POSIX. That is
@@ -527,14 +548,16 @@ Verified by execution, on Linux, against the real artefacts:
 * All four PowerShell files parse cleanly; the prune wildcard-escaping fix
   demonstrably matches where the old form matched nothing.
 
-**Not proven, and only Windows can prove it:** that `python.exe` from the
-embeddable distribution runs the sequence above (it was run with a real CPython
-3.11 on Linux under an equivalent `._pth`, not with the shipped `python.exe`);
-that the relocated launchers execute — the byte layout is right and the stub's C
-source has the code path, but no `.exe` has actually been launched; and the wall
-clock and on-disk figures above, which are derived rather than measured on
-Windows. Run the two commands at the top of this section and the answer is
-immediate.
+**Proven on Windows since 2026-10-22,** by the `windows-latest` job in
+`.github/workflows/ci.yml`, which runs `build.ps1 -Task all` on every pull
+request: the shipped `python.exe` runs the whole sequence (all ten
+`verify-runtime.py` checks pass, including `chaos.exe --version` through a
+relocated launcher), and the staged runtime measured 77 MB in 2,673 files. The
+first run also caught a stale expectation — `greenlet`, which SQLAlchemy 2.1 no
+longer pulls in — and the host/shell collision described under *The build
+tasks*; both are fixed. What the job does not do is install the MSI it uploads
+or start the service from it: the restore drill and the service's first start on
+a real machine remain operator work, as the open items say.
 
 ---
 

@@ -194,7 +194,7 @@ screen should agree on these counts:
 | Points | 702 |
 | Point bindings | 245 |
 | Load-schedule records | 12 |
-| Alarm definitions | 40 |
+| Alarm definitions | 41 |
 
 Most point bindings will read `tbd`. That is correct and it is the honest
 measure of how much of the property is actually wired up rather than merely
@@ -236,7 +236,7 @@ of the console. See
 | Screen | What to check |
 |---|---|
 | **Home** | The state chip at the top, the freshness indicator, and any active alarms |
-| **Annunciator** | Press the Annunciator button. Five of the forty tiles per bay should be dark, and ten should read `OUT OF SVC` — see below |
+| **Annunciator** | Press the Annunciator button. Thirty-one of the forty-one tiles should be dark, and ten should read `OUT OF SVC` — see below |
 | **Assets** | 90 assets, most with lifecycle status `planned`. That is the truth: nothing is installed |
 | **Topology** | 137 nodes. The register holds 90; the water extension adds 47 more at render time |
 | **Rack** | A 42U elevation marked *not ratified*, with its own list of findings |

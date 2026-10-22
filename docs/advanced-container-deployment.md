@@ -61,18 +61,35 @@ make simulate ARGS="--scenario <name> --offline"
 
 ### Settings
 
-Every setting in `src/chaos/config.py` is overridable as `CHAOS_<FIELD>`, and a
-`.env` in the working directory is read automatically.
+Every setting in `src/chaos/config.py` is overridable as `CHAOS_<FIELD>`. In a
+checkout the platform also reads a `.env` file **in the directory you start it
+from** — a convenience for `make serve`, nothing more. The container does not
+use it: the image's working directory holds no `.env`, and `deploy/.env` is
+read by Compose on the host, which turns it into the twin service's
+environment. Every `CHAOS_*` setting is passed through that way (the compose
+files list them all, and `tests/test_deploy_compose.py` fails when one is
+missing), so `deploy/.env` is the one place to configure a container node.
+
+The ones you are most likely to touch:
 
 | Variable | Default | Notes |
 |---|---|---|
 | `CHAOS_NODE_ROLE` | `primary` | `primary` or `secondary` |
 | `CHAOS_DATABASE_URL` | `sqlite:///var/homestead.db` | PostgreSQL needs the `postgres` extra |
 | `CHAOS_MQTT_ENABLED` | `true` | `false` runs the API with no bus and no background services |
+| `CHAOS_MQTT_PORT` | `1883` | The port the twin dials; `8883` once the broker's TLS listener is on |
+| `CHAOS_MQTT_TLS_CA` / `_CERT` / `_KEY` | unset | Paths inside the container; see **Certificates** below |
 | `CHAOS_ALLOW_PHYSICAL_CONTROL` | `false` | The safety gate. See section 6 |
 | `CHAOS_EMS_ENABLED` | `true` | Ignored on a secondary node |
+| `CHAOS_EMS_CONFIG_FILE` | unset | Optional path, inside the container, to the EMS override file (YAML or JSON). Read by the EMS from the process environment rather than through the settings model, which is why it must reach the container as an environment variable; see [EMS configuration](./ems-configuration.md). The compose file carries a commented mount for it |
+| `CHAOS_HISTORIAN_BACKEND` | `sql` | `sql` or `none`; nothing else exists and anything else is refused |
 | `CHAOS_HISTORIAN_RAW_RETENTION_DAYS` | `90` | |
-| `CHAOS_NOTIFICATION_BACKENDS` | `log` | Comma separated: `log,email,push,voice` — only `log` is implemented |
+| `CHAOS_NOTIFICATION_BACKENDS` | `log` | Comma separated: `log,email,push,voice`. `email` and `push` need their `CHAOS_NOTIFY_*` settings; `voice` records `not_configured` |
+| `CHAOS_BACKUP_DIRECTORY` | `/app/var/backups` | Where `chaos backup` writes and the backup-age monitor reads |
+| `CHAOS_PLATFORM_ASSET_ID` | the primary's API asset | The register asset whose availability the platform announces on the bus |
+
+An optional setting left empty in `deploy/.env` (or absent, which the compose
+files turn into empty) is read as unset, never as an empty credential.
 
 **The API port here is 8000**, because this is the platform backend running on
 its own. In the packaged Windows product the backend is on 8081 behind the
@@ -150,6 +167,18 @@ telemetry.
 
 Sanity check: look for denials in the broker log, and confirm `chaos status`
 reports broker authentication as configured.
+
+### Certificates
+
+The platform reads certificate material by path: the private CA bundle that
+makes the broker verifiable, the twin's own client certificate and key once the
+broker requires one, and the NetBotz appliance's CA. The host directory named
+by `SECRETS_DIR` in `deploy/.env` (default `deploy/secrets/`, which exists in
+the repository as an empty, gitignored placeholder) is mounted **read-only** at
+`/run/secrets` in the twin container, so the paths in `deploy/.env.example` —
+`/run/secrets/mqtt-ca.crt` and friends — are paths as the container sees them.
+Nothing under it is ever baked into the image or committed. The secondary node
+mounts its own directory the same way, with its own client certificate.
 
 ---
 
@@ -313,12 +342,25 @@ docker compose -f deploy/docker-compose.yml exec twin chaos init-db
 docker compose -f deploy/docker-compose.yml exec twin chaos status
 ```
 
-**There are no schema migrations yet.** Table creation adds new tables but never
-alters existing ones. A change to an existing column is currently a
-dump-and-restore. Alembic is declared in the `postgres` extra for when this
-stops being acceptable — which is the moment real telemetry is in the historian.
+`init-db` adds tables that are new and never alters one that exists. A change
+to an existing table ships as an Alembic revision under `src/chaos/migrations`,
+and `chaos migrate` applies whatever is pending in place — so after the image
+is rebuilt:
 
-**Take a backup before every upgrade.**
+```sh
+docker compose -f deploy/docker-compose.yml exec twin chaos migrate
+```
+
+`init-db` records the revision of the schema it produced, so `init-db` then
+`migrate` is a no-op on a fresh database, and `migrate` on a database that
+`init-db` built before migrations existed is refused with the two ways
+forward: `chaos migrate --stamp` if the schema is known to be current, or
+`init-db` (which stamps the baseline) and then `migrate`. Alembic is a base
+dependency of the package, so the image always has it.
+
+**Take a backup before every upgrade.** A migration leaves the database at the
+last completed revision if it fails, but a backup is what lets you choose not
+to retry.
 
 ---
 
@@ -333,6 +375,7 @@ stops being acceptable — which is the moment real telemetry is in the historia
 | Grafana panels empty | Correct — the platform writes nothing until ingest runs. Check the datasource first: Connections → Data sources → homestead-pg → Save & test |
 | Prometheus shows one target | Correct. Every other job is commented out because its exporter is not deployed |
 | `psycopg` import error | Install the `postgres` extra, or use the image, which includes it |
+| `chaos migrate` refuses: "records no schema revision" | The database predates migrations. Run `chaos init-db` (it stamps the baseline), then `chaos migrate`; or `chaos migrate --stamp` if you know the schema is current |
 | Compose refuses to start | `docker compose -f deploy/docker-compose.yml config -q` names the missing variable |
 
 For symptoms on a Windows node, use [Troubleshooting](./troubleshooting.md)

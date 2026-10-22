@@ -142,7 +142,7 @@ def test_get_one_alarm_returns_its_lifecycle_and_definition(client, raise_alarms
 
 def test_definition_list_reports_commissioning_defaults(client, seeded):
     payload = client.get("/api/v1/alarms/definitions").json()
-    assert payload["count"] == 40
+    assert payload["count"] == 41
     assert payload["commissioning_default_count"] > 0
     assert "battery_soc_low" in payload["commissioning_default_keys"]
 
@@ -432,10 +432,10 @@ def test_definitions_reload_requires_maintainer_and_is_idempotent(
     assert response.status_code == 200
     payload = response.json()
     assert payload["reloaded_by"] == "test.admin"
-    assert payload["total"] == 40
+    assert payload["total"] == 41
     assert payload["created"] == []
     assert payload["updated"] == []
-    assert payload["unchanged"] == 40
+    assert payload["unchanged"] == 41
 
 
 def test_reload_of_an_uncrossreferenced_registry_is_rejected(client, db_session, operator_headers):

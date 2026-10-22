@@ -246,7 +246,7 @@ The check is deliberately conservative: **when scope cannot be resolved the tile
 is reported out of service**, because an unlit tile claiming "normal" is the
 exact failure this exists to prevent.
 
-### On the shipped definition set, ten of forty are out of service
+### On the shipped definition set, ten of forty-one are out of service
 
 | Alarm | Severity | Missing trigger point |
 |---|---|---|
@@ -268,7 +268,7 @@ common-mode failure domain the design is explicitly written about. The beacon
 alarm that would report the local siren dead is inoperable too, so the
 independent alerting path has no health check either.
 
-An alarm list showing "40 defined, 0 active" reads as full coverage. A quarter
+An alarm list showing "41 defined, 0 active" reads as full coverage. A quarter
 of it is incapable of firing. The panel is the thing that makes that visible.
 
 Full write-up and the fix:

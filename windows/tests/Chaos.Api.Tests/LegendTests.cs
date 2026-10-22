@@ -28,8 +28,8 @@ public sealed class LegendTests
     }
 
     [Fact]
-    public void AllFortyShippedAlarmsHaveAHandCutLegend() =>
-        Assert.Equal(40, Legends.HandCut.Count);
+    public void AllFortyOneShippedAlarmsHaveAHandCutLegend() =>
+        Assert.Equal(41, Legends.HandCut.Count);
 
     [Theory]
     [InlineData("Source transfer did not complete", "COMPLETE")]

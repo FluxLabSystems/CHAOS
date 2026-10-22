@@ -155,7 +155,14 @@ function Invoke-ChaosNative {
     $pushed = $false
     if ($WorkingDirectory) { Push-Location $WorkingDirectory; $pushed = $true }
     try {
-        & $FilePath @Arguments
+        # The native command's output goes to the host, never into this
+        # function's return stream: a caller that captures a function which
+        # happens to run a tool - Get-WixCommand returning wix.exe's path
+        # after `dotnet tool install` - would otherwise get the tool's chatter
+        # as extra return values (the first MSI build on GitHub died on
+        # exactly that, with "Cannot convert value to type System.String" for
+        # -FilePath). The lines still reach the console and the CI log.
+        & $FilePath @Arguments | Out-Host
         $code = $LASTEXITCODE
     }
     finally {

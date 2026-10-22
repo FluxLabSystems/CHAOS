@@ -258,6 +258,7 @@ Operating modes are `off`, `manual`, `automatic`, `scheduled`, `maintenance`,
 | `GET` | `/api/v1/energy/loads` | Load schedule with current shed state | viewer |
 | `GET` | `/api/v1/energy/shed-actions` | Shed and restore history | viewer |
 | `GET` | `/api/v1/energy/dashboard` | Aggregate for the energy screen | viewer |
+| `GET` | `/api/v1/energy/config` | Effective EMS configuration, provenance and revision (read-only) | viewer |
 
 States: `COMMISSIONING`, `MAINTENANCE`, `SURPLUS`, `NORMAL`, `CONSERVE`,
 `CRITICAL_RESERVE`, `GENERATOR_SUPPORT`, `EMERGENCY`, `BLACK_START`,
@@ -421,6 +422,15 @@ and never credentials; see
 Everything
 the design document named exists, and the implementation goes further.
 
+**`/metrics` on the Windows product is loopback-only.** The backend serves it
+on `127.0.0.1:8081`, and the gateway's route-ownership manifest leaves
+`/metrics` unclaimed, so the gateway never proxies it: a Prometheus on another
+machine cannot scrape a Windows node today. In the container stack the
+platform listens on `:8000` directly and Prometheus scrapes `twin:8000/metrics`
+on the compose network. Exposing it through the gateway is a one-row change to
+the manifest, and whether to make it is the gateway owner's decision, not the
+platform's.
+
 Write endpoints carry authorization, an audit reason, an idempotency key and an
 expiry where applicable. **Authentication is not implemented here** — it
 terminates upstream at the proxy or VPN, and that architecture is still an open
@@ -428,10 +438,35 @@ decision.
 
 ---
 
-## 13. Not in the API
+## 13. Unlisted operational routes
 
-Nothing here polls SNMP or Modbus, renders a map over a basemap, integrates a
-home-automation platform, or forecasts anything. See
+One route exists that is deliberately absent from `/openapi.json`, because it
+is for the process that runs the platform rather than for anyone using it:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/_supervisor/stop` | Graceful stop, called by the gateway's process supervisor on the backend's loopback listener |
+
+It answers **404 until `CHAOS_SUPERVISOR_STOP_SECRET` is set** — a container or
+a checkout has no supervisor, so the route does not exist there — then **403**
+for any non-loopback peer or a wrong `X-Chaos-Supervisor-Secret` header, and
+**`202 {"stopping": true}`** on success, after which the backend shuts down the
+way Ctrl-C would. A request relayed through the gateway presents the LAN
+client's address (the gateway sets `X-Forwarded-For`, which uvicorn trusts from
+loopback) and is refused: the gateway never proxies `/_supervisor` anyway,
+since it is outside every prefix the route-ownership manifest claims. Details
+in [Command line § How the supervisor stops it](./advanced-command-line.md#how-the-supervisor-stops-it).
+
+---
+
+## 14. Not in the API
+
+Nothing here polls SNMP or Modbus, renders a map over a basemap, or integrates
+a home-automation platform. Forecasting is limited to the EMS's own derived
+values on `/api/v1/energy/dashboard` — a `forecast` block of persistence or
+clear-sky PV estimates, projected load and the resulting energy margin, each
+carrying its basis and assumptions. That is not a weather forecast and the
+response says so. See
 [Architecture § Status summary](./architecture.md#8-status-summary).
 
 The [plugin system](./plugins.md) is where a vendor poller lives, and the
@@ -444,7 +479,7 @@ through the control plane buys nothing.
 
 ---
 
-## 14. Related reading
+## 15. Related reading
 
 | Document | Why |
 |---|---|

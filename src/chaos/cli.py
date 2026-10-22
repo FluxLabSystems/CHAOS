@@ -248,27 +248,10 @@ def _create_all(db_module: Any, engine: Any, settings: Any) -> None:
 
 
 def workspace_root(settings: Any = None) -> Path:
-    """Best-effort location of the deployment working tree.
+    """Best-effort location of the deployment working tree (see chaos.config)."""
+    from chaos.config import workspace_root as _workspace_root
 
-    In a source checkout this is the repository root. In the container the
-    package is installed into a virtualenv, so ``ROOT_DIR`` points inside
-    ``site-packages``; the data directory's parent is the reliable anchor
-    because the image copies ``data/``, ``schemas/``, ``tools/`` and ``var/``
-    side by side under ``/app``.
-    """
-    candidates: list[Path] = []
-    data_dir = getattr(settings, "data_dir", None)
-    if data_dir:
-        parent = Path(data_dir).resolve().parent
-        if parent.is_dir():
-            candidates.append(parent)
-    candidates.append(ROOT_DIR)
-    candidates.append(Path.cwd())
-
-    for candidate in candidates:
-        if (candidate / "tools").is_dir() or (candidate / "var").is_dir():
-            return candidate
-    return candidates[0]
+    return _workspace_root(settings)
 
 
 def _database_hint(url: str) -> str:
@@ -697,6 +680,7 @@ def cmd_init_db(args: argparse.Namespace) -> int:
 
     settings = build_settings(args)
     metadata = _metadata()
+    _quiet_alembic(args)
 
     try:
         engine = db_module.build_engine(settings)
@@ -707,15 +691,17 @@ def cmd_init_db(args: argparse.Namespace) -> int:
         ) from exc
 
     db_module.configure(engine)
-    before = _table_names(engine)
+    before = _table_names(engine) - {MIGRATION_VERSION_TABLE}
     _create_all(db_module, engine, settings)
-    after = _table_names(engine)
+    after = _table_names(engine) - {MIGRATION_VERSION_TABLE}
+    stamp_note = _stamp_after_init(engine, had_tables=bool(before))
     engine.dispose()
 
     created = sorted(after - before)
     print(f"Database : {redact_url(settings.database_url)}")
     print(f"Node role: {settings.node_role}")
     print(f"Tables   : {len(after)} present, {len(created)} created, {len(metadata.tables)} declared")
+    print(f"Schema   : {stamp_note}")
     if created and args.verbose:
         for name in created:
             print(f"  + {name}")
@@ -725,6 +711,134 @@ def cmd_init_db(args: argparse.Namespace) -> int:
             f"{len(missing)} declared table(s) were not created: {', '.join(missing[:10])}",
             hint="Check the database user's CREATE privileges.",
         )
+    return EXIT_OK
+
+
+#: Alembic's bookmark table. Named here so ``init-db`` can tell "a database
+#: with platform tables" from "a database that only ever held the bookmark".
+MIGRATION_VERSION_TABLE = "alembic_version"
+
+
+def _quiet_alembic(args: argparse.Namespace) -> None:
+    """Alembic narrates every context it opens at INFO; the CLI prints its own lines."""
+    if getattr(args, "log_level", "INFO") != "DEBUG":
+        logging.getLogger("alembic").setLevel(logging.WARNING)
+
+
+def _stamp_after_init(engine: Any, *, had_tables: bool) -> str:
+    """Record which revision the schema ``create_all`` just produced corresponds to.
+
+    A fresh database now holds the *current* schema, so it is stamped at head.
+    A database that already had platform tables before this run is of unknown
+    vintage: ``create_all`` added whatever tables were missing but altered
+    nothing, so it is stamped at the baseline and ``chaos migrate`` carries it
+    the rest of the way. A database that already carries a revision is left
+    exactly as it is. Alembic is a declared dependency, but a node without it
+    must still get its tables, so its absence is reported rather than fatal.
+    """
+    try:
+        from chaos import migrations
+    except Exception as exc:  # ImportError, or an alembic that fails to import
+        return (
+            f"not stamped -- alembic is not importable ({type(exc).__name__}: {exc}); "
+            "run 'chaos migrate --stamp' once it is"
+        )
+
+    try:
+        current = migrations.current_revision(engine)
+        if current is not None:
+            pending = migrations.pending_revisions(engine)
+            if pending:
+                return f"at revision {current}; {len(pending)} migration(s) pending -- run 'chaos migrate'"
+            return f"at revision {current} (head)"
+        revision = migrations.BASELINE_REVISION if had_tables else "head"
+        migrations.stamp(engine, revision)
+        stamped = migrations.current_revision(engine)
+        if had_tables:
+            return (
+                f"existing tables stamped at baseline {stamped}; run 'chaos migrate' to apply later revisions"
+            )
+        return f"stamped at revision {stamped} (head)"
+    except Exception as exc:  # pragma: no cover - a stamping failure must not hide the tables
+        return f"not stamped ({type(exc).__name__}: {exc})"
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    """Bring the schema to the current revision with Alembic (``chaos.migrations``).
+
+    ``init-db`` adds tables and never alters them; this is the path that does.
+    ``--stamp`` records the head revision without running anything, for a
+    database whose schema is known to be current already -- one that
+    ``init-db`` built before migrations existed, say.
+    """
+    from chaos import db as db_module
+
+    # Before the import: alembic narrates its plugin setup at INFO on import.
+    _quiet_alembic(args)
+    migrations = resolve_subsystem(
+        "chaos.migrations",
+        subsystem="Schema migrations",
+        hint="pip install 'alembic>=1.13' (declared in pyproject dependencies).",
+    )
+    settings = build_settings(args)
+    metadata = _metadata()
+
+    try:
+        engine = db_module.build_engine(settings)
+    except Exception as exc:
+        raise CommandError(
+            f"Could not build a database engine for {redact_url(settings.database_url)}: {exc}",
+            hint=_database_hint(settings.database_url),
+        ) from exc
+
+    try:
+        head = migrations.head_revision()
+        current = migrations.current_revision(engine)
+        print(f"Database : {redact_url(settings.database_url)}")
+        print(f"Revision : {current or 'none recorded'} -> head {head}")
+
+        if args.stamp:
+            migrations.stamp(engine, "head")
+            print(f"Stamped  : {migrations.current_revision(engine)} (nothing was run)")
+            return EXIT_OK
+
+        if current is None and migrations.has_platform_tables(engine):
+            raise CommandError(
+                "This database holds platform tables but records no schema revision, so the "
+                "baseline migration would try to create tables that already exist.",
+                hint=(
+                    "If the schema is current, run 'chaos migrate --stamp'. If it predates migrations, "
+                    "run 'chaos init-db' (it stamps the baseline) and then 'chaos migrate'."
+                ),
+            )
+
+        pending = migrations.pending_revisions(engine)
+        if not pending:
+            print("Pending  : none -- already at head")
+        else:
+            print(f"Pending  : {', '.join(pending)}")
+            migrations.upgrade(engine, "head")
+            print(f"Applied  : {len(pending)} revision(s); now at {migrations.current_revision(engine)}")
+
+        present = _table_names(engine)
+        missing = sorted(set(metadata.tables) - present)
+        print(
+            f"Tables   : {len(present - {MIGRATION_VERSION_TABLE})} present, {len(metadata.tables)} declared"
+        )
+        if missing:
+            raise CommandError(
+                f"{len(missing)} declared table(s) are absent after migrating: {', '.join(missing[:10])}",
+                hint="The models and the migrations have drifted apart; a new revision is needed.",
+            )
+    except CommandError:
+        raise
+    except Exception as exc:
+        raise CommandError(
+            f"Migration failed on {redact_url(settings.database_url)}: {type(exc).__name__}: {exc}",
+            hint="The database is left as the last completed revision; nothing is half-applied.",
+        ) from exc
+    finally:
+        engine.dispose()
     return EXIT_OK
 
 
@@ -881,7 +995,21 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    """Run the API (and, on the primary node, the background services)."""
+    """Run the API (and, on the primary node, the background services).
+
+    The server is driven through ``uvicorn.Server`` rather than ``uvicorn.run``
+    so that the process can be asked to stop from inside: the app's
+    ``POST /_supervisor/stop`` route (chaos.api.app) calls the hook registered
+    here as ``app.state.request_shutdown``, which flips the server's
+    ``should_exit`` flag. uvicorn then shuts down exactly as it would on
+    Ctrl-C -- the lifespan's ``finally`` stops the background services and the
+    bus -- and this command returns 0. That is what lets the Windows process
+    supervisor stop the backend without killing it.
+
+    ``--reload`` is development only. uvicorn's reloader runs the application
+    in a child process it restarts on source change, so no hook can be handed
+    to it; the stop route there falls back to interrupting the worker.
+    """
     export_setting_overrides(args)
     settings = build_settings(args)
 
@@ -892,21 +1020,47 @@ def cmd_serve(args: argparse.Namespace) -> int:
     )
 
     host = args.host or settings.api_host
-    port = args.port or settings.api_port
+    # `--port 0` is a real request (bind any free port), not an absent one.
+    port = settings.api_port if args.port is None else args.port
     print(
         f"Serving {settings.api_title} v{__version__} as '{settings.node_role}' "
         f"on http://{host}:{port} (physical control "
         f"{'ENABLED' if settings.allow_physical_control else 'disabled'})"
     )
-    uvicorn.run(
-        "chaos.api.app:create_app",
-        factory=True,
-        host=host,
-        port=port,
-        reload=args.reload,
-        reload_dirs=[str(ROOT_DIR / "src")] if args.reload else None,
-        log_level=args.log_level.lower(),
+    log_level = args.log_level.lower()
+
+    if args.reload:
+        uvicorn.run(
+            "chaos.api.app:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            reload=True,
+            reload_dirs=[str(ROOT_DIR / "src")],
+            log_level=log_level,
+        )
+        return EXIT_OK
+
+    create_app = resolve_subsystem(
+        "chaos.api.app",
+        ("create_app",),
+        subsystem="API application",
+        hint="The FastAPI application lives in chaos.api; check the installation.",
     )
+    app = create_app(settings)
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level=log_level))
+
+    def request_shutdown() -> None:
+        LOG.info("Shutdown requested through the supervisor stop route")
+        server.should_exit = True
+
+    app.state.request_shutdown = request_shutdown
+    server.run()
+    if not server.started:
+        raise CommandError(
+            f"The API server did not start on http://{host}:{port}",
+            hint="Another process may hold the port, or the bind address is not local. See the log above.",
+        )
     return EXIT_OK
 
 
@@ -1120,6 +1274,7 @@ def _status_payload(settings: Any) -> dict[str, Any]:
             "backend": settings.historian_backend,
             "raw_retention_days": settings.historian_raw_retention_days,
         },
+        "backup_directory": str(settings.resolved_backup_directory),
         "ems_enabled": bool(settings.ems_enabled and not settings.is_secondary),
         "alarm_engine_enabled": bool(settings.alarm_engine_enabled),
         "notification_backends": settings.notification_backend_list,
@@ -1220,6 +1375,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         f"  historian        : {payload['historian']['backend']}, raw retention "
         f"{payload['historian']['raw_retention_days']} d"
     )
+    print(f"  backups          : {payload['backup_directory']}")
     print(
         f"  ems              : {'enabled' if payload['ems_enabled'] else 'disabled'}"
         f"   alarms: {'enabled' if payload['alarm_engine_enabled'] else 'disabled'}"
@@ -1440,6 +1596,25 @@ def build_parser() -> argparse.ArgumentParser:
     init_db.add_argument("-v", "--verbose", action="store_true", help="List the tables created.")
     init_db.set_defaults(func=cmd_init_db)
 
+    # --- migrate --------------------------------------------------------
+    migrate = subparsers.add_parser(
+        "migrate",
+        help="Bring the database schema to the current revision (Alembic).",
+        description=(
+            "Apply every pending schema revision from chaos.migrations. init-db creates tables and "
+            "never alters them; migrate is the path that alters them in place. Take a backup first."
+        ),
+    )
+    migrate.add_argument(
+        "--stamp",
+        action="store_true",
+        help=(
+            "Record the head revision without running anything, for a database whose schema is "
+            "already current (one init-db built before migrations existed)."
+        ),
+    )
+    migrate.set_defaults(func=cmd_migrate)
+
     # --- load-registry --------------------------------------------------
     load_registry = subparsers.add_parser(
         "load-registry",
@@ -1510,7 +1685,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Delegate to the simulator CLI.",
         description=(
             "Forward all remaining arguments to the simulator "
-            "(equivalent to 'homestead-simulator ...'). Use -- to separate flags."
+            "(equivalent to 'chaos-simulator ...'). Use -- to separate flags."
         ),
     )
     simulate.add_argument(
@@ -1556,7 +1731,10 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument(
         "-o",
         "--output",
-        help="Archive path or directory (default: var/backups/homestead-<role>-<UTC>.tar.gz).",
+        help=(
+            "Archive path or directory (default: CHAOS_BACKUP_DIRECTORY, else var/backups, "
+            "with the name homestead-<role>-<UTC>.tar.gz)."
+        ),
     )
     backup.add_argument(
         "--include-history",

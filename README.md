@@ -175,7 +175,7 @@ windows/
 
 deploy/          Docker Compose stacks for headless nodes (advanced)
 docs/            this documentation set — start at docs/index.md
-tests/           2418 pytest tests, all against SQLite and the in-memory bus
+tests/           2622 pytest tests, all against SQLite and the in-memory bus
 ```
 
 ---
@@ -192,7 +192,7 @@ eight interlocks, operating modes and audit · maintenance and commissioning
 records · annunciator panel · topology and blast-radius analysis · rack
 elevation · 87 REST endpoints · a plugin system for third-party integrations ·
 the .NET gateway with first-run setup · the WinUI 3 desktop shell ·
-2418 passing Python tests.
+2622 passing Python tests.
 
 ### Partial or stubbed
 
@@ -214,19 +214,23 @@ the .NET gateway with first-run setup · the WinUI 3 desktop shell ·
 - **MQTT TLS** — the client side is complete (`CHAOS_MQTT_TLS_CA`, `_CERT`,
   `_KEY`); the broker's TLS listener stays disabled until certificates are
   issued.
-- **No schema migrations.** `init-db` adds tables; it never alters them.
+- **Schema migrations** exist (Alembic under `src/chaos/migrations`, applied
+  by `chaos migrate`) but only the baseline revision does, so a migration that
+  alters a populated historian has not yet been run anywhere real.
 - **Prometheus** scrapes the API's `/metrics` and itself; no exporters are
   deployed and most target addresses are open items.
 
 ### Not built
 
 Home Assistant integration · Node-RED flows · property-map rendering on a real
-map · Level 4 forecasting and scenario simulation (the EMS carries a clear-sky PV
-estimate from solar geometry — no weather feed, and inactive until the site survey
-supplies coordinates) · subsystem coordinators for
-water, irrigation, greenhouse, compost, nitrogen storage, spa and security ·
-SNMP/Modbus polling of real devices (the plugin system is where it would go) ·
-camera and NVR integration · voice escalation · the document library.
+map · dedicated wall-display views beyond the console's wall mode · Level 4
+forecasting and scenario simulation (the EMS carries a clear-sky PV estimate
+from solar geometry — no weather feed, and inactive until the site survey
+supplies coordinates) · subsystem coordinators for water, irrigation,
+greenhouse, compost, nitrogen storage, spa and security · SNMP/Modbus polling
+of real devices (the plugin system is where it would go) · camera and NVR
+integration · voice escalation · automated network-device configuration backup
+· a time service with holdover · the document library.
 
 ### The headline
 

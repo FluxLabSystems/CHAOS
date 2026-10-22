@@ -70,6 +70,7 @@ public static partial class Legends
             ["inverter_overload_risk"] = ["INVERTER", "OVERLOAD", "RISK"],
             ["pv_generation_underperformance"] = ["PV OUTPUT", "BELOW", "EXPECTED"],
             ["generator_start_failed"] = ["GEN START", "FAILED"],
+            ["generator_start_blocked"] = ["GEN START", "BLOCKED"],
             ["generator_fuel_low"] = ["GEN FUEL", "LOW"],
             ["transfer_failed"] = ["SOURCE XFER", "FAILED"],
             ["load_shed_failed"] = ["LOAD SHED", "NO EFFECT"],
