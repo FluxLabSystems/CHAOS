@@ -16,6 +16,7 @@ revision (SDD 39 test ``EMS-T015``).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field, fields
 from typing import Any
 
@@ -58,6 +59,31 @@ def energy_state_topic(settings: Settings) -> str:
 def load_budget_topic(settings: Settings, asset_id: str) -> str:
     """``chaos/energy/site/load_spa_01/power_budget_kw`` for one load."""
     return telemetry_topic(asset_id, POWER_BUDGET_POINT, base=settings.mqtt_base_topic or DEFAULT_BASE)
+
+
+#: The two temperature inputs a thermal derate curve exists for.
+THERMAL_DERATE_KINDS = ("battery", "container")
+
+
+def derate_curve_between(warning_c: float, emergency_c: float) -> tuple[tuple[float, float], ...]:
+    """The default thermal derate curve: 0% at ``warning_c``, 100% at ``emergency_c``."""
+    return ((float(warning_c), 0.0), (float(emergency_c), 100.0))
+
+
+def normalise_curve(curve: Iterable[Iterable[float]]) -> tuple[tuple[float, float], ...]:
+    """Coerce a configured curve (tuples, or lists from a file) into float pairs."""
+    points: list[tuple[float, float]] = []
+    for point in curve:
+        values = tuple(point)
+        if len(values) != 2:
+            raise ValueError(f"a thermal derate curve point is (temperature_c, derate_pct); got {values!r}")
+        temperature, derate = (float(values[0]), float(values[1]))
+        if not 0.0 <= derate <= 100.0:
+            raise ValueError(f"thermal derate {derate:g}% at {temperature:g} C is outside 0..100%")
+        points.append((temperature, derate))
+    if len(points) < 2:
+        raise ValueError("a thermal derate curve needs at least two (temperature_c, derate_pct) points")
+    return tuple(points)
 
 
 @dataclass(frozen=True)
@@ -110,17 +136,22 @@ class EmsConfig:
     # Emergency entry (SDD 30.8). These are protection-adjacent and have no
     # qualification delay.
     battery_temp_emergency_c: float = 55.0
+    #: Below the warning threshold no thermal derate applies: the default derate
+    #: curve starts here and must stay below the emergency threshold.
     battery_temp_warning_c: float = 45.0
     container_temp_emergency_c: float = 50.0
     container_temp_warning_c: float = 40.0
     #: Thermal derate curves (SDD 30.6 ``thermal_derate_pct``): piecewise-linear
-    #: ``(temperature_c, derate_pct)`` points, flat beyond the end points. The
-    #: defaults are commissioning placeholders running from 0% at the warning
-    #: threshold to 100% at the emergency threshold; replace them with the
-    #: battery manufacturer's curve and the container HVAC capacity at
-    #: commissioning. The derived value names whichever curve is in force.
-    thermal_derate_battery_curve: tuple[tuple[float, float], ...] = ((45.0, 0.0), (55.0, 100.0))
-    thermal_derate_container_curve: tuple[tuple[float, float], ...] = ((40.0, 0.0), (50.0, 100.0))
+    #: ``(temperature_c, derate_pct)`` points, flat beyond the end points.
+    #: ``None`` -- the default -- derives the curve from the two thresholds
+    #: above, 0% at the warning threshold rising to 100% at the emergency
+    #: threshold, so a threshold change moves the curve with it. A curve given
+    #: explicitly (the battery manufacturer's curve, the container HVAC capacity
+    #: at commissioning) wins over the derivation. Either way the attribute
+    #: reads as the curve in force once the config is built, and
+    #: :meth:`thermal_derate_curve_basis` says which of the two it is.
+    thermal_derate_battery_curve: tuple[tuple[float, float], ...] | None = None
+    thermal_derate_container_curve: tuple[tuple[float, float], ...] | None = None
     #: Fault codes that classify as shutdown-class inverter faults.
     inverter_shutdown_fault_codes: tuple[str, ...] = (
         "shutdown",
@@ -302,6 +333,35 @@ class EmsConfig:
     # ------------------------------------------------------------------
     publish_retained: bool = True
     actor: str = "ems"
+
+    def __post_init__(self) -> None:
+        for kind in THERMAL_DERATE_KINDS:
+            warning = getattr(self, f"{kind}_temp_warning_c")
+            emergency = getattr(self, f"{kind}_temp_emergency_c")
+            if not warning < emergency:
+                raise ValueError(
+                    f"{kind}_temp_warning_c ({warning:g} C) must be below "
+                    f"{kind}_temp_emergency_c ({emergency:g} C)"
+                )
+            attribute = f"thermal_derate_{kind}_curve"
+            curve = getattr(self, attribute)
+            resolved = derate_curve_between(warning, emergency) if curve is None else normalise_curve(curve)
+            # The dataclass is frozen; the resolved curve is written exactly once, here.
+            object.__setattr__(self, attribute, resolved)
+
+    def thermal_derate_curve_basis(self, kind: str) -> str:
+        """Where the ``kind`` (``battery`` or ``container``) derate curve in force came from."""
+        if kind not in THERMAL_DERATE_KINDS:
+            raise ValueError(f"unknown thermal derate kind {kind!r}; expected one of {THERMAL_DERATE_KINDS}")
+        derived = derate_curve_between(
+            getattr(self, f"{kind}_temp_warning_c"), getattr(self, f"{kind}_temp_emergency_c")
+        )
+        if getattr(self, f"thermal_derate_{kind}_curve") == derived:
+            return (
+                f"derived from {kind}_temp_warning_c and {kind}_temp_emergency_c "
+                "(commissioning defaults, not a manufacturer curve)"
+            )
+        return "explicitly configured curve (overrides the threshold-derived default)"
 
     def dwell_s(self, state: str) -> int:
         """Qualification delay for adopting ``state`` (SDD 30.9)."""
