@@ -13,12 +13,13 @@ namespace Chaos.Host.Supervisor;
 /// </remarks>
 public sealed record BackendSnapshot
 {
-    public required BackendStatus Status { get; init; }
+    /// <summary>The supervisor's own view of the backend lifecycle.</summary>
+    public required SupervisionState State { get; init; }
 
     /// <summary>Why the status is what it is. Always populated.</summary>
     public required string StatusDetail { get; init; }
 
-    /// <summary>Set only in terminal <see cref="BackendStatus.Failed"/>.</summary>
+    /// <summary>Set only in terminal <see cref="SupervisionState.Failed"/>.</summary>
     public string? FailureReason { get; init; }
 
     /// <summary>Restarts since supervision started.</summary>
@@ -78,7 +79,8 @@ public sealed record BackendSnapshot
 
 /// <summary>
 /// The read side of the supervisor, for anything that wants more than the
-/// five-state <see cref="BackendStatus"/>.
+/// gateway's <see cref="BackendStatus"/> contract: the stderr tail, the
+/// resolved runtime, the breaker counters and the pending restart.
 /// </summary>
 public interface IBackendSupervisorDiagnostics
 {

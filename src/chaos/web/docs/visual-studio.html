@@ -49,6 +49,7 @@ preview.</p>
 ├── src
 │   ├── Chaos.Api                 subsystems ported from Python to .NET
 │   ├── Chaos.Host                the gateway — LAN listener, proxy, first-run setup
+│   ├── Chaos.Host.Abstractions   the supervisor contract both of its neighbours compile against
 │   ├── Chaos.Host.Supervisor     supervises the Python backend as a child process
 │   ├── Chaos.Runtime             builds the things that are not .NET — see section 6
 │   ├── Chaos.Shell               the WinUI 3 desktop shell (Windows only)
@@ -64,7 +65,7 @@ preview.</p>
 <p>The Python platform backend is <strong>not</strong> in this solution. It lives in <code>src/chaos/</code>
 at the repository root and is a separate build. Section 7 covers it.</p>
 <h3 id="which-project-does-what" class="doc-h"><span class="doc-h-text">Which project does what</span><a class="doc-anchor" href="#which-project-does-what" aria-label="Link to this section"></a></h3>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Project</th><th scope="col">Role</th></tr></thead><tbody><tr><td><code>Chaos.Host</code></td><td>The front door. The only LAN listener, a reverse proxy to the Python backend on loopback, the host of the operator console, and where ported subsystems land</td></tr><tr><td><code>Chaos.Host.Supervisor</code></td><td>Resolves which Python runs the platform and supervises it as a child process, with a restart policy</td></tr><tr><td><code>Chaos.Api</code></td><td>Where <code>/api/v1</code> routes ported to .NET live. Built and tested; <strong>nothing in it is live yet</strong> — see section 8</td></tr><tr><td><code>Chaos.Shell</code></td><td>The WinUI 3 windows: launcher, console, settings, annunciator, tray icon</td></tr><tr><td><code>Chaos.Shell.Core</code></td><td>Every decision the shell makes — launcher state machine, settings validation, tray state, diagnostics — with no Windows dependency, so it can be tested anywhere</td></tr><tr><td><code>Chaos.Runtime</code></td><td>Compiles no code. It builds the two parts of the product that are not .NET: the embedded Python interpreter and this documentation site. Section 6</td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Project</th><th scope="col">Role</th></tr></thead><tbody><tr><td><code>Chaos.Host</code></td><td>The front door. The only LAN listener, a reverse proxy to the Python backend on loopback, the host of the operator console, and where ported subsystems land</td></tr><tr><td><code>Chaos.Host.Abstractions</code></td><td><code>IBackendSupervisor</code> and its status types — the contract between the gateway and the supervisor, in a project that references nothing, so there is exactly one definition of it</td></tr><tr><td><code>Chaos.Host.Supervisor</code></td><td>Resolves which Python runs the platform and supervises it as a child process, with a restart policy</td></tr><tr><td><code>Chaos.Api</code></td><td>Where <code>/api/v1</code> routes ported to .NET live. Registered and mapped by the gateway; <strong>no route is owned by it yet</strong> — the manifest still sends its one endpoint to Python, and flipping that is a configuration row. See section 8</td></tr><tr><td><code>Chaos.Shell</code></td><td>The WinUI 3 windows: launcher, console, settings, annunciator, tray icon</td></tr><tr><td><code>Chaos.Shell.Core</code></td><td>Every decision the shell makes — launcher state machine, settings validation, tray state, diagnostics — with no Windows dependency, so it can be tested anywhere</td></tr><tr><td><code>Chaos.Runtime</code></td><td>Compiles no code. It builds the two parts of the product that are not .NET: the embedded Python interpreter and this documentation site. Section 6</td></tr></tbody></table></div>
 <p>The split between <code>Chaos.Shell</code> and <code>Chaos.Shell.Core</code> is the reason the startup
 experience is testable at all: every awkward combination (a service running while
 the gateway is silent, a gateway answering while its backend is dead, a host too
@@ -139,7 +140,7 @@ the drop-down next to the run button.</p>
 <div class="doc-table-wrap"><table><thead><tr><th scope="col">Profile</th><th scope="col">Gives you</th></tr></thead><tbody><tr><td><strong>CHAOS Gateway (8080)</strong></td><td>The gateway and the operator console. The documentation site is off</td></tr><tr><td><strong>CHAOS Gateway + Documentation (8080 + 8090)</strong></td><td>The same, plus this help site on port 8090, and the browser opens on it</td></tr><tr><td><strong>CHAOS Gateway + Documentation (this PC only)</strong></td><td>Both, bound to loopback rather than every interface</td></tr><tr><td><strong>CHAOS Gateway, no first-run setup (8080)</strong></td><td>The gateway with automatic setup turned off, for working against a database you are managing by hand</td></tr></tbody></table></div>
 <p>Each profile sets the addresses as environment variables; the defaults, if you
 run with none, come from <code>windows/src/Chaos.Host/appsettings.json</code>:</p>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Setting</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>Chaos:ListenUrl</code></td><td><code>http&#58;//0.0.0.0:8080</code></td><td>Where the gateway listens</td></tr><tr><td><code>Chaos:BackendUrl</code></td><td><code>http&#58;//127.0.0.1:8081</code></td><td>Where it expects the Python backend</td></tr><tr><td><code>Chaos:AutoSetup</code></td><td><code>true</code></td><td>Run first-run setup at startup</td></tr><tr><td><code>Chaos:Docs:Enabled</code></td><td><code>true</code></td><td>Serve the offline documentation site</td></tr><tr><td><code>Chaos:Docs:ListenUrl</code></td><td><code>http&#58;//0.0.0.0:8090</code></td><td>Where the documentation site listens</td></tr><tr><td><code>Chaos:WebRootPath</code></td><td>empty</td><td>Let the resolver find the console assets</td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Setting</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>Chaos:ListenUrl</code></td><td><code>http&#58;//0.0.0.0:8080</code></td><td>Where the gateway listens</td></tr><tr><td><code>Chaos:BackendUrl</code></td><td><code>http&#58;//127.0.0.1:8081</code></td><td>Where it expects the Python backend</td></tr><tr><td><code>Chaos:AutoSetup</code></td><td><code>true</code></td><td>Run first-run setup at startup</td></tr><tr><td><code>Chaos:Docs:Enabled</code></td><td><code>true</code></td><td>Serve the offline documentation site</td></tr><tr><td><code>Chaos:Docs:ListenUrl</code></td><td><code>http&#58;//0.0.0.0:8090</code></td><td>Where the documentation site listens</td></tr><tr><td><code>Chaos:WebRootPath</code></td><td>empty</td><td>Let the resolver find the console assets</td></tr><tr><td><code>Chaos:ConfigDirectory</code></td><td>empty</td><td>Discover the installed <code>config</code> directory (registry, then <code>%ProgramData%\Project CHAOS\config</code>). Set it to run a checkout against a directory laid out like an install — <code>chaos.host.json</code> and <code>homestead.env</code> are then read from it</td></tr></tbody></table></div>
 <p>Anything can be overridden per-machine with a <code>CHAOS_</code>-prefixed environment
 variable in the project's debug properties — <code>CHAOS_BackendUrl</code>,
 <code>CHAOS_AutoSetup</code>, <code>CHAOS_Docs__Enabled</code>. Note the casing: the gateway binds
@@ -167,8 +168,18 @@ if one is present, otherwise the Python on your <code>PATH</code> with the repos
 <code>src</code> on <code>PYTHONPATH</code> — launches the platform on loopback, waits for its
 <code>/health</code> to answer, and restarts it with backoff if it dies. <code>/host/info</code>
 reports what it found:</p>
-<div class="doc-code" data-lang="json"><div class="doc-code-bar"><span class="doc-code-lang">json</span><button type="button" class="doc-copy" data-copy><span class="doc-copy-label">Copy</span></button></div><pre class="doc-pre"><code class="lang-json"><span class="t-p">"supervisor"</span>: { <span class="t-p">"registered"</span>: <span class="t-k">true</span>, <span class="t-p">"state"</span>: <span class="t-s">"Running"</span>,
-  <span class="t-p">"runtime"</span>: <span class="t-s">"development"</span>, <span class="t-p">"restarts"</span>: <span class="t-n">0</span> }</code></pre></div>
+<div class="doc-code" data-lang="json"><div class="doc-code-bar"><span class="doc-code-lang">json</span><button type="button" class="doc-copy" data-copy><span class="doc-copy-label">Copy</span></button></div><pre class="doc-pre"><code class="lang-json"><span class="t-p">"supervisor"</span>: { <span class="t-p">"registered"</span>: <span class="t-k">true</span>,
+  <span class="t-p">"implementation"</span>: <span class="t-s">"Chaos.Host.Supervisor.BackendSupervisor"</span>,
+  <span class="t-p">"state"</span>: <span class="t-s">"Running"</span>, <span class="t-p">"supervisionState"</span>: <span class="t-s">"Running"</span>,
+  <span class="t-p">"processId"</span>: <span class="t-n">12345</span>, <span class="t-p">"restartCount"</span>: <span class="t-n">0</span>,
+  <span class="t-p">"runtime"</span>: { <span class="t-p">"layout"</span>: <span class="t-s">"Development"</span>, <span class="t-p">"description"</span>: <span class="t-s">"DEVELOPMENT layout: interpreter '…\\python.exe', PYTHONPATH '…\\src'"</span> },
+  <span class="t-p">"healthEndpoint"</span>: <span class="t-s">"http&#58;//127.0.0.1:8081/health"</span>,
+  <span class="t-p">"failureReason"</span>: <span class="t-k">null</span>, <span class="t-p">"nextRestartUtc"</span>: <span class="t-k">null</span>, <span class="t-p">"standardErrorTail"</span>: [] }</code></pre></div>
+<p><code>state</code> is the gateway's contract (<code>Unknown</code>, <code>Starting</code>, <code>Running</code>,
+<code>Stopping</code>, <code>Stopped</code>, <code>Faulted</code>); <code>supervisionState</code> is the supervisor's own
+finer view, which also distinguishes <code>Restarting</code> and <code>Failed</code>. The
+<code>standardErrorTail</code> is the last lines the backend wrote to stderr — the Python
+traceback, when there is one.</p>
 <p>If you would rather run the backend yourself, under its own debugger, set
 <code>CHAOS_SuperviseBackend=false</code> in the launch profile. The gateway then keeps
 proxying to <code>Chaos:BackendUrl</code> and reports the backend from probing alone; it
@@ -179,11 +190,11 @@ involved at all.</p>
 <hr>
 <h2 id="5-tests-in-test-explorer" class="doc-h"><span class="doc-h-text">5. Tests in Test Explorer</span><a class="doc-anchor" href="#5-tests-in-test-explorer" aria-label="Link to this section"></a></h2>
 <p><strong>Test → Test Explorer</strong>, then <strong>Run All</strong> (<code>Ctrl+R, A</code>).</p>
-<p>All five test projects use xUnit with <code>xunit.runner.visualstudio</code>, so discovery
+<p>All four test projects use xUnit with <code>xunit.runner.visualstudio</code>, so discovery
 works with no configuration. They target <code>net10.0</code> and none of them needs
 Windows — including the shell's tests, because everything the shell decides
 lives in <code>Chaos.Shell.Core</code>.</p>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Test project</th><th scope="col">Covers</th></tr></thead><tbody><tr><td><code>Chaos.Host.Tests</code></td><td>Host endpoints, route-ownership table and validator, setup assessor, setup endpoints, startup validation</td></tr><tr><td><code>Chaos.Host.Supervisor.Tests</code></td><td>Python runtime resolution, restart policy</td></tr><tr><td><code>Chaos.Api.Tests</code></td><td>Annunciator panel builder, legends, serviceability, read store, timestamps, query parsing</td></tr><tr><td><code>Chaos.Shell.Core.Tests</code></td><td>Launcher state machine, platform lifecycle, probe client, settings, tray state, window placement, setup contract</td></tr><tr><td><code>Chaos.Api.ConformanceHost</code></td><td>Not a test project — a minimal host that composes <code>Chaos.Api</code> alone, so the .NET port can be exercised against a real HTTP pipeline</td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Test project</th><th scope="col">Covers</th></tr></thead><tbody><tr><td><code>Chaos.Host.Tests</code></td><td>Host endpoints, route-ownership table and validator, setup assessor, setup endpoints, startup validation, the installed layout and configuration files, supervisor wiring (with a faked interpreter, process and probe), backend version refusal, the ported endpoints' wiring, file logging</td></tr><tr><td><code>Chaos.Host.Supervisor.Tests</code></td><td>Python runtime resolution, restart policy, the supervision loop and its circuit breaker, the contract mapping, <code>homestead.env</code>, the service-control switches and registration plan, the rolling file logger</td></tr><tr><td><code>Chaos.Api.Tests</code></td><td>Annunciator panel builder, legends, serviceability, read store, timestamps, query parsing</td></tr><tr><td><code>Chaos.Shell.Core.Tests</code></td><td>Launcher state machine, platform lifecycle, probe client, settings, tray state, window placement, setup contract</td></tr><tr><td><code>Chaos.Api.ConformanceHost</code></td><td>Not a test project — a minimal host that composes <code>Chaos.Api</code> alone, so the .NET port can be exercised against a real HTTP pipeline</td></tr></tbody></table></div>
 <h3 id="debugging-a-test" class="doc-h"><span class="doc-h-text">Debugging a test</span><a class="doc-anchor" href="#debugging-a-test" aria-label="Link to this section"></a></h3>
 <p>Right-click a test in Test Explorer → <strong>Debug</strong>. Breakpoints in
 <code>Chaos.Shell.Core</code> work exactly as they do anywhere else, which is the practical
@@ -245,7 +256,7 @@ site and the console are the same product to look at.</p>
 <p>The platform backend is a separate Python project at the repository root. It is
 not part of <code>CHAOS.sln</code>.</p>
 <h3 id="its-tests" class="doc-h"><span class="doc-h-text">Its tests</span><a class="doc-anchor" href="#its-tests" aria-label="Link to this section"></a></h3>
-<p><strong>2250 tests</strong>, all against SQLite and an in-memory message bus — no PostgreSQL,
+<p><strong>2418 tests</strong>, all against SQLite and an in-memory message bus — no PostgreSQL,
 no broker, no hardware. That is deliberate: it is step 1 of the twelve-step
 commissioning sequence ("bench test"), and it means the whole platform is
 exercisable end to end from a laptop.</p>
@@ -273,10 +284,16 @@ checkout's <code>src</code>. This is the F5-from-a-checkout case, and it is why
 first-run setup can work under the debugger.</li></ol>
 <hr>
 <h2 id="8-what-is-not-ported-yet" class="doc-h"><span class="doc-h-text">8. What is not ported yet</span><a class="doc-anchor" href="#8-what-is-not-ported-yet" aria-label="Link to this section"></a></h2>
-<p>Every <code>/api/v1</code> prefix is served by the Python backend today. <code>Chaos.Api</code> exists,
-is built, and is covered by tests, but nothing in it is wired into the gateway:
-<code>Chaos.Host</code> does not reference it, and no manifest row names it.</p>
-<p>Porting a subsystem is intended to be one row in the route-ownership manifest —
+<p>Every <code>/api/v1</code> prefix is served by the Python backend today. <code>Chaos.Api</code> is
+built, tested, referenced by <code>Chaos.Host</code>, and its endpoints are registered and
+mapped by the gateway on every start — but the shipped manifest still marks
+<code>/api/v1/annunciator</code>, the one route it serves, as Python-owned, so the proxy
+takes the request before the native endpoint sees it. The gateway derives the
+SQLite file the ported endpoints read from the platform's database URL
+(<code>/host/info</code> shows it under <code>storage.chaosApiSqlitePath</code>), and refuses to start
+if a row is flipped to .NET while the platform uses a database <code>Chaos.Api</code>
+cannot read, such as PostgreSQL.</p>
+<p>Porting a subsystem is therefore one row in the route-ownership manifest —
 compiled into <code>RouteOwnershipDefaults</code>, or merged over it from the node's own
 configuration:</p>
 <div class="doc-table-wrap"><table><thead><tr><th scope="col">Field</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>PathPrefix</code></td><td>The prefix being claimed</td></tr><tr><td><code>Owner</code></td><td><code>Python</code> or <code>Dotnet</code></td></tr><tr><td><code>PortedInVersion</code></td><td>The gateway version that took it over</td></tr><tr><td><code>Notes</code></td><td>Why, in a sentence</td></tr></tbody></table></div>

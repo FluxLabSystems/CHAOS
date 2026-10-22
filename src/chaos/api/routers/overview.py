@@ -1409,8 +1409,9 @@ def get_overview(
         "reserve_pct": water_pct,
         "level_m": water_level,
         "note": (
-            "No water assets exist in the register yet (SDD 12.3 water systems are a later phase). "
-            "Water reserve is unavailable, not zero."
+            "No water assets are in the registry. The water systems of SDD 12.3 are modelled in "
+            "data/water_assets.yaml, a design-package extension that is still a concept for review "
+            "and is not merged into the asset register. Water reserve is unavailable, not zero."
             if not water_assets
             else None
         ),
@@ -1446,15 +1447,26 @@ def get_overview(
     )
 
     outside_temp = _evaluate_metric(snapshot, METRICS["outside_temperature_c"])
-    freeze_risk: dict[str, Any] = {"status": outside_temp["status"], "available": False, "risk": None}
+    freeze_c = settings.overview_freeze_risk_c
+    heat_c = settings.overview_heat_risk_c
+    freeze_risk: dict[str, Any] = {
+        "status": outside_temp["status"],
+        "available": False,
+        "risk": None,
+        "thresholds_c": {"freeze": freeze_c, "heat": heat_c},
+    }
     if outside_temp["available"] and outside_temp["value"] is not None:
         value = outside_temp["value"]
         freeze_risk = {
             "status": outside_temp["status"],
             "available": True,
-            "risk": "freeze" if value <= 2 else ("heat" if value >= 32 else "none"),
+            "risk": "freeze" if value <= freeze_c else ("heat" if value >= heat_c else "none"),
             "temperature_c": value,
-            "note": "Derived from the site air temperature point.",
+            "thresholds_c": {"freeze": freeze_c, "heat": heat_c},
+            "note": (
+                f"Derived from the site air temperature point: freeze at or below {freeze_c:g} °C, "
+                f"heat at or above {heat_c:g} °C (CHAOS_OVERVIEW_FREEZE_RISK_C, CHAOS_OVERVIEW_HEAT_RISK_C)."
+            ),
         }
     else:
         freeze_risk["note"] = (

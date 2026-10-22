@@ -232,3 +232,29 @@ internal static class Eventually
             $"Condition was still false after {limit.TotalSeconds:0.#}s: {because}");
     }
 }
+
+/// <summary>A host lifetime that records whether it was asked to stop.</summary>
+internal sealed class FakeHostApplicationLifetime : Microsoft.Extensions.Hosting.IHostApplicationLifetime
+{
+    private readonly CancellationTokenSource _started = new();
+    private readonly CancellationTokenSource _stopping = new();
+    private readonly CancellationTokenSource _stopped = new();
+
+    public CancellationToken ApplicationStarted => _started.Token;
+
+    public CancellationToken ApplicationStopping => _stopping.Token;
+
+    public CancellationToken ApplicationStopped => _stopped.Token;
+
+    public bool StopRequested => _stopping.IsCancellationRequested;
+
+    public void StopApplication() => _stopping.Cancel();
+}
+
+/// <summary>Records the exit code the host was told to use, instead of setting the process's.</summary>
+internal sealed class RecordingExitCodeReporter : IHostExitCodeReporter
+{
+    public int? ExitCode { get; private set; }
+
+    public void Report(int exitCode) => ExitCode = exitCode;
+}

@@ -31,6 +31,15 @@ router = APIRouter(tags=["maintenance"])
 
 
 class PlanIn(BaseModel):
+    """A maintenance plan (SDD section 18).
+
+    ``trigger_type="alarm"`` plans are raised by the alarm engine when an alarm
+    on the asset activates (and by ``POST /maintenance/generate``), once per
+    alarm occurrence. For that trigger type ``condition_point`` may name the
+    one ``alarm_key`` that raises the plan; leave it blank for any alarm on the
+    asset. ``condition_operator`` and ``condition_value`` are not used by it.
+    """
+
     asset_id: str
     name: str
     trigger_type: Literal[

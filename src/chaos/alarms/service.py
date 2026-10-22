@@ -1,9 +1,11 @@
 """Alarm engine background service.
 
 One cycle is: evaluate definitions, correlate the open alarms into incidents,
-close incidents whose members have all cleared, then notify. The order matters --
-correlation runs *before* notification so that a container outage is already one
-incident by the time anything is sent.
+close incidents whose members have all cleared, raise alarm-triggered
+maintenance work, then notify. The order matters -- correlation runs *before*
+work generation and notification so that a container outage is already one
+incident, with its symptoms marked as such, by the time anything is sent or
+scheduled.
 
 ``evaluate_once`` is the whole cycle and takes an explicit ``now``, so tests
 drive delays, hysteresis and escalation timers deterministically without
@@ -11,7 +13,10 @@ sleeping. The daemon loop is a thin wrapper around it.
 
 The engine runs on the secondary control node too. SDD 16.1 requires essential
 alerts to survive the loss of the power container, so this service is not gated
-on ``node_role``.
+on ``node_role``. Work generation is: a secondary node evaluates and notifies but
+never raises work orders, for the same reason ``runtime.build_services``
+withholds the maintenance scheduler there -- two nodes would raise every
+alarm-triggered job twice.
 """
 
 from __future__ import annotations
@@ -47,6 +52,9 @@ class AlarmCycleResult:
     evaluation: EvaluationResult = field(default_factory=EvaluationResult)
     correlation: CorrelationResult = field(default_factory=CorrelationResult)
     notification: NotificationResult = field(default_factory=NotificationResult)
+    #: Work orders raised this cycle for alarm-triggered maintenance plans
+    #: (SDD 18 "alarm occurrence"). Always 0 on a secondary node.
+    work_orders: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +62,7 @@ class AlarmCycleResult:
             "evaluation": self.evaluation.as_dict(),
             "correlation": self.correlation.as_dict(),
             "notification": self.notification.as_dict(),
+            "work_orders": self.work_orders,
         }
 
 
@@ -171,6 +180,7 @@ class AlarmEngineService:
         session.flush()
         correlation = correlator.correlate(now)
         session.flush()
+        work_orders = self._raise_alarm_work(session, now)
         notification = notifier.dispatch_pending(now)
 
         return AlarmCycleResult(
@@ -178,7 +188,35 @@ class AlarmEngineService:
             evaluation=evaluation,
             correlation=correlation,
             notification=notification,
+            work_orders=work_orders,
         )
+
+    def _raise_alarm_work(self, session: Session, now: dt.datetime) -> int:
+        """SDD 18 "alarm occurrence": work orders for alarm-triggered plans.
+
+        Runs after correlation so that symptom and flood members are already
+        marked suppressed and only root causes raise work. Primary node only,
+        and isolated in a savepoint: a maintenance fault must not cost the
+        property its alarm cycle.
+        """
+        if self.settings.is_secondary:
+            return 0
+        try:
+            from chaos.maintenance.scheduler import raise_for_alarm_plans
+        except Exception:
+            logger.exception("Maintenance scheduler unavailable; alarm-triggered work was not raised")
+            return 0
+        try:
+            with session.begin_nested():
+                result = raise_for_alarm_plans(session, now)
+        except Exception:
+            logger.exception("Alarm-triggered work generation failed; the alarm cycle continues")
+            return 0
+        if result.created:
+            logger.info(
+                "Alarm engine raised %d work order(s) from alarm-triggered plans", len(result.created)
+            )
+        return result.created_count
 
     # -- introspection -----------------------------------------------------
 

@@ -436,9 +436,9 @@ def test_every_asset_class_in_the_dictionary_has_a_category_token() -> None:
     """tokens.css claims to cover the whole asset-class dictionary. Check it."""
     import json
 
+    # The design package ships with the repository; a missing dictionary is a
+    # broken checkout, not a reason to skip the check.
     dictionary = Path(__file__).resolve().parents[1] / "data" / "asset_class_dictionary.json"
-    if not dictionary.exists():  # pragma: no cover - design package is optional at runtime
-        pytest.skip("design package not present")
     classes = json.loads(dictionary.read_text(encoding="utf-8"))["asset_classes"]
     missing = [name for name in classes if f"--cat-{name.replace('_', '-')}" not in DARK]
     assert not missing, f"asset classes with no --cat-* token: {sorted(missing)}"
@@ -448,7 +448,8 @@ def test_every_rack_legend_bucket_has_a_category_token() -> None:
     """The rack elevation paints straight from the payload:
     ``var(--cat-bucket-${device.category})``. Every bucket the API can return
     has to resolve, or a device silently loses its fill."""
-    rack = pytest.importorskip("chaos.api.routers.rack")
+    from chaos.api.routers import rack
+
     buckets = set(rack.CATEGORY_LABELS) | set(rack.CATEGORIES.values()) | {rack.DEFAULT_CATEGORY}
     missing = [name for name in sorted(buckets) if f"--cat-bucket-{name}" not in DARK]
     assert not missing, f"rack legend buckets with no --cat-bucket-* token: {missing}"
@@ -456,7 +457,8 @@ def test_every_rack_legend_bucket_has_a_category_token() -> None:
 
 def test_every_sdd_domain_has_a_category_token() -> None:
     """Same promise for anything colouring by subsystem instead of by class."""
-    overview = pytest.importorskip("chaos.api.routers.overview")
+    from chaos.api.routers import overview
+
     missing = [name for name, _ in overview.DOMAINS if f"--cat-domain-{name}" not in DARK]
     assert not missing, f"SDD 25.4 domains with no --cat-domain-* token: {missing}"
 

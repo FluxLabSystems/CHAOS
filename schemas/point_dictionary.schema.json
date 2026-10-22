@@ -161,7 +161,8 @@
           "dictionary_status": {
             "enum": [
               "baseline_v0_2",
-              "reconciled_v0_3"
+              "reconciled_v0_3",
+              "reconciled_v0_4"
             ]
           },
           "enum_values": {

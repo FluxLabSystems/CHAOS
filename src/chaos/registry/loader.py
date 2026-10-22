@@ -4,9 +4,9 @@ The package (SDD section 44) is four YAML documents:
 
 ``asset_class_dictionary.yaml``
     Approved domains, lifecycle vocabulary, criticality, control authority,
-    relationship types, 72 asset classes and 5 reusable point profiles.
+    relationship types, 72 asset classes and 6 reusable point profiles.
 ``point_dictionary.yaml``
-    214 canonical point definitions with class, type, unit and control
+    215 canonical point definitions with class, type, unit and control
     capability.
 ``homestead_asset_register.yaml``
     90 assets and 99 typed relationships presently known from the plans.

@@ -369,7 +369,8 @@ function Invoke-Smoke {
 
         This runs the STAGED tree, not an installed one, so it needs no
         administrator rights and leaves nothing behind.  The installed-service
-        equivalent is written out step by step in docs/windows-deployment.md.
+        equivalent is the desktop shell's launcher, whose five checks are
+        described in docs/getting-started.md, "First launch".
     #>
     Assert-ChaosWindows -Because 'The smoke test'
 

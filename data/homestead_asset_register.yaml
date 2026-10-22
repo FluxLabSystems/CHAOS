@@ -45,6 +45,7 @@ assets:
   maintenance_plan: {}
   point_profile_refs:
   - common_monitored
+  - ems_site
   source_refs:
   - &id001
     document: Homestead_Digital_Twin_Software_Design_Document_v0.2.md

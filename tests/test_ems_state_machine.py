@@ -400,6 +400,71 @@ def test_missing_input_is_never_defaulted(config):
     assert derived.value("reserve_pct") is None
 
 
+def test_leaving_degraded_sensor_needs_sustained_healthy_inputs(db_session, settings):
+    """``degraded_recovery_s`` governs recovery when it exceeds the target dwell."""
+    config = EmsConfig(degraded_recovery_s=600, dwell_normal_s=60)
+    machine = EnergyStateMachine(config, settings)
+    force_state(machine, db_session, "DEGRADED_SENSOR", T0)
+    healthy = make_inputs()
+
+    decision = evaluate(machine, db_session, healthy, config, at(0))
+    assert decision.candidate.state == "NORMAL"
+    assert decision.current_state == "DEGRADED_SENSOR"
+    assert decision.dwell_remaining_s == pytest.approx(600)
+    assert "600 s of continuously healthy inputs" in decision.note
+
+    # The target state's own 60 s dwell has elapsed; the recovery has not.
+    decision = evaluate(machine, db_session, healthy, config, at(120))
+    assert decision.current_state == "DEGRADED_SENSOR"
+    assert decision.dwell_remaining_s == pytest.approx(480)
+
+    decision = evaluate(machine, db_session, healthy, config, at(600))
+    assert decision.transitioned
+    assert decision.current_state == "NORMAL"
+
+
+def test_a_bad_reading_restarts_the_degraded_recovery_clock(db_session, settings):
+    config = EmsConfig(degraded_recovery_s=600, dwell_normal_s=60)
+    machine = EnergyStateMachine(config, settings)
+    force_state(machine, db_session, "DEGRADED_SENSOR", T0)
+    healthy = make_inputs()
+    stale = make_inputs(invalid=("battery_soc_pct", "battery_energy_available_kwh"))
+
+    evaluate(machine, db_session, healthy, config, at(0))
+    flicker = evaluate(machine, db_session, stale, config, at(300))
+    assert flicker.candidate.state == "DEGRADED_SENSOR"
+    evaluate(machine, db_session, healthy, config, at(301))
+
+    # 600 s of *continuous* health are needed, counted from the last bad reading.
+    decision = evaluate(machine, db_session, healthy, config, at(700))
+    assert decision.current_state == "DEGRADED_SENSOR"
+    decision = evaluate(machine, db_session, healthy, config, at(901))
+    assert decision.current_state == "NORMAL"
+
+
+def test_degraded_recovery_never_shortens_the_target_dwell(machine, db_session, config):
+    """With the defaults NORMAL's 600 s dwell is the longer requirement."""
+    assert config.degraded_recovery_s < config.dwell_normal_s
+    force_state(machine, db_session, "DEGRADED_SENSOR", T0)
+    healthy = make_inputs()
+    decision = evaluate(machine, db_session, healthy, config, at(0))
+    assert decision.dwell_remaining_s == pytest.approx(config.dwell_normal_s)
+    assert decision.note is None
+    decision = evaluate(machine, db_session, healthy, config, at(config.degraded_recovery_s))
+    assert decision.current_state == "DEGRADED_SENSOR"
+    decision = evaluate(machine, db_session, healthy, config, at(config.dwell_normal_s))
+    assert decision.current_state == "NORMAL"
+
+
+def test_degraded_recovery_does_not_delay_emergency(db_session, settings):
+    config = EmsConfig(degraded_recovery_s=600)
+    machine = EnergyStateMachine(config, settings)
+    force_state(machine, db_session, "DEGRADED_SENSOR", T0)
+    decision = evaluate(machine, db_session, make_inputs(battery_temperature_max_c=60.0), config, at(0))
+    assert decision.transitioned
+    assert decision.current_state == "EMERGENCY"
+
+
 def test_gather_inputs_marks_stale_rows_invalid(db_session, config):
     """The real database path: an old timestamp is stale, not merely old."""
     seed_current_state(db_session, ts=T0)

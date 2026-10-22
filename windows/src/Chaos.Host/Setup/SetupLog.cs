@@ -110,13 +110,16 @@ internal static class SetupLogFactory
     public const string FileName = "chaos-setup.log";
 
     /// <summary>
-    /// Builds the log from configuration, or from a per-user state directory
-    /// when <see cref="ChaosHostOptions.SetupLogPath"/> is empty.
+    /// Builds the log from configuration; failing that, under the installed
+    /// log directory when it exists; failing that, under a per-user state
+    /// directory.
     /// </summary>
     /// <param name="options">Gateway options.</param>
     /// <returns>The log.</returns>
     /// <remarks>
-    /// The derived location is under
+    /// The installed <c>logs</c> folder is where the shell's <b>Open logs</b>
+    /// button goes and where the gateway's own files are, so the transcript
+    /// belongs beside them. The per-user fallback is under
     /// <see cref="Environment.SpecialFolder.LocalApplicationData"/> — writable
     /// by the account the gateway runs as, unlike a folder under Program Files.
     /// </remarks>
@@ -127,6 +130,11 @@ internal static class SetupLogFactory
         if (!string.IsNullOrWhiteSpace(options.SetupLogPath))
         {
             return new FileSetupLog(System.IO.Path.GetFullPath(options.SetupLogPath));
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.LogDirectory) && Directory.Exists(options.LogDirectory))
+        {
+            return new FileSetupLog(System.IO.Path.Combine(System.IO.Path.GetFullPath(options.LogDirectory), FileName));
         }
 
         var directory = DerivedStateDirectory();

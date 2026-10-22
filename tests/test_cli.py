@@ -9,6 +9,7 @@ exit code and an actionable message. Never a traceback, never exit 0 on failure.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import tarfile
 from pathlib import Path
@@ -50,6 +51,7 @@ SUBCOMMANDS = (
     "simulate",
     "retention",
     "backup",
+    "restore",
     "status",
     "plugins",
     "export",
@@ -375,6 +377,260 @@ def test_backup_reports_an_unwritable_destination(initialised_db, tmp_path, caps
     )
     # Parent directories are created, so this must succeed rather than explode.
     assert rc == cli.EXIT_OK
+
+
+def test_backup_restore_text_names_the_restore_command(initialised_db, tmp_path):
+    archive = tmp_path / "backup.tar.gz"
+    assert run("--database-url", initialised_db, "backup", "--output", str(archive)) == cli.EXIT_OK
+    with tarfile.open(archive) as tar:
+        text = tar.extractfile("RESTORE.txt").read().decode()
+    assert "chaos restore" in text
+    assert "your own loader" not in text
+
+
+# ---------------------------------------------------------------------------
+# restore (the other half of SDD 16.1 mitigation 3)
+# ---------------------------------------------------------------------------
+
+ALARM_T0 = dt.datetime(2026, 8, 7, 12, 0, 0, tzinfo=dt.UTC)
+
+
+def _populated_db(db_url: str) -> str:
+    """The real register plus one alarm, so timestamps and foreign keys are exercised."""
+    from chaos.config import Settings
+    from chaos.models.alarms import Alarm, AlarmDefinition
+
+    assert run("--database-url", db_url, "init-db") == cli.EXIT_OK
+    assert run("--database-url", db_url, "load-registry") == cli.EXIT_OK
+    with cli.open_session(Settings(database_url=db_url)) as session:
+        session.add(AlarmDefinition(alarm_key="restore.test", name="Restore test", severity="major"))
+        session.flush()
+        session.add(
+            Alarm(
+                id="alarm-restore-test",
+                alarm_key="restore.test",
+                asset_id="energy.battery_bank.power_container.01",
+                severity="major",
+                state="active",
+                detected_at=ALARM_T0,
+                activated_at=ALARM_T0,
+                message="kept across backup and restore",
+            )
+        )
+        session.commit()
+    return db_url
+
+
+@pytest.fixture()
+def backup_archive(tmp_path: Path) -> Path:
+    source = _populated_db(f"sqlite:///{tmp_path / 'source.db'}")
+    archive = tmp_path / "source-backup.tar.gz"
+    assert run("--database-url", source, "backup", "--output", str(archive)) == cli.EXIT_OK
+    return archive
+
+
+def _manifest(archive: Path) -> dict:
+    with tarfile.open(archive) as tar:
+        return json.loads(tar.extractfile("manifest.json").read().decode())
+
+
+def _counts(db_url: str, capsys) -> dict:
+    """Row counts of every declared table, read straight from the database.
+
+    ``status --json`` reports only the operationally interesting tables, and a
+    restore has to be checked on all of them.
+    """
+    from chaos.config import Settings
+
+    tables = cli._metadata().tables
+    with cli.open_session(Settings(database_url=db_url)) as session:
+        return {name: cli._count(session, table) for name, table in tables.items()}
+
+
+def test_restore_round_trips_into_an_empty_database(backup_archive, tmp_path, capsys):
+    from chaos.config import Settings
+    from chaos.models.alarms import Alarm
+    from chaos.models.registry import Asset
+
+    target = f"sqlite:///{tmp_path / 'restored.db'}"
+    assert run("--database-url", target, "init-db") == cli.EXIT_OK
+    capsys.readouterr()
+    assert run("--database-url", target, "restore", str(backup_archive)) == cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "Restored : 34 table(s)" in out
+    assert "in one transaction" in out
+
+    manifest = _manifest(backup_archive)
+    counts = _counts(target, capsys)
+    for table in ("assets", "points", "point_bindings", "alarms", "alarm_definitions"):
+        assert counts[table] == manifest["row_counts"][table], table
+
+    with cli.open_session(Settings(database_url=target)) as session:
+        alarm = session.get(Alarm, "alarm-restore-test")
+        assert alarm is not None and alarm.message == "kept across backup and restore"
+        # JSON carried the timestamp as text; it must come back as a datetime.
+        assert alarm.detected_at.replace(tzinfo=dt.UTC) == ALARM_T0
+        # The self-referencing parent_id column survived, which means children
+        # were inserted after their parents under PRAGMA foreign_keys=ON.
+        children = session.query(Asset).filter(Asset.parent_id.isnot(None)).count()
+        assert children > 0
+
+
+def test_restore_refuses_a_populated_database_without_force(backup_archive, tmp_path, capsys):
+    target = _populated_db(f"sqlite:///{tmp_path / 'occupied.db'}")
+    capsys.readouterr()
+    assert run("--database-url", target, "restore", str(backup_archive)) == cli.EXIT_ERROR
+    err = capsys.readouterr().err
+    assert "already holds rows" in err
+    assert "assets (90)" in err
+    assert "--force" in err
+
+
+def test_restore_force_replaces_the_rows_of_archived_tables(backup_archive, tmp_path, capsys):
+    from chaos.config import Settings
+    from chaos.models.registry import Asset
+
+    target = _populated_db(f"sqlite:///{tmp_path / 'occupied.db'}")
+    settings = Settings(database_url=target)
+    with cli.open_session(settings) as session:
+        asset = session.get(Asset, "energy.battery_bank.power_container.01")
+        asset.name = "renamed after the backup was taken"
+        session.commit()
+
+    capsys.readouterr()
+    assert run("--database-url", target, "restore", "--force", str(backup_archive)) == cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "Replacing:" in out
+
+    with cli.open_session(settings) as session:
+        asset = session.get(Asset, "energy.battery_bank.power_container.01")
+        assert asset.name != "renamed after the backup was taken"
+        assert session.query(Asset).count() == 90
+
+
+def test_restore_dry_run_writes_nothing(backup_archive, tmp_path, capsys):
+    target = f"sqlite:///{tmp_path / 'untouched.db'}"
+    assert run("--database-url", target, "init-db") == cli.EXIT_OK
+    capsys.readouterr()
+    assert run("--database-url", target, "restore", "--dry-run", str(backup_archive)) == cli.EXIT_OK
+    out = capsys.readouterr().out
+    assert "Dry run  : would restore 34 table(s)" in out
+    assert "nothing written" in out
+    assert _counts(target, capsys)["assets"] == 0
+
+
+def test_restore_rejects_a_missing_archive(initialised_db, tmp_path, capsys):
+    rc = run("--database-url", initialised_db, "restore", str(tmp_path / "nope.tar.gz"))
+    assert rc == cli.EXIT_ERROR
+    assert "not found" in capsys.readouterr().err
+
+
+def _write_archive(path: Path, manifest: dict, tables: dict[str, list]) -> Path:
+    import io
+
+    def add(tar, name, payload):
+        data = json.dumps(payload).encode()
+        info = tarfile.TarInfo(name=name)
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+
+    with tarfile.open(path, "w:gz") as tar:
+        add(tar, "manifest.json", manifest)
+        for name, rows in tables.items():
+            add(tar, f"tables/{name}.json", rows)
+    return path
+
+
+def _manifest_for(tables: dict[str, list], **overrides) -> dict:
+    manifest = {
+        "kind": cli.BACKUP_KIND,
+        "format_version": cli.BACKUP_FORMAT_VERSION,
+        "created_at": "2026-08-07T12:00:00+00:00",
+        "platform_version": cli.__version__,
+        "node_role": "primary",
+        "row_counts": {name: len(rows) for name, rows in tables.items()},
+        "tables_absent": [],
+    }
+    manifest.update(overrides)
+    return manifest
+
+
+def test_restore_rejects_an_archive_whose_manifest_disagrees_with_its_contents(
+    initialised_db, tmp_path, capsys
+):
+    rows = {"asset_classes": [{"name": "pump", "allowed_domains": ["water"]}]}
+    manifest = _manifest_for(rows)
+    manifest["row_counts"]["asset_classes"] = 2  # lies about the count
+    archive = _write_archive(tmp_path / "tampered.tar.gz", manifest, rows)
+    assert run("--database-url", initialised_db, "restore", str(archive)) == cli.EXIT_ERROR
+    err = capsys.readouterr().err
+    assert "manifest validation" in err
+    assert "holds 1 row(s), manifest says 2" in err
+    assert _counts(initialised_db, capsys)["asset_classes"] == 0
+
+
+def test_restore_rejects_an_unknown_format_or_kind(initialised_db, tmp_path, capsys):
+    rows: dict[str, list] = {}
+    archive = _write_archive(tmp_path / "wrong.tar.gz", _manifest_for(rows, kind="not-a-backup"), rows)
+    assert run("--database-url", initialised_db, "restore", str(archive)) == cli.EXIT_ERROR
+    assert "kind is 'not-a-backup'" in capsys.readouterr().err
+
+    archive = _write_archive(tmp_path / "future.tar.gz", _manifest_for(rows, format_version=99), rows)
+    assert run("--database-url", initialised_db, "restore", str(archive)) == cli.EXIT_ERROR
+    assert "format_version 99 is not supported" in capsys.readouterr().err
+
+
+def test_restore_refuses_tables_this_platform_does_not_declare(initialised_db, tmp_path, capsys):
+    rows = {"not_a_platform_table": [{"id": 1}]}
+    archive = _write_archive(tmp_path / "alien.tar.gz", _manifest_for(rows), rows)
+    assert run("--database-url", initialised_db, "restore", str(archive)) == cli.EXIT_ERROR
+    assert "does not declare: not_a_platform_table" in capsys.readouterr().err
+
+
+def test_restore_is_all_or_nothing(initialised_db, tmp_path, capsys):
+    """A row that violates a constraint rolls back everything restored before it."""
+    rows = {
+        "asset_classes": [{"name": "pump", "allowed_domains": ["water"]}],
+        "assets": [
+            {
+                "asset_id": "water.pump.irrigation.01",
+                "domain": "water",
+                "asset_class": "pump",
+                "name": "Pump",
+                "status": "planned",
+                "criticality": "important",
+                "control_authority": "none",
+            },
+            {
+                "asset_id": "water.pump.irrigation.02",
+                "domain": "water",
+                "asset_class": "no_such_class",  # violates the foreign key
+                "name": "Pump 2",
+                "status": "planned",
+                "criticality": "important",
+                "control_authority": "none",
+            },
+        ],
+    }
+    archive = _write_archive(tmp_path / "broken.tar.gz", _manifest_for(rows), rows)
+    assert run("--database-url", initialised_db, "restore", str(archive)) == cli.EXIT_ERROR
+    assert "rolled back" in capsys.readouterr().err
+    counts = _counts(initialised_db, capsys)
+    assert counts["asset_classes"] == 0
+    assert counts["assets"] == 0
+
+
+def test_self_referencing_rows_are_ordered_parents_first():
+    assets = cli._metadata().tables["assets"]
+    rows = [
+        {"asset_id": "c", "parent_id": "b"},
+        {"asset_id": "b", "parent_id": "a"},
+        {"asset_id": "a", "parent_id": None},
+        {"asset_id": "orphan", "parent_id": "missing"},
+    ]
+    ordered = [row["asset_id"] for row in cli._order_for_self_references(assets, rows)]
+    assert ordered.index("a") < ordered.index("b") < ordered.index("c")
+    assert ordered[-1] == "orphan"  # dangling parent is left for the database to judge
 
 
 # ---------------------------------------------------------------------------

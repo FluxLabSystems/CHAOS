@@ -215,7 +215,8 @@ public sealed class AnnunciatorReadStore : IAnnunciatorReadStore
         // implementations may pick different rows. Adding a tiebreak on this
         // side alone would make the .NET panel disagree with the Python panel,
         // which is worse. The fix belongs in the Python query, in its own
-        // change, applied to both. See docs/dotnet-migration.md.
+        // change, applied to both. tests/test_dotnet_conformance.py seeds
+        // distinct detected_at values for exactly this reason.
         var sql = $"""
             SELECT id, alarm_key, state, suppressed, suppression_reason, message,
                    incident_id, detected_at, activated_at

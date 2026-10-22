@@ -26,8 +26,10 @@ Invariants
   ``shed_attempt_limit`` attempts.
 * **Restoration is staged and staggered** (SDD 33, FR-103): sustained
   qualification, group order R1..R5, each asset's minimum off time, each
-  asset's restart delay, and an inrush-class stagger so discretionary loads
-  cannot restart simultaneously after an outage.
+  asset's restart delay, an inrush-class stagger so discretionary loads
+  cannot restart simultaneously after an outage, and
+  ``restore_group_interval_s`` between one restoration group and the next so
+  each group is verified before the following one starts (SDD 33.2 rule 5).
 * **Attended equipment is never restarted automatically** (SDD 33.2 rules 6, 7).
 """
 
@@ -45,7 +47,7 @@ from sqlalchemy.orm import Session
 from chaos.config import Settings
 from chaos.ems import CommandOutcome, CommandPort, CommandRequest
 from chaos.ems.config import EmsConfig, load_budget_topic
-from chaos.ems.derived import DerivedEnergyState
+from chaos.ems.derived import DerivedEnergyState, LoadSnapshot
 from chaos.ems.inputs import EmsInputs, load_input_key
 from chaos.ems.loader import effective_tier, load_profiles
 from chaos.envelope import EventEnvelope, TelemetryEnvelope
@@ -215,6 +217,39 @@ def current_load_states(
     return states
 
 
+def load_snapshots(states: dict[str, LoadState], *, now: dt.datetime) -> list[LoadSnapshot]:
+    """Project the live load states onto what the derived layer needs.
+
+    ``restorable_in_h`` is the time until the load's minimum off time and
+    restart delay both allow a restoration; it is ``None`` for a load the EMS
+    will not restart automatically (attended equipment, SDD 33.2 rules 6 and
+    7, or a lockout), so its energy never enters the restoration forecast.
+    """
+    snapshots: list[LoadSnapshot] = []
+    for state in states.values():
+        shed = state.is_shed
+        since_s = (state.since(now) or 0.0) if shed else None
+        restorable_in_h: float | None = None
+        if shed and state.automatic_restart_permitted and not state.locked_out:
+            earliest_s = max(
+                state.profile.minimum_off_time_s or 0,
+                int(state.restart.get("minimum_off_time_s") or 0),
+                int(state.restart.get("delay_s") or 0),
+            )
+            restorable_in_h = max(earliest_s - (since_s or 0.0), 0.0) / 3600.0
+        snapshots.append(
+            LoadSnapshot(
+                asset_id=state.asset_id,
+                tier=state.tier,
+                estimated_power_kw=state.profile.estimated_power_kw,
+                shed=shed,
+                shed_for_h=None if since_s is None else since_s / 3600.0,
+                restorable_in_h=restorable_in_h,
+            )
+        )
+    return snapshots
+
+
 # ---------------------------------------------------------------------------
 # Preconditions (SDD 32.1 rule 1)
 # ---------------------------------------------------------------------------
@@ -377,9 +412,18 @@ class ShedController:
     def _alarm(self, asset_id: str, alarm_key: str, severity: str, detail: dict[str, Any]) -> None:
         """Publish an energy alarm event (SDD 37.1).
 
-        The EMS does not own the alarm store; it publishes on the alarm topic so
-        the alarm engine, the notifier and any local controller can react. That
-        keeps the EMS independent of the alarm subsystem's availability.
+        The EMS does not own the alarm store; it publishes on the alarm topic
+        with ``source="ems"``. Ingest recognises the platform's own producers
+        and hands the envelope to :func:`chaos.alarms.published.apply_published_alarm`,
+        which raises a real :class:`~chaos.models.alarms.Alarm` when
+        ``alarm_key`` has a definition (``load_shed_failed``,
+        ``load_restore_failed``, ``energy_meter_data_invalid``) -- so
+        correlation, notification and alarm-triggered maintenance see it as
+        they would an evaluated alarm -- and counts it as a platform event
+        otherwise (``load_shed_requested``, ``load_budget_withdrawn``). Local
+        controllers read the topic directly. That keeps the EMS independent of
+        the alarm subsystem's availability: a dead alarm engine costs the
+        alarm, never the shed.
         """
         logger.warning("EMS alarm %s for %s: %s", alarm_key, asset_id, detail)
         if self.bus is None or self.settings is None:
@@ -902,7 +946,9 @@ class ShedController:
             return result
 
         headroom = derived.value("restoration_headroom_kw") or 0.0
-        last_restore_at = _last_restore_at(session)
+        last_restore = _last_restore(session)
+        last_restore_at = _aware(last_restore.occurred_at) if last_restore is not None else None
+        last_group = last_restore.group if last_restore is not None else None
         candidates, deferred, review = self._restore_candidates(states, now=now, headroom=headroom)
         result.deferred = deferred
         result.operator_review_required = review
@@ -910,10 +956,13 @@ class ShedController:
             result.reason = "no load is eligible for restoration yet"
             return result
 
-        # Anti-simultaneous-restart (FR-103): one group, and a stagger between
-        # individual starts sized by inrush class.
+        # Anti-simultaneous-restart (FR-103): one group, a stagger between
+        # individual starts sized by inrush class, and the SDD 33.2 rule 5
+        # interval between one group and the next so a group is verified
+        # before the following one starts.
         group = candidates[0].profile.restoration_group
         result.group = group
+        group_interval = self.config.restore_group_interval_s
         started = 0
         for state in candidates:
             if state.profile.restoration_group != group:
@@ -932,6 +981,12 @@ class ShedController:
                         f"{stagger} s stagger elapsed since the last restart"
                     )
                     continue
+                if last_group is not None and last_group != group and gap < group_interval:
+                    result.deferred[state.asset_id] = (
+                        f"inter-group interval: {gap:.0f} s of {group_interval} s since group {last_group} "
+                        f"was restored; group {group} waits until {last_group} is verified (SDD 33.2 rule 5)"
+                    )
+                    continue
             outcome = self._restore_one(
                 session, state, group=group, energy_state=energy_state, now=now, reason=why
             )
@@ -939,6 +994,7 @@ class ShedController:
             if outcome.outcome in _HOLDING_OUTCOMES:
                 started += 1
                 last_restore_at = now
+                last_group = group
 
         result.performed = bool(result.actions)
         if result.performed:
@@ -1151,14 +1207,18 @@ def recent_actions(
     return list(session.scalars(statement.limit(limit)))
 
 
-def _last_restore_at(session: Session) -> dt.datetime | None:
-    row = session.scalars(
+def _last_restore(session: Session) -> LoadShedAction | None:
+    """The most recent restoration that actually started a load.
+
+    A rejected restore started nothing, so it neither staggers the next start
+    nor opens a verification interval for its group.
+    """
+    return session.scalars(
         select(LoadShedAction)
-        .where(LoadShedAction.action == "restore")
+        .where(LoadShedAction.action == "restore", LoadShedAction.outcome.in_(sorted(_HOLDING_OUTCOMES)))
         .order_by(LoadShedAction.occurred_at.desc())
         .limit(1)
     ).first()
-    return _aware(row.occurred_at) if row else None
 
 
 def _group_index(group: str | None) -> int:

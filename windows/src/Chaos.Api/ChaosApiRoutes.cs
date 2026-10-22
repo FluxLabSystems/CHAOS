@@ -16,7 +16,7 @@ namespace Chaos.Api;
 /// corresponding manifest entry. Rolling back means flipping that entry to
 /// <c>Python</c> — the endpoints stay registered and simply stop receiving
 /// traffic, which is why rollback costs a config reload rather than a rebuild.
-/// See <c>docs/dotnet-migration.md</c>.
+/// See <c>docs/visual-studio.md</c>, "What is not ported yet".
 /// </para>
 /// </remarks>
 public static class ChaosApiRoutes

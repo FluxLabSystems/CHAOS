@@ -2769,8 +2769,39 @@ points:
     applicable_asset_classes: []
     source_section: 27.x referenced point
     dictionary_status: reconciled_v0_3
+  energy_state:
+    default_class: CALC
+    allowed_classes:
+    - CALC
+    data_type: enum
+    unit: null
+    description: Site energy operating state published by the energy manager; the single state every subsystem translates
+      into its own bounded operating profile.
+    control_capable: false
+    automatic_control_default: false
+    applicable_asset_classes:
+    - site
+    source_section: 13, 30.7
+    dictionary_status: reconciled_v0_4
+    enum_values:
+    - COMMISSIONING
+    - MAINTENANCE
+    - SURPLUS
+    - NORMAL
+    - CONSERVE
+    - CRITICAL_RESERVE
+    - GENERATOR_SUPPORT
+    - EMERGENCY
+    - BLACK_START
+    - DEGRADED_SENSOR
+    notes: Platform-owned calculated point (integration finding F-003). The EMS publishes it retained on <site>/energy_state;
+      it is attached to the site asset through the ems_site point profile, the same pattern ems_load uses for power_budget_kw.
+      The ten values are the SDD 30.7 states as implemented in chaos.models.energy.ENERGY_STATES, not a proposal awaiting
+      review.
 notes:
 - A point binding may narrow an allowed class but may not change the point meaning.
 - Reconciled v0.3 points are explicitly marked; they were added only where the v0.2 asset-class tables referenced points missing
   from section 28.
 - Canonical units may be converted for display, but storage-unit changes require a schema revision.
+- Reconciled v0.4 points are new formal definitions added after the v0.3 pass for points the platform itself
+  publishes. They follow the provenance ladder water_points.yaml defines and are not previously settled decisions.

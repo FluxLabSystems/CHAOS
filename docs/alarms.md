@@ -84,6 +84,31 @@ the next occurrence too — which is why the runbook for planned work is
 maintenance mode, not suppression. See
 [Control § Operating modes](./control.md#5-operating-modes).
 
+### Alarms the platform raises about itself
+
+Not every alarm comes from a threshold on a point. The energy manager does not
+own the alarm store: when a shed does not take effect, a restore is rejected, a
+generator start fails or a reserve decision cannot be verified, it **publishes**
+on the asset's alarm topic (`…/alarm/<alarm_key>`, `source: ems`). Ingest
+recognises the platform's own producers by that `source` and, rather than
+dead-lettering the message as an unresolved point, hands it to the alarm
+subsystem. The result is an ordinary alarm row, so correlation, notification,
+escalation, the annunciator and alarm-triggered maintenance treat it exactly as
+an evaluated one. Three things differ:
+
+| | Evaluated alarm | Published alarm |
+|---|---|---|
+| Needs | A definition and a registered point | A definition. A key nobody defined is counted as a platform event (`platform_events_unbound` on `/api/v1/telemetry/stats`, with the names) and raises nothing |
+| Activates | After its on-delay | On assertion — the publisher has already applied its own confirmation logic (SDD 32.3, 34.7) |
+| Clears | When the reset condition holds for its off-delay | When the publisher publishes `detail.state: cleared`, or an operator clears it. Never on the publisher's silence: an EMS that stops re-asserting `load_shed_failed` may simply have moved to the next group while the load still draws power |
+
+The definition's severity is the one used — that is the contract the operator
+agreed to — and the severity the publisher claimed is kept on the row. Repeated
+assertions of an open alarm update its record without adding lifecycle events.
+The evaluator's own announcements of every state change travel on the same
+topic with `source: alarm-engine`; ingest counts those as echoes and never feeds
+them back into the store.
+
 ---
 
 ## 4. Operator context — the FR-008 payload
@@ -172,15 +197,36 @@ coverage. Full write-up:
 
 ## 7. Notification, and the honest part
 
-**Only the `log` channel has a working implementation.**
-
-`email`, `push` and `voice` are honest stubs. They record a delivery-log row with
-status `not_configured` and a detail explaining exactly what is missing. **They
-never return success**, and nothing reports that an alert was delivered when it
-was not.
+Four channels. **`log` always works.** `email` delivers through an SMTP relay on
+the property network and `push` through a self-hosted, ntfy-compatible push
+server; each reports `sent` only when the relay or the server accepted the
+message, `failed` with the error when it did not, and `not_configured` — naming
+the exact setting that is missing — until it has been given its settings.
+**`voice` is an honest stub**: the CUCM VM is a planned functional position, not
+commissioned hardware, and the channel records `not_configured` rather than
+claim a call it cannot place. **Nothing reports that an alert was delivered
+when it was not.**
 
 An alerting path you believe in but that does not exist is worse than no
 alerting path.
+
+### Configuring email and push
+
+| Setting | Meaning |
+|---|---|
+| `CHAOS_NOTIFICATION_BACKENDS` | Which channels this node may use, e.g. `log,email,push`. A channel an escalation path names but this list omits is still recorded, as `not_configured` |
+| `CHAOS_NOTIFY_EMAIL_RECIPIENTS` | `role=addr,addr;role=addr` — email addresses per escalation role (`operator`, `on_call`, `maintainer`) |
+| `CHAOS_NOTIFY_SMTP_HOST`, `_PORT`, `_SECURITY` | The relay. `starttls` (default), `tls`, or `none` for a relay on a switched link inside the property |
+| `CHAOS_NOTIFY_SMTP_USERNAME`, `_PASSWORD`, `_FROM` | Relay credentials (optional) and the sender address |
+| `CHAOS_NOTIFY_PUSH_URL`, `CHAOS_NOTIFY_PUSH_TOKEN` | The push server and, if it requires one, a bearer token |
+| `CHAOS_NOTIFY_PUSH_TARGETS` | `role=topic,topic;role=topic` — push topics per escalation role |
+| `CHAOS_NOTIFY_RETRY_LIMIT`, `CHAOS_NOTIFY_RETRY_INTERVAL_S` | How many times, and how far apart, a failed delivery is retried (defaults 3 and 300) |
+
+A message to a role goes to every address or topic the role maps to. The push
+request is one JSON `POST` to the URL per topic, in the shape ntfy's publish
+API accepts — `{"topic", "title", "message", "priority"}` with `priority` 1–5
+derived from severity and `"tags": ["chaos", "<severity>", "stage-<n>"]` — with
+`Authorization: Bearer <token>` when a token is set. Any 2xx is `sent`.
 
 ### Routing rules
 
@@ -191,16 +237,20 @@ alerting path.
 | **Escalation is time-driven and explicit** | Stage *N* fires once its delay has elapsed since the alarm activated, and **only while the alarm is still unacknowledged** |
 | **Acknowledging stops escalation** | It does not clear the alarm |
 | **Re-notification** | Repeats the highest reached stage at a fixed interval for alarms that stay unacknowledged |
+| **A failed delivery is retried, bounded** | A stage counts as told on a channel once that channel's row says `sent`. A `failed` row is tried again on a later engine cycle — at most the retry limit, no sooner than the interval — and every attempt is its own row. A failed row is never mistaken for a delivered one |
 
 **Every attempt on every channel is a row**, so *"why did nobody get called"* is
-answerable after the fact. That log is on the console.
+answerable after the fact. That log is on the console, and the counts by channel
+and outcome are on `/metrics`.
 
 ### What this means for the acceptance criteria
 
 One of the platform's MVP criteria requires critical alarms to work during
-internet loss. With only `log` wired, that criterion is **not met** — a log line
-is not an alert. Meeting it needs a local audible or voice path, or an
-independent device path such as the environmental appliance's own alerting.
+internet loss. A log line is not an alert, so the criterion is met only once
+`email` or `push` is configured against a relay or push server **on the
+property network** and proven at
+[Commissioning § Step 10](./commissioning.md#step-10--alarm_and_notification_test) —
+which this repository cannot do on its own. `voice` remains unimplemented.
 Recorded as an open item in
 [Secondary control node § Open decisions](./secondary-control-node.md#6-open-decisions).
 
@@ -216,6 +266,19 @@ Recorded as an open item in
 
 Every action collects a mandatory reason. The API requires it, and the dialog
 exists so you learn that from the interface rather than from a rejection.
+
+### Alarm-triggered maintenance
+
+A maintenance plan with `trigger_type: alarm` (SDD 18, "alarm occurrence") is
+raised by the alarm engine itself: every cycle, after evaluation and
+correlation, each **activated, unsuppressed** alarm on the plan's asset raises
+the plan's work order — once per alarm occurrence, so the same alarm seen on
+the next cycle does not raise it again, and a completed work order is not
+reopened by the alarm that caused it. Symptom and flood members of an incident
+are suppressed and raise nothing; the root cause carries the work. The plan may
+name one `alarm_key` in its `condition_point`; blank means any alarm on the
+asset. Work is raised on the primary node only, for the same reason the
+secondary node runs no maintenance scheduler.
 
 ---
 

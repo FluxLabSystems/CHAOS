@@ -47,7 +47,7 @@ cannot grow without someone noticing.</p>
 <a href="troubleshooting.html">Troubleshooting</a></p>
 <hr>
 <h2 id="where-each-finding-shows-up" class="doc-h"><span class="doc-h-text">Where each finding shows up</span><a class="doc-anchor" href="#where-each-finding-shows-up" aria-label="Link to this section"></a></h2>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Finding</th><th scope="col">Severity</th><th scope="col">Where you see it</th></tr></thead><tbody><tr><td><a href="#f-001--five-asset-classes-cannot-represent-a-device-going-silent">F-001</a></td><td>high</td><td>Assets: safety sensors with no availability point</td></tr><tr><td><a href="#f-002--command_last_result-has-no-idle-value">F-002</a></td><td>low</td><td>The dead-letter list</td></tr><tr><td><a href="#f-003--energy_state-is-published-but-not-defined">F-003</a></td><td>medium</td><td>A steady stream of dead letters</td></tr><tr><td><a href="#f-004--automatic_control_allowed-is-semantically-overloaded">F-004</a></td><td>medium</td><td>Nowhere yet — and that is the problem. See <a href="control.html#8-a-safety-relevant-ambiguity-you-should-know-about">Control § A safety-relevant ambiguity</a></td></tr><tr><td><a href="#f-005--asset-id-schema-is-looser-than-the-identification-standard">F-005</a></td><td>low</td><td>Nowhere; latent</td></tr><tr><td><a href="#f-006--load-tiers-are-one-based-in-the-register-zero-based-in-the-sdd">F-006</a></td><td>medium</td><td>The Energy screen's load tiers</td></tr><tr><td><a href="#f-007--ten-of-the-forty-alarms-can-never-fire">F-007</a></td><td><strong>high</strong></td><td><strong>Ten <code>OUT OF SVC</code> tiles on <a href="annunciator.html">the annunciator</a></strong></td></tr><tr><td><a href="#f-007a--battery_cell_imbalance-the-original-case">F-007a</a></td><td>high</td><td>The same panel — the first case found</td></tr><tr><td><a href="#f-008--losing-the-power-container-takes-71-of-the-homestead-including-potable-water-pressure">F-008</a></td><td><strong>high</strong></td><td><strong><a href="topology-view.html#3-blast-radius">The topology screen's blast radius</a></strong></td></tr><tr><td><a href="#f-009--the-register-cannot-express-n1-redundancy">F-009</a></td><td>medium</td><td>The <code>caveats</code> on any impact result, and two blocking findings on <a href="rack-view.html#3-it-checks-the-document-rather-than-trusting-it">the rack elevation</a></td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Finding</th><th scope="col">Severity</th><th scope="col">Where you see it</th></tr></thead><tbody><tr><td><a href="#f-001--five-asset-classes-cannot-represent-a-device-going-silent">F-001</a></td><td>high</td><td>Assets: safety sensors with no availability point</td></tr><tr><td><a href="#f-002--command_last_result-has-no-idle-value">F-002</a></td><td>low</td><td>The dead-letter list</td></tr><tr><td><a href="#f-003--energy_state-is-published-but-not-defined">F-003</a></td><td>medium — <strong>resolved</strong></td><td>Nowhere any more: the point is defined and resolves</td></tr><tr><td><a href="#f-004--automatic_control_allowed-is-semantically-overloaded">F-004</a></td><td>medium</td><td>Nowhere yet — and that is the problem. See <a href="control.html#8-a-safety-relevant-ambiguity-you-should-know-about">Control § A safety-relevant ambiguity</a></td></tr><tr><td><a href="#f-005--asset-id-schema-is-looser-than-the-identification-standard">F-005</a></td><td>low</td><td>Nowhere; latent</td></tr><tr><td><a href="#f-006--load-tiers-are-one-based-in-the-register-zero-based-in-the-sdd">F-006</a></td><td>medium</td><td>The Energy screen's load tiers</td></tr><tr><td><a href="#f-007--ten-of-the-forty-alarms-can-never-fire">F-007</a></td><td><strong>high</strong></td><td><strong>Ten <code>OUT OF SVC</code> tiles on <a href="annunciator.html">the annunciator</a></strong></td></tr><tr><td><a href="#f-007a--battery_cell_imbalance-the-original-case">F-007a</a></td><td>high</td><td>The same panel — the first case found</td></tr><tr><td><a href="#f-008--losing-the-power-container-takes-71-of-the-homestead-including-potable-water-pressure">F-008</a></td><td><strong>high</strong></td><td><strong><a href="topology-view.html#3-blast-radius">The topology screen's blast radius</a></strong></td></tr><tr><td><a href="#f-009--the-register-cannot-express-n1-redundancy">F-009</a></td><td>medium</td><td>The <code>caveats</code> on any impact result, and two blocking findings on <a href="rack-view.html#3-it-checks-the-document-rather-than-trusting-it">the rack elevation</a></td></tr></tbody></table></div>
 <hr>
 <h2 id="f-001--five-asset-classes-cannot-represent-a-device-going-silent" class="doc-h"><span class="doc-h-text">F-001 — Five asset classes cannot represent a device going silent</span><a class="doc-anchor" href="#f-001--five-asset-classes-cannot-represent-a-device-going-silent" aria-label="Link to this section"></a></h2>
 <p><strong>Severity: high — affects safety monitoring</strong></p>
@@ -83,18 +83,31 @@ point until a command produces a result. The second is cleaner — absence of a
 value already means "no result."</p>
 <hr>
 <h2 id="f-003--energy_state-is-published-but-not-defined" class="doc-h"><span class="doc-h-text">F-003 — <code>energy_state</code> is published but not defined</span><a class="doc-anchor" href="#f-003--energy_state-is-published-but-not-defined" aria-label="Link to this section"></a></h2>
-<p><strong>Severity: medium — produces recurring noise</strong></p>
+<p><strong>Severity: medium — produces recurring noise. Status: resolved.</strong></p>
 <p>The EMS publishes the site energy state to
 <code>chaos/site/primary/site_01/energy_state</code> every tick (SDD section 13
-requires the EMS to publish a state that subsystems consume). <code>energy_state</code> is
-not in <code>data/point_dictionary.yaml</code>, so ingest dead-letters it on every
-evaluation.</p>
-<p>Nothing breaks, but a steady stream of dead letters is exactly the noise that
+requires the EMS to publish a state that subsystems consume). When this was
+found, <code>energy_state</code> was not in <code>data/point_dictionary.yaml</code>, so ingest
+dead-lettered it on every evaluation.</p>
+<p>Nothing broke, but a steady stream of dead letters is exactly the noise that
 masks genuine commissioning errors — which is the one thing the dead-letter
 queue exists to make visible.</p>
-<p><strong>Recommendation:</strong> define <code>energy_state</code> as a <code>CALC</code> point with the ten SDD
-30.7 state names as its enum, via an extension document following the
-<code>water_points.yaml</code> pattern, and give the site asset a profile that includes it.</p>
+<p><strong>Resolution:</strong> <code>energy_state</code> is now defined in <code>data/point_dictionary.yaml</code>
+as a <code>CALC</code> point whose enum is exactly the ten SDD 30.7 state names the state
+machine publishes, and the site asset carries it through a new <code>ems_site</code> point
+profile — the same pattern <code>ems_load</code> already uses for <code>power_budget_kw</code>. The
+definition is marked <code>dictionary_status: reconciled_v0_4</code>, the provenance rung
+<code>water_points.yaml</code> defines for a formal definition added after the v0.3 pass.</p>
+<p>The original recommendation was an extension document in the
+<code>water_points.yaml</code> style. It went into the base dictionary instead for one
+reason: the registry loader reads only the four core documents, and extension
+documents are deliberately <strong>not</strong> merged until the owner ratifies them
+(<a href="design-package.html#4-ratification-and-what-not-ratified-means">Design package § Ratification</a>).
+An extension would have left the dead letters exactly where they were. Unlike
+the water points, this point is not a design proposal: it is the platform's own
+output, and its vocabulary was already fixed by the code that publishes it.</p>
+<p><code>tests/test_registry_loader.py::test_energy_state_is_a_platform_owned_site_point</code>
+asserts that the published topic resolves against a freshly loaded registry.</p>
 <hr>
 <h2 id="f-004--automatic_control_allowed-is-semantically-overloaded" class="doc-h"><span class="doc-h-text">F-004 — <code>automatic_control_allowed</code> is semantically overloaded</span><a class="doc-anchor" href="#f-004--automatic_control_allowed-is-semantically-overloaded" aria-label="Link to this section"></a></h2>
 <p><strong>Severity: medium — latent safety consequence</strong></p>

@@ -8,9 +8,9 @@ node, with no browser, no cloud and no orchestration layer required
 Design rules for this module:
 
 1. **Subsystem imports are lazy.** ``chaos --help``, ``init-db``,
-   ``status``, ``backup`` and ``export`` must keep working even when the
-   registry loader, EMS, alarm engine, ingest or simulator packages are absent
-   or broken. A missing subsystem is reported with an actionable message and a
+   ``status``, ``backup``, ``restore`` and ``export`` must keep working even
+   when the registry loader, EMS, alarm engine, ingest or simulator packages
+   are absent or broken. A missing subsystem is reported with an actionable message and a
    dedicated exit code, never a traceback.
 2. **Every failure exits non-zero.** Exit codes: ``0`` success, ``1`` runtime
    failure, ``2`` usage error (argparse), ``3`` subsystem unavailable.
@@ -450,6 +450,16 @@ EXPORT_CHOICES = tuple(EXPORT_GROUPS) + ("all",)
 #: Timestamp column used by ``--since`` / ``--until``, first match wins.
 _TIME_COLUMNS = ("ts", "occurred_at", "detected_at", "sent_at", "issued_at", "created_at")
 
+#: ``manifest.json`` layout written by ``backup`` and accepted by ``restore``.
+#: Bump it when the archive layout changes incompatibly; ``restore`` refuses an
+#: archive whose version it does not know rather than guessing at its shape.
+BACKUP_KIND = "chaos-backup"
+BACKUP_FORMAT_VERSION = 1
+
+#: Rows per INSERT when restoring, so a large historian dump does not become a
+#: single statement the database has to hold in memory.
+RESTORE_BATCH_SIZE = 500
+
 
 def _time_column(table: Any):
     for name in _TIME_COLUMNS:
@@ -479,6 +489,185 @@ def _dump_table(
     if limit:
         statement = statement.limit(limit)
     return [dict(row) for row in session.execute(statement).mappings()]
+
+
+# ---------------------------------------------------------------------------
+# Backup archives (read side)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class BackupBundle:
+    """A ``chaos backup`` archive, read into memory and checked for shape."""
+
+    path: Path
+    manifest: dict[str, Any]
+    tables: dict[str, list[dict[str, Any]]]
+
+
+def _safe_member_name(name: str) -> bool:
+    """Archive members are read by name, never extracted; reject odd names anyway."""
+    return bool(name) and not name.startswith(("/", "\\")) and ".." not in name.split("/")
+
+
+def read_backup_archive(path: Path) -> BackupBundle:
+    """Read ``manifest.json`` and every ``tables/*.json`` from a backup archive.
+
+    Raises :class:`CommandError` for anything that is not a well-formed archive
+    of a known format version. Nothing is written to disk: the members are
+    streamed out of the tar directly, so a crafted archive cannot place files.
+    """
+    try:
+        with tarfile.open(path, "r:*") as tar:
+            members = {m.name: m for m in tar.getmembers() if m.isfile() and _safe_member_name(m.name)}
+            if "manifest.json" not in members:
+                raise CommandError(
+                    f"{path} is not a chaos backup: it has no manifest.json",
+                    hint="Archives written by 'chaos backup' carry manifest.json at the top level.",
+                )
+            manifest = _load_json_member(tar, members["manifest.json"], "manifest.json")
+            tables: dict[str, list[dict[str, Any]]] = {}
+            for name in sorted(members):
+                if not (name.startswith("tables/") and name.endswith(".json")):
+                    continue
+                table_name = name[len("tables/") : -len(".json")]
+                rows = _load_json_member(tar, members[name], name)
+                if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+                    raise CommandError(f"{name} in {path} is not a JSON array of row objects")
+                tables[table_name] = rows
+    except tarfile.TarError as exc:
+        raise CommandError(f"Could not read {path}: {exc}") from exc
+    except OSError as exc:
+        raise CommandError(f"Could not open {path}: {exc}") from exc
+
+    if not isinstance(manifest, dict):
+        raise CommandError(f"manifest.json in {path} is not a JSON object")
+    problems = validate_backup_manifest(manifest, tables)
+    if problems:
+        raise CommandError(
+            f"{path} failed manifest validation: " + "; ".join(problems),
+            hint="Only an unmodified archive written by 'chaos backup' can be restored.",
+        )
+    return BackupBundle(path=path, manifest=manifest, tables=tables)
+
+
+def _load_json_member(tar: tarfile.TarFile, member: tarfile.TarInfo, label: str) -> Any:
+    handle = tar.extractfile(member)
+    if handle is None:
+        raise CommandError(f"{label} could not be read from the archive")
+    try:
+        return json.loads(handle.read().decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise CommandError(f"{label} is not valid JSON: {exc}") from exc
+
+
+def validate_backup_manifest(manifest: dict[str, Any], tables: dict[str, list[dict[str, Any]]]) -> list[str]:
+    """Check the manifest against itself and against the table files present."""
+    problems: list[str] = []
+    if manifest.get("kind") != BACKUP_KIND:
+        problems.append(f"kind is {manifest.get('kind')!r}, expected {BACKUP_KIND!r}")
+    version = manifest.get("format_version")
+    if version != BACKUP_FORMAT_VERSION:
+        problems.append(
+            f"format_version {version!r} is not supported (this platform reads {BACKUP_FORMAT_VERSION})"
+        )
+    if not manifest.get("created_at"):
+        problems.append("created_at is missing")
+    row_counts = manifest.get("row_counts")
+    if not isinstance(row_counts, dict):
+        problems.append("row_counts is missing or not an object")
+        return problems
+    for name, expected in sorted(row_counts.items()):
+        if name not in tables:
+            problems.append(f"manifest lists table {name!r} but tables/{name}.json is absent")
+            continue
+        actual = len(tables[name])
+        if actual != expected:
+            problems.append(f"tables/{name}.json holds {actual} row(s), manifest says {expected}")
+    for name in sorted(set(tables) - set(row_counts)):
+        problems.append(f"tables/{name}.json is present but not listed in the manifest")
+    return problems
+
+
+def _coerce_rows(table: Any, rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Shape JSON rows for ``table``: parse timestamps, drop unknown columns.
+
+    The dump is JSON, so every timestamp arrived as an ISO-8601 string and must
+    go back as a ``datetime`` (SQLite's DateTime type accepts nothing else).
+    Columns the archive carries that this platform no longer declares are
+    dropped and reported; columns this platform declares that the archive
+    lacks are left out of the INSERT so the model's defaults apply.
+    """
+    from sqlalchemy import sql
+
+    columns = {column.name: column for column in table.columns}
+    unknown: set[str] = set()
+    present = [name for name in (rows[0] if rows else {}) if name in columns]
+    shaped: list[dict[str, Any]] = []
+    for row in rows:
+        unknown.update(key for key in row if key not in columns)
+        out: dict[str, Any] = {}
+        for name in present:
+            value = row.get(name)
+            column = columns[name]
+            if value is not None and isinstance(column.type, sql.sqltypes.DateTime):
+                value = _parse_restored_timestamp(value, f"{table.name}.{name}")
+            elif value is not None and isinstance(column.type, sql.sqltypes.Date):
+                value = dt.date.fromisoformat(str(value))
+            elif value is not None and isinstance(column.type, sql.sqltypes.Time):
+                value = dt.time.fromisoformat(str(value))
+            out[name] = value
+        shaped.append(out)
+    return shaped, sorted(unknown)
+
+
+def _parse_restored_timestamp(value: Any, label: str) -> dt.datetime:
+    if isinstance(value, dt.datetime):
+        return value
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise CommandError(f"{label} holds {value!r}, which is not an ISO-8601 timestamp") from exc
+    # Every timestamp the platform writes is UTC (SDD 16.3); SQLite dumps come
+    # back naive, and naive means UTC here.
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=dt.UTC)
+
+
+def _order_for_self_references(table: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Put parents before children for a table that references itself.
+
+    ``assets.parent_id`` points at ``assets.asset_id``, and the database
+    enforces it on every INSERT, so a child dumped before its parent would
+    fail to restore. Rows are emitted in waves: those whose parent is absent
+    or already emitted first, the rest once their parent has landed. Anything
+    left over (a dangling parent, a cycle) keeps its dump order and is left
+    for the database to judge.
+    """
+    pairs = [(fk.parent.name, fk.column.name) for fk in table.foreign_keys if fk.column.table is table]
+    if not pairs or not rows:
+        return rows
+    ordered: list[dict[str, Any]] = []
+    emitted: set[Any] = set()
+    pending = list(rows)
+    while pending:
+        progressed = False
+        remaining: list[dict[str, Any]] = []
+        for row in pending:
+            waits_on = [row.get(child) for child, _parent in pairs]
+            if all(value is None or value in emitted for value in waits_on):
+                ordered.append(row)
+                emitted.update(row.get(parent) for _child, parent in pairs)
+                progressed = True
+            else:
+                remaining.append(row)
+        pending = remaining
+        if not progressed:
+            ordered.extend(pending)
+            break
+    return ordered
 
 
 def _parse_timestamp(value: str | None, label: str) -> dt.datetime | None:
@@ -818,8 +1007,8 @@ def cmd_backup(args: argparse.Namespace) -> int:
             dumps[name] = _dump_table(session, table)
 
     manifest = {
-        "kind": "chaos-backup",
-        "format_version": 1,
+        "kind": BACKUP_KIND,
+        "format_version": BACKUP_FORMAT_VERSION,
         "created_at": now.isoformat(),
         "platform_version": __version__,
         "node_role": settings.node_role,
@@ -842,10 +1031,16 @@ def cmd_backup(args: argparse.Namespace) -> int:
         "  tables/*.json      one JSON array per database table\n"
         "  design-package/    data/*.yaml|json and schemas/*.json as loaded on this node\n\n"
         "Restore\n"
-        "  1. chaos init-db\n"
-        "  2. chaos load-all              # rebuild from the design package, or\n"
-        "  2b. restore tables/*.json with your own loader if the package has since changed\n"
-        "  3. chaos status                # confirm counts match manifest.json\n\n"
+        "  1. chaos init-db                      # on the target node, CHAOS_DATABASE_URL set\n"
+        "  2. chaos restore <this archive>       # validates manifest.json, restores every\n"
+        "                                        # tables/*.json in dependency order, in one\n"
+        "                                        # transaction; refuses a database that already\n"
+        "                                        # holds rows unless --force replaces them\n"
+        "  3. chaos status                       # confirm counts match manifest.json\n\n"
+        "  chaos restore --dry-run <this archive> reports what would happen and writes nothing.\n"
+        "  Alternatively 'chaos load-all' rebuilds the registry, load schedule and alarm\n"
+        "  definitions from design-package/ -- registry content only: no alarm or command\n"
+        "  history, no work orders, no notification log.\n\n"
         "This archive contains no MQTT, database or notification credentials. Those are\n"
         "per-device and must be re-issued, not restored (SDD section 15.2).\n\n"
         "Keep at least one copy off the property and one copy offline (SDD sections 15.8, 16.1).\n"
@@ -894,6 +1089,111 @@ def cmd_backup(args: argparse.Namespace) -> int:
     if missing_tables:
         print(f"Absent   : {len(missing_tables)} declared table(s) not present in this database")
     print("Copy this archive off the property and keep one offline copy (SDD 15.8, 16.1).")
+    return EXIT_OK
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    """Restore a ``chaos backup`` archive into the configured database.
+
+    The archive is validated before anything is touched, the restore refuses a
+    database that already holds rows unless ``--force`` says to replace them,
+    every table goes in inside one transaction in foreign-key dependency order,
+    and the row counts are checked against the manifest before the commit. A
+    restore that fails half-way leaves the database exactly as it was.
+    """
+    settings = build_settings(args)
+    archive = Path(args.archive)
+    if not archive.is_file():
+        raise CommandError(f"Backup archive not found: {archive}")
+    bundle = read_backup_archive(archive)
+    manifest = bundle.manifest
+
+    metadata = _metadata()
+    undeclared = sorted(name for name in bundle.tables if name not in metadata.tables)
+    if undeclared:
+        raise CommandError(
+            "The archive holds tables this platform does not declare: " + ", ".join(undeclared),
+            hint=(
+                f"The archive was written by chaos {manifest.get('platform_version')}; this is "
+                f"chaos {__version__}. Restore with the version that wrote it, or export the "
+                "rows by hand."
+            ),
+        )
+    if manifest.get("platform_version") != __version__:
+        print(
+            f"Note: archive written by chaos {manifest.get('platform_version')}, "
+            f"restoring with chaos {__version__}."
+        )
+
+    ordered = [table for table in metadata.sorted_tables if table.name in bundle.tables]
+    total_rows = sum(len(rows) for rows in bundle.tables.values())
+
+    with open_session(settings, create=True) as session:
+        occupied = {table.name: count for table in ordered if (count := _count(session, table)) > 0}
+        if occupied and not args.force:
+            listing = ", ".join(f"{name} ({count})" for name, count in sorted(occupied.items()))
+            raise CommandError(
+                f"Refusing to restore onto a database that already holds rows: {listing}",
+                hint=(
+                    "Restore into an empty database (chaos init-db on a fresh CHAOS_DATABASE_URL), "
+                    "or pass --force to delete the rows of every table in the archive first. "
+                    "--force never touches tables the archive does not contain, except through "
+                    "foreign-key cascades."
+                ),
+            )
+
+        print(f"Archive  : {archive}")
+        print(
+            f"Created  : {manifest.get('created_at')} by chaos {manifest.get('platform_version')} "
+            f"on a {manifest.get('node_role')} node"
+        )
+        print(f"Database : {redact_url(settings.database_url)}")
+        if occupied:
+            print(f"Replacing: {len(occupied)} table(s) already holding rows (--force)")
+
+        if args.dry_run:
+            print(f"Dry run  : would restore {len(ordered)} table(s), {total_rows} row(s); nothing written")
+            for table in ordered:
+                print(f"  {table.name.ljust(28)} {len(bundle.tables[table.name])}")
+            return EXIT_OK
+
+        dropped_columns: dict[str, list[str]] = {}
+        try:
+            for table in reversed(ordered):
+                if table.name in occupied:
+                    session.execute(table.delete())
+            for table in ordered:
+                rows, unknown = _coerce_rows(table, bundle.tables[table.name])
+                if unknown:
+                    dropped_columns[table.name] = unknown
+                rows = _order_for_self_references(table, rows)
+                for start in range(0, len(rows), RESTORE_BATCH_SIZE):
+                    session.execute(table.insert(), rows[start : start + RESTORE_BATCH_SIZE])
+                restored = _count(session, table)
+                expected = len(bundle.tables[table.name])
+                if restored != expected:
+                    raise CommandError(
+                        f"{table.name}: {restored} row(s) present after restore, archive holds {expected}"
+                    )
+            session.commit()
+        except CommandError:
+            session.rollback()
+            raise
+        except Exception as exc:
+            session.rollback()
+            raise CommandError(
+                f"Restore failed and was rolled back: {type(exc).__name__}: {exc}",
+                hint="The database is unchanged. Fix the cause and run the restore again.",
+            ) from exc
+
+    print(f"Restored : {len(ordered)} table(s), {total_rows} row(s), in one transaction")
+    for name, columns in sorted(dropped_columns.items()):
+        print(f"  {name}: archive columns not declared by this platform were skipped: {', '.join(columns)}")
+    absent = sorted(set(manifest.get("tables_absent") or []))
+    if absent:
+        print(f"Absent   : {len(absent)} table(s) were not present when the backup was taken")
+    print("Verify   : chaos status -- the counts should match manifest.json")
+    print("Credentials are not in the archive and must be re-issued (SDD section 15.2).")
     return EXIT_OK
 
 
@@ -1363,6 +1663,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also dump telemetry_samples and ingest_dead_letters (large).",
     )
     backup.set_defaults(func=cmd_backup)
+
+    # --- restore --------------------------------------------------------
+    restore = subparsers.add_parser(
+        "restore",
+        help="Restore a 'chaos backup' archive into the configured database.",
+        description=(
+            "Validate the archive's manifest, then restore every table it holds in foreign-key "
+            "dependency order inside one transaction. Refuses a database that already holds rows "
+            "unless --force replaces them. Credentials are never in the archive and are not restored."
+        ),
+    )
+    restore.add_argument("archive", help="Path to a .tar.gz written by 'chaos backup'.")
+    restore.add_argument(
+        "--force",
+        action="store_true",
+        help="Delete the existing rows of every table in the archive before restoring.",
+    )
+    restore.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the archive and report what would be restored without writing anything.",
+    )
+    restore.set_defaults(func=cmd_restore)
 
     # --- status ---------------------------------------------------------
     status = subparsers.add_parser(

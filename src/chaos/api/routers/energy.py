@@ -27,11 +27,12 @@ from sqlalchemy.orm import Session
 from chaos.api.deps import AppSettings, Bus, CurrentPrincipal, DbSession, OperatorPrincipal
 from chaos.config import Settings
 from chaos.ems.config import DEFAULT_CONFIG, EmsConfig, energy_state_topic
-from chaos.ems.derived import DerivedEnergyState, LoadSnapshot, compute_derived
+from chaos.ems.derived import DerivedEnergyState, compute_derived
+from chaos.ems.forecast import registry_forecast
 from chaos.ems.inputs import EmsInputs, gather_inputs
 from chaos.ems.leases import LeaseManager, summarise_leases
-from chaos.ems.loader import effective_tier, load_profiles
-from chaos.ems.shedding import current_load_states, recent_actions, summarise_loads
+from chaos.ems.loader import load_profiles
+from chaos.ems.shedding import LoadState, current_load_states, load_snapshots, recent_actions, summarise_loads
 from chaos.ems.state_machine import (
     EnergyStateMachine,
     LatchError,
@@ -49,25 +50,26 @@ def _config() -> EmsConfig:
     return DEFAULT_CONFIG
 
 
-def _evaluate(session: Session, now: dt.datetime) -> tuple[EmsInputs, DerivedEnergyState, list]:
-    """Read-only evaluation used by the dashboard and the lease endpoints."""
+def _evaluate(
+    session: Session, now: dt.datetime, settings: Settings
+) -> tuple[EmsInputs, DerivedEnergyState, list, dict[str, LoadState]]:
+    """Read-only evaluation used by the dashboard and the lease endpoints.
+
+    Mirrors one service tick: the live shed state feeds the derived layer and
+    the PV forecast is the registry-derived clear-sky model.
+    """
     config = _config()
     profiles = load_profiles(session)
     inputs = gather_inputs(session, now, config, load_asset_ids=[profile.asset_id for profile in profiles])
+    states = current_load_states(session, inputs, now=now, config=config)
     derived = compute_derived(
         inputs,
         config,
         now=now,
-        loads=[
-            LoadSnapshot(
-                asset_id=profile.asset_id,
-                tier=effective_tier(profile, now),
-                estimated_power_kw=profile.estimated_power_kw,
-            )
-            for profile in profiles
-        ],
+        forecast=registry_forecast(session, site_id=settings.site_id),
+        loads=load_snapshots(states, now=now),
     )
-    return inputs, derived, profiles
+    return inputs, derived, profiles, states
 
 
 def _snapshot_payload(snapshot, settings: Settings) -> dict[str, Any]:
@@ -216,18 +218,19 @@ def get_load_budgets(session: DbSession, settings: AppSettings) -> dict[str, Any
     now = utcnow()
     config = _config()
     manager = LeaseManager(config)
-    inputs, derived, profiles = _evaluate(session, now)
+    _, derived, _, states = _evaluate(session, now, settings)
     snapshot = ensure_snapshot(session, now=now)
     session.commit()
 
     active = manager.active_leases(session, now)
     grantable = manager.grantable_kw(derived)
     granted = manager.granted_kw(session, now)
-    states = current_load_states(session, inputs, now=now, config=config)
 
     return {
         "energy_state": snapshot.state,
         "grantable_surplus_kw": grantable,
+        "sustained_grantable_kw": manager.sustained_grantable_kw(derived),
+        "surplus_minimum_window_min": config.surplus_minimum_window_min,
         "granted_kw": granted,
         "remaining_kw": None if grantable is None else grantable - granted,
         "surplus_fraction": config.lease_surplus_fraction,
@@ -274,7 +277,7 @@ def create_reservation(
 ) -> dict[str, Any]:
     now = utcnow()
     manager = LeaseManager(_config())
-    _, derived, _ = _evaluate(session, now)
+    _, derived, _, _ = _evaluate(session, now, settings)
     snapshot = ensure_snapshot(session, now=now)
     try:
         decision = manager.request(
@@ -335,11 +338,10 @@ def revoke_reservation(
 
 
 @router.get("/loads", summary="The load schedule with current shed state")
-def get_loads(session: DbSession) -> dict[str, Any]:
+def get_loads(session: DbSession, settings: AppSettings) -> dict[str, Any]:
     now = utcnow()
     config = _config()
-    inputs, _, profiles = _evaluate(session, now)
-    states = current_load_states(session, inputs, now=now, config=config)
+    _, _, _, states = _evaluate(session, now, settings)
     session.commit()
     rows = summarise_loads(states.values())
     return {
@@ -388,10 +390,9 @@ def get_shed_actions(
 def get_dashboard(session: DbSession, settings: AppSettings, principal: CurrentPrincipal) -> dict[str, Any]:
     now = utcnow()
     config = _config()
-    inputs, derived, profiles = _evaluate(session, now)
+    inputs, derived, _, states = _evaluate(session, now, settings)
     snapshot = ensure_snapshot(session, now=now)
     manager = LeaseManager(config)
-    states = current_load_states(session, inputs, now=now, config=config)
     session.commit()
 
     measured = {

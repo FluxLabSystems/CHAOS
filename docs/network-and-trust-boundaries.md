@@ -275,7 +275,7 @@ publish telemetry but never commands, not even to themselves.
 | UPS, PDUs, rack ATS, NetBotz | SNMPv3 authPriv per device + local admin account | **Open** — credentials not issued |
 | Servers (iDRAC/Redfish) | Per-host credential, MGMT zone only | **Open** |
 | Inverters, BMS, generator | Vendor-dependent | **Open** — SDD 22.6 has not selected the products |
-| MQTT clients | Password now, client certificate later | Password path implemented; TLS listener present but disabled |
+| MQTT clients | Password now, client certificate later | Password path implemented; TLS verification against the property's private CA implemented in the platform (`CHAOS_MQTT_TLS_CA`, with `CHAOS_MQTT_TLS_CERT`/`_KEY` for the client-certificate step); the broker's TLS listener is present but disabled until certificates are issued |
 
 Every row marked "Open" is a credential that does not exist yet, not one that has
 been issued and omitted from this document.
@@ -330,7 +330,7 @@ the identity that owns that asset prefix.
 | 1 | Host addressing: gateway IPs, DHCP scopes, static assignments | SDD 49 item 4 |
 | 2 | Switch port, VLAN and PDU outlet assignment per device | SDD 49 item 4 |
 | 3 | Remote-access architecture: VPN product, MFA provider, offsite backup target | SDD open decision 22.9 |
-| 4 | TLS: private CA, certificate issuance and rotation for brokers and gateways | Deployment decision; broker config is ready |
+| 4 | TLS: private CA, certificate issuance and rotation for brokers and gateways | Deployment decision. The broker config and the platform's client side are ready: `CHAOS_MQTT_TLS=true` with `CHAOS_MQTT_TLS_CA` verifies the broker against the private CA, `CHAOS_MQTT_TLS_CERT`/`CHAOS_MQTT_TLS_KEY` present a client certificate once the broker requires one, and verification cannot be relaxed except by the explicit, logged `CHAOS_MQTT_TLS_INSECURE`. What remains is issuing the certificates and the rotation procedure |
 | 5 | Network AAA: TACACS+/RADIUS versus local accounts on switches and router | Not yet raised in the SDD |
 | 6 | Inverter, BMS and generator protocols and ports | SDD open decision 22.6 — the register records `modbus_tcp_or_vendor_api_TBD`. Related: `docs/design-decisions/DD-004-controller-family.md` |
 | 7 | Voice signalling: SCCP versus SIP | Register records `SCCP_or_SIP_TBD` |

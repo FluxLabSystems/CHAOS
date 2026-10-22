@@ -67,6 +67,16 @@ internal sealed class ChaosHostOptionsValidator : IValidateOptions<ChaosHostOpti
 
         ValidateDocs(failures, options);
 
+        if (options.LogFileMaxBytes < 1024)
+        {
+            failures.Add($"Chaos:LogFileMaxBytes must be at least 1024; got {options.LogFileMaxBytes}.");
+        }
+
+        if (options.LogFilesRetained < 0)
+        {
+            failures.Add($"Chaos:LogFilesRetained must not be negative; got {options.LogFilesRetained}.");
+        }
+
         RequirePositive(failures, nameof(ChaosHostOptions.SetupTimeout), options.SetupTimeout);
         RequirePositive(failures, nameof(ChaosHostOptions.SetupProbeTimeout), options.SetupProbeTimeout);
         RequirePositive(failures, nameof(ChaosHostOptions.SetupCommandTimeout), options.SetupCommandTimeout);

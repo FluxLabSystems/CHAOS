@@ -91,8 +91,9 @@ public static class AnnunciatorPanelBuilder
             // `domain` is nullable in the schema. Python would raise on a null
             // here (it calls .upper() on it); this side groups such tiles under
             // an empty-string bay so the panel still renders every definition.
-            // No shipped definition has a null domain — see the note in
-            // docs/dotnet-migration.md.
+            // No shipped definition has a null domain and the conformance
+            // harness (tests/test_dotnet_conformance.py) seeds none, so this
+            // branch is a .NET-only choice until the Python side meets one.
             var domainKey = definition.Domain ?? string.Empty;
             if (!bays.TryGetValue(domainKey, out var tiles))
             {

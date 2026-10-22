@@ -9,7 +9,6 @@ timestamp rather than by waiting.
 from __future__ import annotations
 
 import datetime as dt
-import importlib.util
 import json
 
 import pytest
@@ -738,6 +737,129 @@ def test_event_without_a_registered_point_is_dead_lettered(db_session, bus, serv
     assert letter.reason.startswith("unresolved_event_point")
 
 
+# ---------------------------------------------------------------------------
+# The platform's own publications on the alarm and event topics
+# ---------------------------------------------------------------------------
+
+
+def _ems_alarm(asset_id: str, key: str, **detail) -> bytes:
+    return EventEnvelope(asset_id=asset_id, event=key, detail=detail, source="ems", ts=T0).to_payload()
+
+
+def test_platform_alarm_publications_become_real_alarms(db_session, bus, service, soc_point):
+    from chaos.models.alarms import Alarm, AlarmDefinition
+
+    db_session.add(AlarmDefinition(alarm_key="load_shed_failed", name="Load shed failed", severity="major"))
+    db_session.commit()
+    started(service)
+    topic = topics.alarm_topic(BATTERY, "load_shed_failed")
+
+    bus.publish(topic, _ems_alarm(BATTERY, "load_shed_failed", severity="major", stage="dispatch"))
+    refresh_view(db_session)
+    assert db_session.query(IngestDeadLetter).count() == 0
+    alarm = db_session.query(Alarm).one()
+    assert alarm.alarm_key == "load_shed_failed" and alarm.state == "active"
+    assert service.counters["platform_alarms_raised"] == 1
+    assert service.counters["dead_lettered"] == 0
+
+    bus.publish(topic, _ems_alarm(BATTERY, "load_shed_failed", severity="major", stage="confirmation"))
+    refresh_view(db_session)
+    assert service.counters["platform_alarms_reasserted"] == 1
+    assert db_session.query(Alarm).count() == 1
+
+    bus.publish(topic, _ems_alarm(BATTERY, "load_shed_failed", state="cleared"))
+    refresh_view(db_session)
+    assert service.counters["platform_alarms_cleared"] == 1
+    assert db_session.query(Alarm).one().state == "cleared"
+
+    # Each lifecycle change was echoed on the bus by the evaluator with
+    # source="alarm-engine"; the echo is counted, never stored or dead-lettered.
+    assert service.counters["platform_alarm_echoes"] >= 2
+    assert service.counters["platform_events_received"] == 3 + service.counters["platform_alarm_echoes"]
+    assert db_session.query(IngestDeadLetter).count() == 0
+
+
+def test_platform_events_without_a_definition_are_counted_not_dead_lettered(
+    db_session, bus, service, soc_point
+):
+    started(service)
+    bus.publish(
+        topics.alarm_topic(BATTERY, "load_shed_requested"),
+        _ems_alarm(BATTERY, "load_shed_requested", severity="info", group="S3"),
+    )
+    # The generator is not even in this registry: the publisher names the asset.
+    generator = "energy.generator.site.01"
+    bus.publish(
+        topics.event_topic(generator, "generator_start_requested"),
+        _ems_alarm(generator, "generator_start_requested", cause="reserve"),
+    )
+
+    refresh_view(db_session)
+    assert db_session.query(IngestDeadLetter).count() == 0
+    assert service.counters["platform_events_unbound"] == 2
+    assert service.counters["unresolved_topics"] == 0
+    assert service.stats()["platform_unbound"] == {"generator_start_requested": 1, "load_shed_requested": 1}
+
+
+def test_the_alarm_engines_own_echo_is_not_fed_back(db_session, bus, service, soc_point):
+    from chaos.models.alarms import Alarm, AlarmDefinition
+
+    db_session.add(AlarmDefinition(alarm_key="battery_soc_low", name="SOC low", severity="major"))
+    db_session.commit()
+    started(service)
+    bus.publish(
+        topics.alarm_topic(BATTERY, "battery_soc_low"),
+        EventEnvelope(
+            asset_id=BATTERY,
+            event="battery_soc_low",
+            detail={"alarm_id": "abc", "state": "active", "severity": "major"},
+            source="alarm-engine",
+            ts=T0,
+        ).to_payload(),
+    )
+    refresh_view(db_session)
+    assert db_session.query(Alarm).count() == 0
+    assert db_session.query(IngestDeadLetter).count() == 0
+    assert service.counters["platform_alarm_echoes"] == 1
+
+
+def test_platform_events_still_land_on_a_registered_point(db_session, bus, service, registry):
+    point = registry.point(GATE, "motion_event", data_type="object", point_class="EVENT")
+    started(service)
+    bus.publish(
+        topics.event_topic(GATE, "motion_event"),
+        EventEnvelope(
+            asset_id=GATE, event="motion_event", detail={"zone": "north"}, source="ems", ts=T0
+        ).to_payload(),
+    )
+    refresh_view(db_session)
+    state = db_session.get(CurrentState, point.point_id)
+    assert state.value_json == {"zone": "north"}
+    assert state.source == "ems"
+    assert service.counters["platform_events_materialised"] == 1
+    assert service.counters["dead_lettered"] == 0
+
+
+def test_a_failing_alarm_sink_is_dead_lettered_under_its_own_reason(
+    db_session, bus, session_factory, settings, soc_point
+):
+    def sink(session, envelope, now):
+        raise RuntimeError("alarm store on fire")
+
+    svc = IngestService(
+        session_factory, bus, settings, auto_sweep=False, clock=lambda: T0, platform_alarm_sink=sink
+    )
+    svc.start()
+    try:
+        bus.publish(topics.alarm_topic(BATTERY, "load_shed_failed"), _ems_alarm(BATTERY, "load_shed_failed"))
+    finally:
+        svc.stop()
+    refresh_view(db_session)
+    letter = db_session.query(IngestDeadLetter).one()
+    assert letter.reason.startswith("platform_alarm_error: RuntimeError")
+    assert svc.counters["handler_errors"] == 1
+
+
 def test_topic_and_envelope_disagreement_resolves_via_the_registry(
     db_session, bus, service, registry, soc_point
 ):
@@ -981,16 +1103,6 @@ def test_retention_deletes_raw_rows_that_never_named_a_source(db_session, writer
 # ---------------------------------------------------------------------------
 
 
-def _registry_loader_available() -> bool:
-    try:
-        return importlib.util.find_spec("chaos.registry.loader") is not None
-    except ModuleNotFoundError:
-        return False
-
-
-@pytest.mark.skipif(
-    not _registry_loader_available(), reason="registry loader not present in this working tree"
-)
 def test_end_to_end_against_the_loaded_register(loaded_registry, db_session, bus, session_factory, settings):
     """The 90-asset register must be ingestable with no per-point wiring.
 

@@ -1,21 +1,27 @@
 """The NetBotz reference plugin.
 
-The transport this release ships is a stub, and these tests are careful to hold
-that stub to the standard the rest of the platform is held to: it must return
-nothing, say why, and never let ``not_configured`` be mistaken for ``ok``. The
-mapping, identity routing, API and health reporting *are* complete, so those are
-tested against the real v0.3 design package rather than against invented assets
--- including one end-to-end pass where a scripted appliance's readings become
-current state on the real ``it.environmental_monitor.rack_01.nbrk0550_01``.
+Two transports ship. The HTTPS one reads a NetBotz 5.x appliance's REST API
+and is exercised here through ``httpx.MockTransport``: what the appliance
+answers is scripted, and the tests pin that TLS is never relaxed, that the
+confirmed assets operation proves reachability, that readings are parsed only
+through the configured field map, and that every failure -- a 404, a response
+of the wrong shape, items without the configured fields -- is loud rather than
+a fabricated reading. The SNMP one is a stub held to the standard the rest of
+the platform is held to: it returns nothing, says why, and never lets
+``not_configured`` be mistaken for ``ok``.
 
-If somebody later implements SNMP, the only thing here that should need to
-change is :class:`ScriptedTransport` gaining a sibling.
+The mapping, identity routing, API and health reporting are tested against the
+real v0.3 design package rather than invented assets -- including end-to-end
+passes where an appliance's readings become current state on the real
+``it.environmental_monitor.rack_01.nbrk0550_01``.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import json
 
+import httpx
 import pytest
 
 from chaos import topics
@@ -30,10 +36,14 @@ from chaos.plugins.netbotz.client import (
     TRANSPORT_HTTP,
     TRANSPORT_NONE,
     TRANSPORT_SNMP,
+    HttpTransport,
+    HttpTransportConfig,
     NetBotzEnclosure,
     NetBotzSensorReading,
+    NetBotzTransportError,
     UnconfiguredTransport,
     build_transport,
+    parse_appliance_time,
 )
 from chaos.plugins.netbotz.mirror import ID_TYPE, PROTOCOL, NetBotzMirrorSource
 from chaos.plugins.spec import HEALTH_DEGRADED, HEALTH_NOT_CONFIGURED, HEALTH_OK, PluginContext
@@ -213,12 +223,13 @@ def test_no_transport_is_selected_by_default():
     assert transport.enclosures() == ()
 
 
-def test_a_selected_transport_still_reports_that_it_is_unimplemented():
+def test_snmp_still_reports_that_it_is_unimplemented():
     """This release has no SNMP. Saying otherwise would be the dangerous bug."""
     transport = build_transport(TRANSPORT_SNMP, "10.10.10.40")
     assert transport.configured is False
     assert "no implementation in this release" in transport.reason
     assert "SNMP client library" in transport.requirement
+    assert "NETBOTZV2-MIB" in transport.requirement
     assert transport.read() == ()
 
 
@@ -487,3 +498,353 @@ def test_the_plugin_loads_on_the_secondary_node():
     settings = Settings(database_url="sqlite://", mqtt_enabled=False, node_role="secondary")
     record = PluginManager.discover(settings, environ={}).get("netbotz")
     assert record is not None and record.loaded
+
+
+# ---------------------------------------------------------------------------
+# The HTTPS transport, against a scripted appliance
+# ---------------------------------------------------------------------------
+
+HOST = "netbotz.lan"
+ASSETS = [
+    {"id": "nbrk0550-01", "label": "Rack monitor", "model": "NBRK0550", "firmware": "5.1.2"},
+    {"id": "camera-22", "label": "Door camera"},
+]
+SENSORS = [
+    {
+        "id": "temp-1",
+        "type": "temperature",
+        "value": 24.5,
+        "unit": "C",
+        "label": "Rack top",
+        "timestamp": 1780000000000,
+    },
+    {
+        "id": "humi-1",
+        "type": "humidity",
+        "value": 38,
+        "unit": "%",
+        "label": "Rack top",
+        "timestamp": 1780000000000,
+    },
+]
+
+
+class Appliance:
+    """A scripted NetBotz REST API behind httpx.MockTransport."""
+
+    def __init__(self, *, assets=None, readings=None, status=200, body=None, login=False):
+        self.assets = ASSETS if assets is None else assets
+        self.readings = SENSORS if readings is None else readings
+        self.status = status
+        self.body = body
+        self.login = login
+        self.requests: list[httpx.Request] = []
+        self.logins = 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        path = request.url.path
+        if self.login and path == "/rest/login" and request.method == "POST":
+            self.logins += 1
+            return httpx.Response(200, json={"ok": True}, headers={"Set-Cookie": "session=abc; Path=/"})
+        if self.login and request.headers.get("cookie") != "session=abc":
+            return httpx.Response(401, text="not logged in")
+        if path == "/rest/assets":
+            return httpx.Response(200, json=self.assets)
+        if path == "/rest/sensors":
+            if self.body is not None:
+                return httpx.Response(self.status, json=self.body)
+            return httpx.Response(self.status, json=self.readings)
+        return httpx.Response(404, text="no such operation")
+
+
+def http_transport(appliance: Appliance, **options) -> HttpTransport:
+    transport = build_transport(
+        TRANSPORT_HTTP, HOST, options=options, http_transport=httpx.MockTransport(appliance)
+    )
+    assert isinstance(transport, HttpTransport)
+    return transport
+
+
+def test_http_transport_is_configured_by_a_host_and_verifies_tls_unconditionally():
+    transport = http_transport(Appliance())
+    assert transport.kind == TRANSPORT_HTTP and transport.configured is True
+    described = transport.describe()
+    assert described["base_url"] == "https://netbotz.lan/rest"
+    assert described["tls_verification"] == "required"
+    assert described["ca_file"] is None
+    assert described["auth"] == "none"
+    # Nothing that could be a credential is in the description, whatever is set.
+    described = http_transport(Appliance(), username="apc", password="hunter2", token="t0k").describe()
+    assert "hunter2" not in str(described) and "t0k" not in str(described)
+    assert described["auth"] == "bearer"
+
+
+def test_http_transport_has_no_way_to_disable_verification():
+    """There is no option for it: a 'verify' or 'insecure' key is simply unknown."""
+    config = HttpTransportConfig.from_options(HOST, {"verify": "false", "insecure": "true"})
+    assert not hasattr(config, "verify") and not hasattr(config, "insecure")
+    assert http_transport(Appliance(), verify="false").describe()["tls_verification"] == "required"
+
+
+def test_http_transport_trusts_a_private_ca_through_ca_file(monkeypatch, tmp_path):
+    seen: dict = {}
+    real_client = httpx.Client
+
+    class RecordingClient(real_client):
+        def __init__(self, *args, **kwargs):
+            seen.update(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", RecordingClient)
+    ca = tmp_path / "ca.crt"
+    ca.write_text("placeholder")
+    transport = http_transport(Appliance(), ca_file=str(ca))
+    transport.enclosures()
+    assert seen["verify"] == str(ca)
+    transport.close()
+
+
+def test_http_transport_reads_the_confirmed_assets_operation_as_enclosures():
+    appliance = Appliance()
+    transport = http_transport(appliance)
+    found = transport.enclosures()
+    assert [e.as_dict() for e in found] == [
+        {
+            "enclosure_id": "nbrk0550-01",
+            "label": "Rack monitor",
+            "model": "NBRK0550",
+            "firmware": "5.1.2",
+            "reachable": True,
+        },
+        {
+            "enclosure_id": "camera-22",
+            "label": "Door camera",
+            "model": None,
+            "firmware": None,
+            "reachable": True,
+        },
+    ]
+    request = appliance.requests[0]
+    assert request.method == "GET" and str(request.url) == "https://netbotz.lan/rest/assets"
+    assert request.headers["accept"] == "application/json"
+
+
+def test_http_transport_caches_the_assets_listing_for_the_ttl():
+    appliance = Appliance()
+    clock = {"now": 0.0}
+    transport = HttpTransport(
+        HttpTransportConfig.from_options(HOST, {"cache_ttl_s": "30"}),
+        transport=httpx.MockTransport(appliance),
+        clock=lambda: clock["now"],
+    )
+    transport.enclosures()
+    transport.enclosures()
+    assert len(appliance.requests) == 1
+    clock["now"] = 31.0
+    transport.enclosures()
+    assert len(appliance.requests) == 2
+
+
+def test_an_answering_appliance_with_no_assets_is_still_one_reachable_enclosure():
+    transport = http_transport(Appliance(assets=[]))
+    (enclosure,) = transport.enclosures()
+    assert enclosure.enclosure_id == HOST and enclosure.reachable is True
+
+
+def test_http_transport_without_a_readings_path_reads_nothing_and_health_says_exactly_what_to_set():
+    appliance = Appliance()
+    transport = http_transport(appliance)
+    assert transport.readings_ready is False
+    assert transport.read() == ()
+    assert all(r.url.path != "/rest/sensors" for r in appliance.requests)
+
+    health = setup_plugin(transport).health()
+    assert health.state == HEALTH_NOT_CONFIGURED
+    assert "2 appliance(s) answered" in health.detail
+    assert "CHAOS_PLUGIN_NETBOTZ_READINGS_PATH" in health.detail
+    assert "docs/rest" in health.detail
+
+
+def test_http_transport_parses_readings_through_the_default_field_map():
+    transport = http_transport(Appliance(), readings_path="sensors")
+    assert transport.readings_ready is True
+    readings = list(transport.read())
+    assert [r.as_dict() for r in readings] == [
+        {
+            "sensor_id": "temp-1",
+            "enclosure_id": HOST,
+            "sensor_type": "temperature",
+            "value": 24.5,
+            "unit": "C",
+            "label": "Rack top",
+            "ts": "2026-05-28T20:26:40+00:00",
+        },
+        {
+            "sensor_id": "humi-1",
+            "enclosure_id": HOST,
+            "sensor_type": "humidity",
+            "value": 38,
+            "unit": "%",
+            "label": "Rack top",
+            "ts": "2026-05-28T20:26:40+00:00",
+        },
+    ]
+    assert transport.last_read_error is None
+    assert setup_plugin(transport).health().state == HEALTH_OK
+
+
+def test_http_transport_field_map_and_list_key_are_configurable():
+    body = {
+        "data": {
+            "sensors": [
+                {"sensorId": "s-9", "sensorType": "dewPoint", "reading": 11.0, "assetId": "nbrk0550-01"},
+            ]
+        }
+    }
+    transport = http_transport(
+        Appliance(body=body),
+        readings_path="sensors",
+        readings_key="data.sensors",
+        reading_id_field="sensorId",
+        reading_type_field="sensorType",
+        reading_value_field="reading",
+        reading_enclosure_field="assetId",
+    )
+    (reading,) = transport.read()
+    assert (reading.sensor_id, reading.sensor_type, reading.value, reading.enclosure_id) == (
+        "s-9",
+        "dewPoint",
+        11.0,
+        "nbrk0550-01",
+    )
+    assert transport.describe()["field_map"]["reading_id_field"] == "sensorId"
+
+
+def test_http_transport_fails_loudly_on_a_404_rather_than_inventing_readings():
+    transport = http_transport(Appliance(status=404), readings_path="sensors")
+    with pytest.raises(NetBotzTransportError, match="HTTP 404") as excinfo:
+        transport.read()
+    assert "/docs/rest" in str(excinfo.value)
+    assert transport.last_read_error is not None
+
+    health = setup_plugin(transport).health()
+    assert health.state == HEALTH_DEGRADED
+    assert "last readings poll failed" in health.detail
+    assert "HTTP 404" in health.detail
+
+
+def test_http_transport_fails_loudly_on_a_response_of_the_wrong_shape():
+    transport = http_transport(Appliance(body={"result": "ok", "count": 2}), readings_path="sensors")
+    with pytest.raises(NetBotzTransportError, match="CHAOS_PLUGIN_NETBOTZ_READINGS_KEY") as excinfo:
+        transport.read()
+    assert "count, result" in str(excinfo.value)  # the keys it saw, so the setting can be chosen
+
+    transport = http_transport(Appliance(body={"rows": []}), readings_path="sensors", readings_key="data")
+    with pytest.raises(NetBotzTransportError, match="has no 'data'"):
+        transport.read()
+
+
+def test_http_transport_fails_loudly_when_no_item_carries_the_configured_fields():
+    body = [{"sensorId": "s-1", "reading": 1.0}, {"sensorId": "s-2", "reading": 2.0}]
+    transport = http_transport(Appliance(body=body), readings_path="sensors")
+    with pytest.raises(NetBotzTransportError, match="none of the 2 item"):
+        transport.read()
+    assert transport.counters["malformed_items"] == 2
+    assert "CHAOS_PLUGIN_NETBOTZ_READING_" in transport.last_read_error
+
+
+def test_http_transport_drops_and_counts_partially_malformed_items():
+    body = [SENSORS[0], {"id": "broken", "type": "temperature"}]  # no value field
+    transport = http_transport(Appliance(body=body), readings_path="sensors")
+    readings = list(transport.read())
+    assert [r.sensor_id for r in readings] == ["temp-1"]
+    assert transport.counters["malformed_items"] == 1
+    assert transport.last_read_error is None
+
+
+def test_http_transport_reports_transport_errors_as_failures():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route to host", request=request)
+
+    transport = build_transport(TRANSPORT_HTTP, HOST, options={}, http_transport=httpx.MockTransport(handler))
+    with pytest.raises(NetBotzTransportError, match="ConnectError"):
+        transport.enclosures()
+    assert transport.counters["failures"] == 1
+    assert setup_plugin(transport).health().state == HEALTH_DEGRADED
+
+
+def test_http_transport_sends_basic_auth_or_a_bearer_token():
+    appliance = Appliance()
+    http_transport(appliance, username="apc", password="hunter2").enclosures()
+    assert appliance.requests[-1].headers["authorization"].startswith("Basic ")
+
+    appliance = Appliance()
+    http_transport(appliance, token="t0k").enclosures()
+    assert appliance.requests[-1].headers["authorization"] == "Bearer t0k"
+
+
+def test_http_transport_logs_in_once_for_a_cookie_session():
+    appliance = Appliance(login=True)
+    transport = http_transport(
+        appliance, username="apc", password="hunter2", login_path="login", readings_path="sensors"
+    )
+    transport.enclosures()
+    transport.read()
+    assert appliance.logins == 1
+    login = next(r for r in appliance.requests if r.method == "POST")
+    assert json.loads(login.content) == {"username": "apc", "password": "hunter2"}
+    assert all(r.headers.get("cookie") == "session=abc" for r in appliance.requests if r.method == "GET")
+
+
+def test_appliance_times_are_milliseconds_since_the_epoch():
+    assert parse_appliance_time(1780000000000) == dt.datetime(2026, 5, 28, 20, 26, 40, tzinfo=dt.UTC)
+    assert parse_appliance_time("1780000000") == dt.datetime(2026, 5, 28, 20, 26, 40, tzinfo=dt.UTC)
+    assert parse_appliance_time("2026-05-28T20:26:40Z") == dt.datetime(2026, 5, 28, 20, 26, 40, tzinfo=dt.UTC)
+    assert parse_appliance_time(None) is None
+    assert parse_appliance_time("not a time") is None
+
+
+def test_http_readings_become_current_state_on_the_real_rack_monitor(
+    db_session, session_factory, bus, loaded_registry
+):
+    """The whole path with the real transport: scripted appliance -> HTTPS -> mirror -> ingest."""
+    db_session.add(ExternalIdentifier(asset_id=RACK_MONITOR, id_type=ID_TYPE, value="nbrk0550-01"))
+    db_session.commit()
+    settings = Settings(database_url="sqlite://", mqtt_enabled=False)
+    transport = http_transport(Appliance(), readings_path="sensors", enclosure_id="nbrk0550-01")
+
+    from chaos.ingest.service import IngestService
+
+    ingest = IngestService(session_factory, bus, settings, auto_sweep=False, clock=lambda: T0)
+    ingest.start()
+    service = MirrorService(
+        session_factory, bus, settings, [NetBotzMirrorSource(transport)], auto_poll=False, clock=lambda: T0
+    )
+    service.refresh_identity()
+    published = service.poll_once(force=True)
+    ingest.stop()
+
+    assert published == 2
+    temperature = db_session.get(CurrentState, topics.point_id(RACK_MONITOR, "temperature_air_c"))
+    humidity = db_session.get(CurrentState, topics.point_id(RACK_MONITOR, "humidity_relative_pct"))
+    assert temperature is not None and temperature.value_numeric == pytest.approx(24.5)
+    assert humidity is not None and humidity.value_numeric == pytest.approx(38.0)
+
+
+def test_the_api_reports_an_unreachable_appliance_as_a_finding_not_a_500(client):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route to host", request=request)
+
+    plugin = client.app.state.plugins.get("netbotz").plugin
+    original = plugin.transport
+    plugin.transport = build_transport(
+        TRANSPORT_HTTP, HOST, options={}, http_transport=httpx.MockTransport(handler)
+    )
+    try:
+        payload = client.get("/api/v1/ext/netbotz/enclosures").json()
+        assert payload["count"] == 0 and "ConnectError" in payload["error"]
+        payload = client.get("/api/v1/ext/netbotz/readings").json()
+        assert payload["count"] == 0 and payload["error"] is None  # no readings path: nothing attempted
+    finally:
+        plugin.transport = original

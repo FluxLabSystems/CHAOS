@@ -2,7 +2,7 @@
 
 The v0.3 package is the contract the rest of the platform is built on, so these
 tests assert the real numbers from ``data/`` rather than a fixture double: 90
-assets, 99 relationships, 245 bindings, 701 materialised points.
+assets, 99 relationships, 245 bindings, 702 materialised points.
 
 Structural-failure behaviour is exercised against small synthetic packages
 written to ``tmp_path`` so that the shipped package stays untouched.
@@ -52,11 +52,11 @@ SITE = "site.site.primary.01"
 
 EXPECTED = {
     "asset_classes": 72,
-    "point_definitions": 214,
-    "point_profiles": 5,
+    "point_definitions": 215,
+    "point_profiles": 6,
     "assets": 90,
     "relationships": 99,
-    "points": 701,
+    "points": 702,
     "bindings": 245,
 }
 
@@ -395,6 +395,39 @@ def test_point_source_records_where_the_point_came_from(db_session, loaded_regis
     generator = db_session.get(Asset, GENERATOR)
     class_def = db_session.get(AssetClass, generator.asset_class)
     assert set(class_sourced) <= set(class_def.default_points)
+
+
+def test_energy_state_is_a_platform_owned_site_point(db_session, loaded_registry):
+    """Integration finding F-003: the EMS publishes ``energy_state`` and ingest
+    must resolve it instead of dead-lettering it every tick.
+
+    The point is platform-owned, so it lives in the base dictionary (not an
+    extension awaiting ratification), is attached to the site through the
+    ``ems_site`` profile exactly as ``ems_load`` attaches ``power_budget_kw``,
+    and its enum is the SDD 30.7 state set the state machine actually publishes.
+    """
+    from chaos.ems.config import energy_state_topic
+    from chaos.ingest.resolver import TopicResolver
+    from chaos.models.energy import ENERGY_STATES
+
+    definition = db_session.get(PointDefinition, "energy_state")
+    assert definition is not None
+    assert definition.default_class == "CALC"
+    assert definition.data_type == "enum"
+    assert definition.control_capable is False
+    assert definition.dictionary_status == "reconciled_v0_4"
+    assert set(definition.enum_values) == set(ENERGY_STATES)
+    assert len(definition.enum_values) == len(ENERGY_STATES)
+
+    point = db_session.get(Point, f"{SITE}/energy_state")
+    assert point is not None
+    assert point.source == points_module.SOURCE_PROFILE
+    assert "ems_site" in db_session.get(Asset, SITE).point_profile_refs
+
+    resolver = TopicResolver()
+    resolver.refresh(db_session)
+    settings = Settings(database_url="sqlite://")
+    assert resolver.resolve(energy_state_topic(settings)) == f"{SITE}/energy_state"
 
 
 def test_collect_point_names_precedence_is_binding_over_class_over_profile():

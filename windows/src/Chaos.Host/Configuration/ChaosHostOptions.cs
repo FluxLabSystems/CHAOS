@@ -39,6 +39,37 @@ public sealed class ChaosHostOptions
     public string BackendUrl { get; set; } = "http://127.0.0.1:8081";
 
     /// <summary>
+    /// The installed configuration directory — the folder holding
+    /// <c>chaos.host.json</c> and <c>homestead.env</c>. Empty means "discover":
+    /// the installer's registry key (<c>HKLM\SOFTWARE\Project CHAOS</c>,
+    /// <c>ConfigDir</c>) on Windows, then <c>%ProgramData%\Project CHAOS\config</c>
+    /// if it exists. Set it (<c>CHAOS_ConfigDirectory</c>) to point a gateway
+    /// at a directory laid out the same way — which is also how the tests do
+    /// it on a machine with no registry. Reported on <c>GET /host/info</c>.
+    /// </summary>
+    /// <remarks>
+    /// Read before anything else binds, because the file it names is itself a
+    /// configuration source: it is loaded after <c>appsettings.json</c> and
+    /// before environment variables, so an operator's edit beats the shipped
+    /// defaults and a <c>CHAOS_</c> variable still beats the file.
+    /// </remarks>
+    public string? ConfigDirectory { get; set; }
+
+    /// <summary>
+    /// Where the gateway writes its rolling log files. Empty means the
+    /// installed layout's <c>logs</c> folder (<c>%ProgramData%\Project CHAOS\logs</c>
+    /// by default) when there is one, and no file logging otherwise — a
+    /// development checkout logs to the console. Reported on <c>GET /host/info</c>.
+    /// </summary>
+    public string? LogDirectory { get; set; }
+
+    /// <summary>Size at which <c>chaos-host.log</c> is rotated. 8 MiB by default.</summary>
+    public long LogFileMaxBytes { get; set; } = 8 * 1024 * 1024;
+
+    /// <summary>Rotated log files kept beside the current one. Ten by default.</summary>
+    public int LogFilesRetained { get; set; } = 10;
+
+    /// <summary>
     /// Where the operator console assets live. Empty means "probe" — see
     /// <see cref="Web.WebRootResolver"/>: the packaged <c>web</c> folder beside
     /// the executable first, then the repository's
@@ -124,9 +155,12 @@ public sealed class ChaosHostOptions
     /// <summary>
     /// Whether the gateway should refuse to proxy when the backend reports a
     /// platform version incompatible with the contract this host was built
-    /// against. Off by default — see the notes on
-    /// <see cref="Health.BackendHealthState"/>. Incompatibility is always
-    /// reported on <c>/health</c> and <c>/host/info</c> whether or not it is enforced.
+    /// against (<c>ChaosPlatformVersion</c>, compared on major.minor). Off by
+    /// default. When on, every Python-owned request answers <c>502</c> with a
+    /// JSON body naming both versions until the backend reports a compatible
+    /// one; <c>/health</c> and <c>/health/live</c> keep answering, because they
+    /// are how the mismatch is seen. Incompatibility is always reported on
+    /// <c>/health</c> and <c>/host/info</c> whether or not it is enforced.
     /// </summary>
     public bool RefuseIncompatibleBackend { get; set; }
 
@@ -182,27 +216,37 @@ public sealed class ChaosHostOptions
 
     /// <summary>
     /// The platform database, as a SQLAlchemy URL — for example
-    /// <c>sqlite:///C:/ProgramData/Project CHAOS/homestead.db</c>. Empty means
-    /// "whatever the platform's own default is", which the gateway then reports
-    /// rather than guesses. Passed to the platform CLI as
-    /// <c>CHAOS_DATABASE_URL</c>.
+    /// <c>sqlite:///C:/ProgramData/Project CHAOS/db/homestead.db</c>. Passed to
+    /// the platform CLI and to the supervised backend as
+    /// <c>CHAOS_DATABASE_URL</c>, so first-run setup and the running platform
+    /// can never disagree about which database they mean.
     /// </summary>
+    /// <remarks>
+    /// After binding this holds the <em>effective</em> value — see
+    /// <see cref="PlatformStorage"/>: this setting, then
+    /// <c>Chaos:Backend:DatabaseUrl</c>, then <c>homestead.env</c>, then the
+    /// installed layout's <c>db\homestead.db</c>. Empty on a machine with none
+    /// of those means "whatever the platform's own default is", which the
+    /// gateway then reports rather than guesses.
+    /// </remarks>
     public string? DatabaseUrl { get; set; }
 
     /// <summary>
     /// The design package directory (<c>data/</c>) the registry is built from.
-    /// Empty means "derive it from the resolved Python runtime, and let the
-    /// platform use its own default". Passed to the platform CLI as
-    /// <c>CHAOS_DATA_DIR</c> only when set explicitly.
+    /// Passed to the platform CLI and the supervised backend as
+    /// <c>CHAOS_DATA_DIR</c> when set. Resolved the same way as
+    /// <see cref="DatabaseUrl"/>; empty means "derive it from the resolved
+    /// Python runtime, and let the platform use its own default".
     /// </summary>
     public string? DataDirectory { get; set; }
 
     /// <summary>
     /// Where the setup transcript is written — every command, its full output
-    /// and its exit code. Empty derives
-    /// <c>&lt;LocalApplicationData&gt;/Project CHAOS/chaos-setup.log</c>. The
-    /// path is reported on <c>GET /host/setup</c> so a failure is actionable
-    /// without a stack trace.
+    /// and its exit code. Empty derives <c>chaos-setup.log</c> under
+    /// <see cref="LogDirectory"/> when that directory exists, otherwise under
+    /// <c>&lt;LocalApplicationData&gt;/Project CHAOS</c>. The path is reported
+    /// on <c>GET /host/setup</c> so a failure is actionable without a stack
+    /// trace.
     /// </summary>
     public string? SetupLogPath { get; set; }
 

@@ -73,7 +73,8 @@ TOTAL_RELATIONSHIPS = 99 + 92
 @pytest.fixture()
 def seeded(db_session):
     """The real v0.3 register loaded into the test database."""
-    load_package = pytest.importorskip("chaos.registry.loader").load_package
+    from chaos.registry.loader import load_package
+
     load_package(db_session)
     db_session.commit()
     return db_session

@@ -59,7 +59,9 @@ coverage. If it changes, something changed in the design package. See
 ### Monthly
 
 - **Restore the latest backup into a scratch database and confirm the counts
-  match the manifest.** A backup you have never restored is a hypothesis.
+  match the manifest** (`chaos init-db` on a scratch `CHAOS_DATABASE_URL`, then
+  `chaos restore <archive>`, then `chaos status`; section 4.3). A backup you
+  have never restored is a hypothesis.
 
 ---
 
@@ -169,8 +171,10 @@ The console fetches **nothing** from the internet — no CDN, no fonts, no map
 tiles, no charting library — so it renders identically with the uplink down.
 
 **But:** the MVP criterion requiring critical alarms to work during internet
-loss is **not met**, because only the `log` notification channel is implemented
-and a log line is not an alert. See
+loss is met only where the `email` or `push` channel has been configured
+against an SMTP relay or push server **inside the property network** and proven
+at commissioning step 10. With only `log` configured a log line is not an
+alert, and `voice` is not implemented. See
 [Alarms § Notification](./alarms.md#7-notification-and-the-honest-part).
 
 ### 2.4 Loss of the primary node
@@ -263,6 +267,23 @@ Check the checksums and read the manifest for a failure count of zero. Then,
 monthly, **restore it into a scratch database and compare the counts against the
 manifest.** A backup you have never restored is a hypothesis.
 
+The drill is three commands against a scratch database that nothing else uses:
+
+```sh
+export CHAOS_DATABASE_URL=sqlite:////tmp/restore-drill.db
+chaos init-db
+chaos restore /var/backups/homestead/<archive>.tar.gz
+chaos status            # counts should match manifest.json inside the archive
+```
+
+`chaos restore` validates `manifest.json` against the archive's contents before
+touching anything, restores every table in foreign-key dependency order inside
+one transaction, and checks the row counts against the manifest before it
+commits — a restore that fails half-way leaves the database as it was. It
+**refuses a database that already holds rows**; `--force` deletes the rows of
+every table in the archive first (and only those, apart from foreign-key
+cascades). `--dry-run` reports what would happen and writes nothing.
+
 ### 4.4 Rebuilding from the design package instead
 
 Often faster and often better: `data/` in version control is the source of truth
@@ -273,9 +294,15 @@ it and let first-run setup import it.
 
 ### 4.5 Restoring onto a machine with nothing
 
-The portable archive is JSON plus YAML. Untar it and read it: a manifest with
-counts, provenance and node role; a restore procedure; one JSON file per table;
-and the design package the registry was built from.
+Install the platform, point `CHAOS_DATABASE_URL` at the new database, then
+`chaos init-db` and `chaos restore <archive>`. Everything the archive holds —
+registry, alarm and command history, work orders, notification log, current
+state, and the historian if the backup was taken with `--include-history` —
+comes back; credentials do not (4.6).
+
+If even that is not possible, the portable archive is JSON plus YAML. Untar it
+and read it: a manifest with counts, provenance and node role; `RESTORE.txt`;
+one JSON file per table; and the design package the registry was built from.
 
 That is the case where the container is gone and you have a laptop.
 
@@ -367,7 +394,30 @@ The broker step is a headless action; the exact commands are in
 
 ---
 
-## 8. What these runbooks do not cover
+## 8. Monitoring the platform itself
+
+The platform exposes its own counters at `GET /metrics` in the Prometheus text
+format, and the compose stack's Prometheus scrapes it (`deploy/prometheus/prometheus.yml`,
+job `chaos`). What is there is deliberately narrow — counts the platform already
+holds, never point values and never credentials:
+
+| Series | What it tells you |
+|---|---|
+| `chaos_alarms_active{severity}` and `chaos_alarms_active_suppressed` | The same numbers as the console's alarm header, scrapeable |
+| `chaos_incidents_open` | Correlated incidents still open |
+| `chaos_ingest_dead_letters` | The dead-letter count from the daily check above — the one that must not grow every day |
+| `chaos_ingest_events_total{event}` | The ingest subscriber's counters: received, written, dead-lettered, out of order, stale-marked |
+| `chaos_notifications_total{channel,status}` | Delivery attempts by outcome. A rising `failed` count on `email` or `push` is a relay or push server problem, not an alarm problem |
+| `chaos_mirror_readings_total{source,outcome}` | What each plugin mirror source published or dropped, with the drop reason |
+| `chaos_plugin_health{plugin,state}` | One series per plugin per health state; the `1` is where the plugin currently is |
+
+A subsystem that is not running on this node (the EMS on the secondary, ingest
+with MQTT disabled) contributes **no series** and a comment line saying so, so
+"ingest received nothing" and "there is no ingest here" stay distinguishable.
+
+---
+
+## 9. What these runbooks do not cover
 
 - **Electrical work.** Black start, generator start, transfer switching, battery
   isolation. Equipment procedures, not platform procedures.
@@ -382,7 +432,7 @@ The broker step is a headless action; the exact commands are in
 
 ---
 
-## 9. Related reading
+## 10. Related reading
 
 | Document | Why |
 |---|---|

@@ -23,6 +23,9 @@ Design rules implemented here
 * **Conservative under degraded observability.** ``DEGRADED_SENSOR`` ranks
   above ``CONSERVE`` on the conservatism scale, and if the still-valid inputs
   indicate something worse, the worse state wins (SDD 39 test EMS-T003).
+  Leaving it requires ``degraded_recovery_s`` of continuously healthy inputs
+  on top of the target state's own dwell; a single bad reading restarts the
+  clock. ``EMERGENCY`` is exempt, as everywhere.
 * **Every transition is explained.** An ``EnergyStateTransition`` row records
   the trigger, the reason, and the input and derived snapshots that justified
   it (SDD 30.3 objective 9).
@@ -566,6 +569,18 @@ class EnergyStateMachine:
                 snapshot.candidate_state = candidate.state
                 snapshot.candidate_since = now
             dwell = self.config.dwell_s(candidate.state)
+            recovery_note: str | None = None
+            if current == "DEGRADED_SENSOR" and inputs.observable and candidate.state != "EMERGENCY":
+                # SDD 30.7: recovery from impaired observability needs the
+                # inputs to stay healthy for degraded_recovery_s. The candidate
+                # clock restarts whenever a required input goes bad again,
+                # because the candidate then falls back to DEGRADED_SENSOR.
+                if self.config.degraded_recovery_s > dwell:
+                    dwell = self.config.degraded_recovery_s
+                    recovery_note = (
+                        f"leaving DEGRADED_SENSOR requires {self.config.degraded_recovery_s} s of "
+                        f"continuously healthy inputs before {candidate.state} is adopted"
+                    )
             since = _aware(snapshot.candidate_since) or now
             elapsed = (now - since).total_seconds()
             dwell_remaining = max(dwell - elapsed, 0.0)
@@ -594,6 +609,8 @@ class EnergyStateMachine:
                     note = "freeze overridden: EMERGENCY is never suppressed by an operator freeze"
                     snapshot.frozen_until = None
                     snapshot.frozen_by = None
+            elif recovery_note is not None:
+                note = recovery_note
 
         snapshot.inputs = inputs.as_dict()
         snapshot.derived = _merge_derived(snapshot.derived, derived.as_dict())

@@ -82,7 +82,7 @@
 .PARAMETER ConstraintsFile
     Optional pip constraints file (ideally with --require-hashes style pins) so a
     shipped runtime can be reproduced byte for byte later.  Generate one with
-    `pip freeze` from a known-good tree; see docs/windows-deployment.md.
+    `pip freeze` from a known-good tree; see docs/advanced-windows-packaging.md.
 
 .PARAMETER IncludePostgres
     Also install the "postgres" extra (psycopg + alembic).  Off by default: the

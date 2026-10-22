@@ -132,12 +132,12 @@ interpreter in it, treats the install as **damaged** and refuses to fall back to
 a system Python. That refusal is deliberate: borrowing the machine's Python would
 run the control plane against dependency versions nobody tested.
 
-(The gateway's shipped entry point does not currently register the process
-supervisor, so the backend is started by something else — see
-[Architecture § The gap: process supervision](./architecture.md#process-supervision)
+The gateway registers that supervisor at composition and starts the backend on
+every launch unless `Chaos:SuperviseBackend` is off — see
+[Architecture § Process supervision](./architecture.md#process-supervision)
 and [Visual Studio § What happens when you press F5](./visual-studio.md#what-happens-when-you-press-f5).
 Nothing in this document depends on that; the interpreter is resolved the same
-way either way.)
+way either way.
 
 ### Building it from Visual Studio
 
@@ -533,3 +533,19 @@ source has the code path, but no `.exe` has actually been launched; and the wall
 clock and on-disk figures above, which are derived rather than measured on
 Windows. Run the two commands at the top of this section and the answer is
 immediate.
+
+---
+
+## Open items
+
+Known gaps in the Windows product, stated where the code that has them points.
+None is hidden behind a reassuring default; each says what the behaviour is
+today and what would close it.
+
+| Item | Today | What would close it |
+|---|---|---|
+| **Service account** | The MSI registers `ChaosHost` as `LocalSystem` — the Windows equivalent of root, on a repository that is emphatic the platform "has no business running as uid 0" in its container. `--install-service` registers the virtual account `NT SERVICE\ChaosHost` instead (`windows/installer/Service.wxs`, `ServiceRegistrationPlan.cs`) | An ACL grant on `%ProgramData%\Project CHAOS` for the virtual account, tested on real Windows. Shipping an untested ACL that locks the service out of the alarm history would be worse than the honest compromise |
+| **No graceful stop of the backend in service mode** | Windows has no `SIGTERM`. The supervisor's only in-band "please stop" is a console control event, and a service's child has no console, so the supervisor says so, waits `Backend.GracefulShutdownTimeout` (20 s), and terminates the Job Object. uvicorn's shutdown handlers do not run. In `--console` mode the child shares the operator's console and a `CTRL_BREAK` would hit that session too, so it is deliberately not sent there either. On Linux `SIGTERM` is sent and works (`GracefulSignals.cs`) | Launching the child through `CreateProcessW` with `CREATE_NEW_PROCESS_GROUP` so a break event has somewhere to go, or a loopback shutdown endpoint in the platform API — `src/chaos/api` has none today. Both are cross-component changes |
+| **Job Object assignment window** | The child is added to the Job Object immediately after `Process.Start`, not atomically with creation, so a grandchild spawned in the microseconds before assignment would escape. The Python entry point forks nothing before the interpreter is up (`WindowsJobObject.cs`) | A raw `CreateProcessW` with `CREATE_SUSPENDED` plus pipe-handle inheritance; the same change as the row above |
+| **SCM recovery after a breaker trip** | When the backend supervisor gives up it stops the service with exit code 70 — a stop with an error, not a crash. The MSI's recovery policy restarts crashes; it cannot set the failure flag that makes SCM count a stop-with-error (`util:ServiceConfig` has no attribute for it), so an MSI-registered service stays down until a person starts it. `--install-service` sets the flag | One elevated `sc failureflag ChaosHost 1` after an MSI install, or a WiX custom action that runs it |
+| **Event Log source** | Lifecycle events (IDs 1000–1090) are written under the source `Project CHAOS` only when that source is registered. The MSI does not register it; `--install-service` does. Without it the events are in `chaos-host.log` only, and the gateway says so at startup | `New-EventLog -LogName Application -Source 'Project CHAOS'` once, elevated, or the same custom action as the row above |

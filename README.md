@@ -30,7 +30,7 @@ Three consequences run through everything here:
 
 | Capability | Where you use it |
 |---|---|
-| Asset and point registry — 90 assets, 701 points, 245 bindings | Console → **Assets** |
+| Asset and point registry — 90 assets, 702 points, 245 bindings | Console → **Assets** |
 | Telemetry ingest, current state, historian, dead letters | Console → **Home**, **Assets** |
 | Energy-management state machine, load shedding, budget leases | Console → **Energy** |
 | Alarm evaluation, incident correlation, notification | Console → **Alarms** |
@@ -67,9 +67,10 @@ Full walkthrough, including what each screen should look like:
 
 Open [`windows/CHAOS.sln`](windows/CHAOS.sln) in **Visual Studio 2026**, set
 **Chaos.Shell** as the startup project, and press **F5**. Tests are in **Test
-Explorer**. See [`docs/visual-studio.md`](docs/visual-studio.md) — including the
-one thing that is not automatic yet (the gateway does not currently start the
-Python backend for you).
+Explorer**. See [`docs/visual-studio.md`](docs/visual-studio.md). The gateway
+starts the Python backend itself; set `CHAOS_SuperviseBackend=false` to run the
+backend under your own debugger (see
+[`docs/advanced-command-line.md`](docs/advanced-command-line.md)).
 
 ---
 
@@ -162,18 +163,19 @@ src/simulator/   simulated site: solar, battery, inverter, generator, loads, wea
 windows/
   CHAOS.sln                 open this in Visual Studio 2026
   src/Chaos.Host/           the .NET gateway — LAN listener, proxy, first-run setup
+  src/Chaos.Host.Abstractions/ the supervisor contract the gateway and supervisor share
   src/Chaos.Host.Supervisor/ supervises the Python backend as a child process
-  src/Chaos.Api/            subsystems ported from Python to .NET (none live yet)
+  src/Chaos.Api/            subsystems ported from Python to .NET (registered; no route owned yet)
   src/Chaos.Runtime/        builds the embedded Python runtime and this help site
   src/Chaos.Shell/          the WinUI 3 desktop shell (Windows only)
   src/Chaos.Shell.Core/     the shell's testable half — runs everywhere
-  tests/                    five xUnit projects
+  tests/                    four xUnit projects and the Chaos.Api conformance host
   build/                    build targets, and the packaging scripts (advanced)
   installer/                installer configuration
 
 deploy/          Docker Compose stacks for headless nodes (advanced)
 docs/            this documentation set — start at docs/index.md
-tests/           2250 pytest tests, all against SQLite and the in-memory bus
+tests/           2418 pytest tests, all against SQLite and the in-memory bus
 ```
 
 ---
@@ -185,34 +187,43 @@ tests/           2250 pytest tests, all against SQLite and the in-memory bus
 Registry and design-package loading · telemetry ingest with dead-lettering ·
 current-state cache · relational historian and retention · EMS state machine,
 shedding, restoration, generator coordination, black start, budget leases ·
-alarm definitions, evaluation, correlation, log notification · command path with
+alarm definitions, evaluation, correlation, notification (log, email, push) · command path with
 eight interlocks, operating modes and audit · maintenance and commissioning
 records · annunciator panel · topology and blast-radius analysis · rack
 elevation · 87 REST endpoints · a plugin system for third-party integrations ·
 the .NET gateway with first-run setup · the WinUI 3 desktop shell ·
-2250 passing Python tests.
+2418 passing Python tests.
 
 ### Partial or stubbed
 
-- **Notification backends** — `log` is wired. `email`, `push` and `voice` are
-  named but not implemented. A log line is not an alert.
-- **The NetBotz plugin's transport.** The plugin system, the sensor mapping and
-  the identity routing are complete and tested; the SNMP and HTTPS transports
-  are not. It reports `not_configured` and never reports a temperature that did
+- **Notification backends** — `log`, `email` (an SMTP relay) and `push` (an
+  ntfy-compatible HTTP endpoint) are implemented, with `sent`, `failed` and
+  `not_configured` outcomes and bounded retries. `voice` stays a stub until
+  CUCM is commissioned. A channel without settings reports `not_configured` and
+  never claims a message was sent.
+- **The NetBotz plugin's transport.** The plugin system, the sensor mapping,
+  the identity routing and the HTTPS transport (TLS always verified; the
+  readings operation is a setting read off the appliance's `/docs/rest`) are
+  complete and tested; the SNMP transport is not implemented. Without a host
+  the plugin reports `not_configured` and never reports a temperature that did
   not come from a device.
 - **Historian** is a relational table. The InfluxDB-versus-TimescaleDB decision
   is unresolved, so neither is deployed.
 - **PostGIS** geometry column is prepared but disabled; geometry is stored as
   GeoJSON.
-- **MQTT TLS** is configured and deliberately left disabled rather than
-  half-configured.
+- **MQTT TLS** — the client side is complete (`CHAOS_MQTT_TLS_CA`, `_CERT`,
+  `_KEY`); the broker's TLS listener stays disabled until certificates are
+  issued.
 - **No schema migrations.** `init-db` adds tables; it never alters them.
-- **Prometheus** scrapes only itself. The API exposes no `/metrics`.
+- **Prometheus** scrapes the API's `/metrics` and itself; no exporters are
+  deployed and most target addresses are open items.
 
 ### Not built
 
 Home Assistant integration · Node-RED flows · property-map rendering on a real
-map · Level 4 forecasting and scenario simulation · subsystem coordinators for
+map · Level 4 forecasting and scenario simulation (the EMS carries a clear-sky PV
+estimate from solar geometry — no weather feed, and inactive until the site survey
+supplies coordinates) · subsystem coordinators for
 water, irrigation, greenhouse, compost, nitrogen storage, spa and security ·
 SNMP/Modbus polling of real devices (the plugin system is where it would go) ·
 camera and NVR integration · voice escalation · the document library.

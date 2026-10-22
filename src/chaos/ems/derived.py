@@ -11,14 +11,23 @@ because the BMS does not publish ``energy_available_kwh``, the resulting value
 carries ``assumptions=("usable capacity from planning basis ...",)`` and the
 dashboard and the state-transition record both show it.
 
-The PV forecast is pluggable. The default is an explicitly naive persistence
-estimator: it is a placeholder for a real forecast service, and it says so in
-every value it produces.
+The PV forecast is pluggable. :class:`NaivePersistenceForecast` here is the
+documented fallback; the service and the API use
+:func:`chaos.ems.forecast.registry_forecast`, a clear-sky geometry model scaled
+by persistence of the present clearness, which delegates back to persistence
+and says why whenever the register cannot locate the site or rate the array.
+Neither is a weather forecast, and every value they produce says so.
+
+Load-derived quantities (the restoration energy of held-off loads, the
+deferrable backlog and the power deferrable loads could absorb) come from
+:class:`LoadSnapshot` records that the callers build from the live shed state.
+A load without a power estimate is reported by name, never guessed.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import itertools
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -121,6 +130,7 @@ class DerivedEnergyState:
             "autonomy_current_h",
             "forecast_energy_margin_kwh",
             "surplus_power_kw",
+            "surplus_sustained_kw",
             "available_discharge_kw",
             "thermal_derate_pct",
         )
@@ -180,6 +190,11 @@ class ForecastResult:
     method: str
     assumptions: tuple[str, ...] = ()
     inputs: tuple[str, ...] = ()
+    #: The forecaster's own estimate of PV power at the start of the horizon,
+    #: so a caller can read the *trend* over the horizon (mean power over the
+    #: horizon relative to this) independently of the forecaster's margin.
+    #: ``None`` when the forecaster cannot say.
+    start_kw: float | None = None
 
 
 class PvForecast(Protocol):
@@ -239,6 +254,7 @@ class NaivePersistenceForecast:
                     "placeholder: no irradiance or weather model is used",
                 ),
                 inputs=("pv_power_kw",),
+                start_kw=pv_kw * config.forecast_persistence_derate,
             )
 
         today_kwh = inputs.numeric("pv_energy_today_kwh")
@@ -253,6 +269,7 @@ class NaivePersistenceForecast:
                     "placeholder: no irradiance or weather model is used",
                 ),
                 inputs=("pv_energy_today_kwh",),
+                start_kw=pv_kw * config.forecast_persistence_derate,
             )
         return ForecastResult(
             kwh=pv_kw * config.forecast_daily_equivalent_full_load_h * days,
@@ -265,17 +282,142 @@ class NaivePersistenceForecast:
                 "placeholder: no irradiance or weather model is used",
             ),
             inputs=("pv_power_kw",),
+            start_kw=pv_kw * config.forecast_persistence_derate,
         )
 
 
 @dataclass(frozen=True)
 class LoadSnapshot:
-    """The bit of a load record the derived layer needs."""
+    """The bit of a load record the derived layer needs.
+
+    Built by :func:`chaos.ems.shedding.load_snapshots` from the live load
+    states, so this layer sees what the EMS is actually holding off, and for
+    how long, without importing the shedding machinery.
+    """
 
     asset_id: str
     tier: int
     estimated_power_kw: float | None = None
+    #: True while the EMS holds the load off or reduced (SDD 32).
     shed: bool = False
+    #: Hours the load has been held off, when ``shed``.
+    shed_for_h: float | None = None
+    #: Hours until the load's minimum off time and restart delay both allow a
+    #: restoration (0 when it could be restored now). ``None`` when the EMS
+    #: will not restart it automatically (SDD 33.2 rules 6 and 7, lockout).
+    restorable_in_h: float | None = None
+
+
+#: Tiers SDD 31.2 lets the EMS defer: Tier 2 may be reduced or temporarily
+#: shed, Tier 3 is deferrable and Tier 4 is opportunistic. Tier 0 is never shed
+#: and Tier 1 is reduced to a survival profile, which is not deferred work.
+DEFERRABLE_TIER_MIN = 2
+
+
+@dataclass(frozen=True)
+class LoadEstimate:
+    """A sum over loads, with the loads that could not contribute named."""
+
+    value: float
+    counted: tuple[str, ...] = ()
+    #: Loads that qualified but carry no power estimate (an open field).
+    unestimated: tuple[str, ...] = ()
+    #: Loads whose running state is not observable, so no claim is made.
+    unobservable: tuple[str, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        return not self.unestimated and not self.unobservable
+
+    def assumptions(self, what: str) -> tuple[str, ...]:
+        notes: list[str] = []
+        if self.unestimated:
+            notes.append(
+                f"{len(self.unestimated)} load(s) have no power estimate (open fields rated_power_kw, "
+                f"estimated_power_kw): {', '.join(self.unestimated)}; their {what} is not included"
+            )
+        if self.unobservable:
+            notes.append(
+                f"{len(self.unobservable)} load(s) have no measured power and are not held off: "
+                f"{', '.join(self.unobservable)}; their {what} is not claimed"
+            )
+        return tuple(notes)
+
+
+def scheduled_restoration_energy(loads: Iterable[LoadSnapshot], horizon_h: float) -> LoadEstimate:
+    """Energy the loads the EMS is holding off will draw once restored.
+
+    Each held-off load the EMS may restart is assumed to run at its estimated
+    power from the moment its minimum off time and restart delay allow a
+    restoration until the end of the horizon. That is the pessimistic reading
+    for the energy margin, which is the reading SDD 30.9 wants.
+    """
+    total = 0.0
+    counted: list[str] = []
+    unestimated: list[str] = []
+    for load in loads:
+        if not load.shed or load.restorable_in_h is None:
+            continue
+        hours = max(horizon_h - load.restorable_in_h, 0.0)
+        if hours <= 0:
+            continue
+        if load.estimated_power_kw is None:
+            unestimated.append(load.asset_id)
+            continue
+        total += load.estimated_power_kw * hours
+        counted.append(load.asset_id)
+    return LoadEstimate(total, tuple(counted), tuple(unestimated))
+
+
+def deferrable_backlog_energy(loads: Iterable[LoadSnapshot], horizon_h: float) -> LoadEstimate:
+    """Work deferred so far: what each deferrable load would have drawn while held off.
+
+    Capped at the horizon so a load held off for a week does not claim a week
+    of backlog the site could never work through in a day.
+    """
+    total = 0.0
+    counted: list[str] = []
+    unestimated: list[str] = []
+    for load in loads:
+        if not load.shed or load.tier < DEFERRABLE_TIER_MIN:
+            continue
+        hours = min(load.shed_for_h or 0.0, horizon_h)
+        if load.estimated_power_kw is None:
+            unestimated.append(load.asset_id)
+            continue
+        total += load.estimated_power_kw * hours
+        counted.append(load.asset_id)
+    return LoadEstimate(total, tuple(counted), tuple(unestimated))
+
+
+def deferrable_absorb_capacity_kw(loads: Iterable[LoadSnapshot], inputs: EmsInputs) -> LoadEstimate:
+    """Power the deferrable loads could take up if they were started now.
+
+    A held-off load could absorb its whole estimate; a running one the gap
+    between its estimate and its measured draw. A load that is neither held off
+    nor measured is reported as unobservable rather than counted.
+    """
+    total = 0.0
+    counted: list[str] = []
+    unestimated: list[str] = []
+    unobservable: list[str] = []
+    for load in loads:
+        if load.tier < DEFERRABLE_TIER_MIN:
+            continue
+        if load.estimated_power_kw is None:
+            unestimated.append(load.asset_id)
+            continue
+        if load.shed:
+            capacity = load.estimated_power_kw
+        else:
+            measured = inputs.numeric(load_input_key(load.asset_id, "power_kw"))
+            if measured is None:
+                unobservable.append(load.asset_id)
+                continue
+            capacity = max(load.estimated_power_kw - measured, 0.0)
+        total += capacity
+        counted.append(load.asset_id)
+    return LoadEstimate(total, tuple(counted), tuple(unestimated), tuple(unobservable))
 
 
 # ---------------------------------------------------------------------------
@@ -291,12 +433,21 @@ def compute_derived(
     rolling: RollingWindow | None = None,
     forecast: PvForecast | None = None,
     loads: Iterable[LoadSnapshot] = (),
-    scheduled_load_kwh: float = 0.0,
+    scheduled_load_kwh: float | None = None,
     deferrable_backlog_kwh: float | None = None,
 ) -> DerivedEnergyState:
-    """Compute the SDD 30.6 derived value set."""
+    """Compute the SDD 30.6 derived value set.
+
+    ``loads`` carries the live shed state of every load in the schedule. From
+    it this function derives the restoration energy that belongs in the 24 h
+    load forecast, the deferrable backlog and the power deferrable loads could
+    absorb. ``scheduled_load_kwh`` and ``deferrable_backlog_kwh`` override
+    those two for a caller that has a real task scheduler (SDD 30.5); the
+    derived value then says it was supplied.
+    """
     derived = DerivedEnergyState(at=now)
     forecast = forecast or NaivePersistenceForecast()
+    load_list = list(loads)
 
     # -- Load -----------------------------------------------------------
     critical_kw = inputs.numeric("critical_load_kw")
@@ -357,7 +508,6 @@ def compute_derived(
     # Tiered load from the load schedule and the per-load power points.
     tier_load: dict[int, float] = {}
     tier_valid = True
-    load_list = list(loads)
     for load in load_list:
         measured = inputs.numeric(load_input_key(load.asset_id, "power_kw"))
         if measured is None:
@@ -559,18 +709,48 @@ def compute_derived(
         )
     )
 
+    horizon_h = config.forecast_day_horizon_h
+    if scheduled_load_kwh is not None:
+        scheduled_value = scheduled_load_kwh
+        scheduled_basis = "supplied by the caller (task scheduler, SDD 30.5)"
+        scheduled_valid = True
+        scheduled_assumptions: tuple[str, ...] = ()
+    else:
+        scheduled = scheduled_restoration_energy(load_list, horizon_h)
+        scheduled_value = scheduled.value
+        scheduled_basis = (
+            f"estimated power of the {len(scheduled.counted)} held-off load(s) the EMS may restart, from the "
+            f"time each may be restored to the end of the {horizon_h:g} h horizon"
+        )
+        scheduled_valid = scheduled.complete
+        scheduled_assumptions = scheduled.assumptions("restoration energy") + (
+            "a restored load is assumed to run for the rest of the horizon",
+        )
+    derived.add(
+        DerivedValue(
+            key="scheduled_load_kwh",
+            value=scheduled_value,
+            unit="kWh",
+            valid=scheduled_valid,
+            basis=scheduled_basis,
+            inputs=tuple(load_input_key(load.asset_id, "shed_state") for load in load_list if load.shed),
+            assumptions=scheduled_assumptions,
+            kind="forecast",
+        )
+    )
+
     forecast_load = None
     if site_rolling is not None:
-        forecast_load = site_rolling * config.forecast_day_horizon_h + scheduled_load_kwh
+        forecast_load = site_rolling * horizon_h + scheduled_value
     derived.add(
         DerivedValue(
             key="forecast_load_next_24h_kwh",
             value=forecast_load,
             unit="kWh",
             valid=forecast_load is not None,
-            basis="rolling site load projected over 24 h plus scheduled task energy",
+            basis="rolling site load projected over 24 h plus the restoration energy of held-off loads",
             inputs=("critical_load_kw", "general_load_kw"),
-            assumptions=("persistence projection; no occupancy or seasonal model",),
+            assumptions=("persistence projection; no occupancy or seasonal model",) + scheduled_assumptions,
             kind="forecast",
         )
     )
@@ -639,14 +819,79 @@ def compute_derived(
             inputs=("pv_power_kw", "critical_load_kw", "general_load_kw", "battery_charge_limit_kw"),
         )
     )
+    absorb = deferrable_absorb_capacity_kw(load_list, inputs)
+    derived.add(
+        DerivedValue(
+            key="deferrable_absorb_kw",
+            value=absorb.value,
+            unit="kW",
+            valid=absorb.complete,
+            basis=(
+                f"estimated power the {len(absorb.counted)} deferrable (tier >= {DEFERRABLE_TIER_MIN}) load(s) "
+                "could take up if started now: the whole estimate of a held-off load, the gap between "
+                "estimate and measurement for a running one"
+            ),
+            inputs=tuple(load_input_key(asset_id, "power_kw") for asset_id in absorb.counted),
+            assumptions=absorb.assumptions("absorb capacity"),
+        )
+    )
+    curtailment = None if surplus is None else max(surplus - absorb.value, 0.0)
     derived.add(
         DerivedValue(
             key="curtailment_risk_kw",
-            value=surplus,
+            value=curtailment,
             unit="kW",
-            valid=surplus is not None,
-            basis="PV energy that would be unused without activating deferred loads",
-            inputs=("pv_power_kw", "critical_load_kw", "battery_charge_limit_kw"),
+            valid=curtailment is not None and absorb.complete,
+            basis=(
+                "PV power that would go unused even with every deferrable load started: surplus above site "
+                "demand and the battery's charge acceptance (available_charge_kw), less deferrable_absorb_kw"
+            ),
+            inputs=("pv_power_kw", "critical_load_kw", "general_load_kw", "battery_charge_limit_kw")
+            + tuple(load_input_key(asset_id, "power_kw") for asset_id in absorb.counted),
+            assumptions=absorb.assumptions("absorb capacity"),
+        )
+    )
+
+    # -- Surplus persistence (SDD 36 minimum run window) -----------------
+    # The forecast's *trend* over the window (mean forecast power over the
+    # window relative to the forecaster's own present estimate) scales the
+    # present PV. The forecaster's margin cancels out of that ratio on purpose:
+    # the lease fraction already keeps room for a cloud, and SDD 36 asks
+    # whether the surplus will still be there, not how confident we are in the
+    # absolute number. The persistence placeholder has no trend (ratio 1); the
+    # clear-sky model declines through the afternoon and to zero at dusk.
+    window_h = config.surplus_minimum_window_min / 60.0
+    window = forecast.forecast(window_h, now=now, inputs=inputs, config=config)
+    sustained = None
+    trend = None
+    if surplus is not None and window.valid and window.kwh is not None and window.start_kw is not None:
+        assert pv_kw is not None and site_kw is not None and available_charge is not None
+        if window_h <= 0:
+            trend = 1.0
+        else:
+            mean_kw = window.kwh / window_h
+            trend = 1.0 if window.start_kw <= 0 else min(mean_kw / window.start_kw, 1.0)
+        sustained = max(pv_kw * trend - site_kw - available_charge, 0.0)
+    derived.add(
+        DerivedValue(
+            key="surplus_sustained_kw",
+            value=sustained,
+            unit="kW",
+            valid=sustained is not None,
+            basis=(
+                f"present PV scaled by the forecast ({window.method}) trend over the "
+                f"{config.surplus_minimum_window_min} min minimum run window"
+                + (f" ({trend:.2f})" if trend is not None else "")
+                + ", less site demand and battery charge acceptance (SDD 36: a surplus load is not "
+                "started for a short irradiance spike)"
+            ),
+            inputs=("pv_power_kw", "critical_load_kw", "general_load_kw", "battery_charge_limit_kw")
+            + tuple(key for key in window.inputs if key != "pv_power_kw"),
+            assumptions=window.assumptions
+            if window.start_kw is not None
+            else window.assumptions
+            + ("forecaster reports no present estimate, so persistence is not observable",),
+            kind="forecast",
         )
     )
 
@@ -656,20 +901,13 @@ def compute_derived(
     derate_pct = None
     derate_inputs: tuple[str, ...] = ()
     if battery_temp is not None or container_temp is not None:
-        derate_pct = 0.0
         spans = []
         if battery_temp is not None:
             derate_inputs += ("battery_temperature_max_c",)
-            spans.append(
-                _linear_derate(battery_temp, config.battery_temp_warning_c, config.battery_temp_emergency_c)
-            )
+            spans.append(piecewise_derate(battery_temp, config.thermal_derate_battery_curve))
         if container_temp is not None:
             derate_inputs += ("container_temperature_c",)
-            spans.append(
-                _linear_derate(
-                    container_temp, config.container_temp_warning_c, config.container_temp_emergency_c
-                )
-            )
+            spans.append(piecewise_derate(container_temp, config.thermal_derate_container_curve))
         derate_pct = max(spans) if spans else 0.0
     derived.add(
         DerivedValue(
@@ -677,9 +915,13 @@ def compute_derived(
             value=derate_pct,
             unit="%",
             valid=derate_pct is not None,
-            basis="linear derate between the warning and emergency temperature thresholds",
+            basis="piecewise-linear derate over the configured battery and container temperature curves, worst of the two",
             inputs=derate_inputs,
-            assumptions=("derate curve is a commissioning placeholder, not a manufacturer curve",),
+            assumptions=(
+                f"derate curves are commissioning defaults from EmsConfig, not manufacturer curves: battery "
+                f"{describe_curve(config.thermal_derate_battery_curve)}; container "
+                f"{describe_curve(config.thermal_derate_container_curve)}",
+            ),
         )
     )
 
@@ -700,40 +942,62 @@ def compute_derived(
     )
 
     # -- Deferrable backlog ---------------------------------------------
-    if deferrable_backlog_kwh is None:
-        shed_estimate = sum(
-            load.estimated_power_kw or 0.0 for load in load_list if load.shed and load.estimated_power_kw
-        )
-        derived.add(
-            DerivedValue(
-                key="deferrable_backlog_kwh",
-                value=shed_estimate if shed_estimate else None,
-                unit="kWh",
-                valid=False,
-                basis="no deferred-work queue is integrated yet",
-                assumptions=("open item: deferrable work backlog requires the task scheduler from SDD 30.5",),
-            )
-        )
-    else:
+    if deferrable_backlog_kwh is not None:
         derived.add(
             DerivedValue(
                 key="deferrable_backlog_kwh",
                 value=deferrable_backlog_kwh,
                 unit="kWh",
                 valid=True,
-                basis="supplied by the deferred-work queue",
+                basis="supplied by the caller (deferred-work queue, SDD 30.5)",
+            )
+        )
+    else:
+        backlog = deferrable_backlog_energy(load_list, horizon_h)
+        derived.add(
+            DerivedValue(
+                key="deferrable_backlog_kwh",
+                value=backlog.value,
+                unit="kWh",
+                valid=backlog.complete,
+                basis=(
+                    f"estimated power of the {len(backlog.counted)} deferrable (tier >= {DEFERRABLE_TIER_MIN}) "
+                    f"load(s) the EMS is holding off, times the hours each has been off, capped at {horizon_h:g} h"
+                ),
+                inputs=tuple(load_input_key(asset_id, "shed_state") for asset_id in backlog.counted),
+                assumptions=backlog.assumptions("backlog")
+                + (
+                    "backlog is derived from the loads the EMS is holding off; no task scheduler "
+                    "(SDD 30.5) supplies queued work yet",
+                ),
             )
         )
 
     return derived
 
 
-def _linear_derate(temperature_c: float, warning_c: float, emergency_c: float) -> float:
-    """0% below the warning threshold, 100% at the emergency threshold."""
-    if emergency_c <= warning_c:
+def piecewise_derate(temperature_c: float, curve: Iterable[tuple[float, float]]) -> float:
+    """Piecewise-linear derate (%) over ``(temperature_c, derate_pct)`` points.
+
+    Flat beyond the end points, so a curve that starts at the warning threshold
+    gives 0% below it and a curve that ends at the emergency threshold holds
+    its final value above it.
+    """
+    points = sorted((float(t), float(d)) for t, d in curve)
+    if not points:
         return 0.0
-    if temperature_c <= warning_c:
-        return 0.0
-    if temperature_c >= emergency_c:
-        return 100.0
-    return (temperature_c - warning_c) / (emergency_c - warning_c) * 100.0
+    if temperature_c <= points[0][0]:
+        return points[0][1]
+    if temperature_c >= points[-1][0]:
+        return points[-1][1]
+    for (t0, d0), (t1, d1) in itertools.pairwise(points):
+        if t0 <= temperature_c <= t1:
+            if t1 == t0:
+                return max(d0, d1)
+            return d0 + (d1 - d0) * (temperature_c - t0) / (t1 - t0)
+    return points[-1][1]  # pragma: no cover - the loop always matches
+
+
+def describe_curve(curve: Iterable[tuple[float, float]]) -> str:
+    """``(45 C, 0%) -> (55 C, 100%)`` for assumption strings and the API."""
+    return " -> ".join(f"({t:g} C, {d:g}%)" for t, d in sorted((float(t), float(d)) for t, d in curve))

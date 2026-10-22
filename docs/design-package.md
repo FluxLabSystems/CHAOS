@@ -20,7 +20,7 @@ Related: [Getting started § What first-run setup does](./getting-started.md#4-w
 | File | Contents | Loaded into the registry? |
 |---|---|---|
 | `asset_class_dictionary.yaml` | Domains, relationship types, lifecycle vocabularies, asset classes, point profiles | Yes |
-| `point_dictionary.yaml` | Canonical point names, classes, types, units, provenance | Yes |
+| `point_dictionary.yaml` | Canonical point names, classes, types, units, provenance — including the points the platform itself publishes, such as the EMS's `energy_state` | Yes |
 | `homestead_asset_register.yaml` | 90 assets and 99 relationships: site, container, PV, inverters, battery, rack, network, services, sensors, load groups | Yes |
 | `point_bindings.yaml` | 245 vendor/protocol bindings. Addresses are `TBD` unless the source supplied them | Yes |
 | `load_schedule.yaml` | 12 load records with tier, control method and restoration policy | Yes, by the load-schedule loader |
@@ -47,7 +47,7 @@ what that looks like in practice.
 |---|---:|
 | Assets | 90 |
 | Relationships | 99 |
-| Points | 701 |
+| Points | 702 |
 | Point bindings | 245 |
 | Locations | 30 |
 | Load profiles | 12 |
@@ -120,6 +120,15 @@ The same vocabulary governs the
 
 **Every record in that directory is currently `proposed`.** None may be treated
 as settled.
+
+The same rule decides where a new point definition goes. The registry loader
+reads only the four core documents, and an extension stays unmerged until the
+owner ratifies it. A point the **platform itself** publishes — `energy_state`,
+`power_budget_kw` — is therefore defined in `point_dictionary.yaml` and attached
+through a point profile (`ems_site`, `ems_load`), marked with its own provenance
+rung (`reconciled_v0_4` for a definition added after the v0.3 pass). It is not a
+design proposal, so it does not wait for one. See
+[Integration findings § F-003](./integration-findings.md#f-003--energy_state-is-published-but-not-defined).
 
 ---
 
@@ -206,7 +215,7 @@ decision rather than a startup decision.
 
 | Document | Why |
 |---|---|
-| [Integration findings](./integration-findings.md) | Nine gaps in this package, found by running the platform |
+| [Integration findings](./integration-findings.md) | Nine gaps in this package, found by running the platform; F-003 has since been resolved |
 | [Topology and blast radius](./topology-view.md) | Where the water extension shows up |
 | [Rack elevation](./rack-view.md) | A `not_ratified` document rendered honestly |
 | [Commissioning](./commissioning.md) | How `TBD` bindings become commissioned ones |
