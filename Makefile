@@ -54,13 +54,13 @@ test: ## Run the test suite
 test-cov: ## Run the test suite with coverage (needs pytest-cov)
 	$(PYTEST) --cov=chaos --cov-report=term-missing
 
-lint: ## Check formatting and lint rules (ruff)
-	$(RUFF) check src tests
-	$(RUFF) format --check src tests
+lint: ## Check lint rules and formatting (ruff), as CI does
+	$(RUFF) check src tests tools
+	$(RUFF) format --check src tests tools
 
 format: ## Apply ruff formatting and autofixes
-	$(RUFF) check --fix src tests
-	$(RUFF) format src tests
+	$(RUFF) check --fix src tests tools
+	$(RUFF) format src tests tools
 
 validate: ## Validate the machine-readable design package against its schemas
 	$(PYTHON) tools/validate_bundle.py --no-report
@@ -148,9 +148,10 @@ distclean: clean ## Also remove the local database and exports under var/
 	rm -rf var/homestead.db var/homestead.db-wal var/homestead.db-shm var/export.json
 
 # --- CI --------------------------------------------------------------------
-# The gating checks, matching .github/workflows/ci.yml. Lint is deliberately not
-# here: it is advisory in CI while subsystems land in parallel, and a target that
-# claims to mirror CI while failing on a formatting nit would be a lie. Run
-# `make lint` separately.
-ci: validate test ## Run the checks that gate CI (validate + tests)
-	@echo "CI checks passed. Run 'make lint' separately -- lint is advisory in CI."
+# The gating checks a developer can run locally, matching the Python half of
+# .github/workflows/ci.yml: the design package validates, the suite passes and
+# ruff is clean. CI additionally builds the container image, parses the deploy
+# configuration, builds the .NET solution and, on a Windows runner, the WinUI
+# shell and the installer -- none of which this target can stand in for.
+ci: validate lint test ## Run the local checks that gate CI (validate + lint + tests)
+	@echo "Local CI checks passed (validate, lint, tests)."

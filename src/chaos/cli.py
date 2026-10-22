@@ -682,6 +682,7 @@ def cmd_init_db(args: argparse.Namespace) -> int:
 
     settings = build_settings(args)
     metadata = _metadata()
+    _quiet_alembic(args)
 
     try:
         engine = db_module.build_engine(settings)
@@ -692,7 +693,6 @@ def cmd_init_db(args: argparse.Namespace) -> int:
         ) from exc
 
     db_module.configure(engine)
-    _quiet_alembic(args)
     before = _table_names(engine) - {MIGRATION_VERSION_TABLE}
     _create_all(db_module, engine, settings)
     after = _table_names(engine) - {MIGRATION_VERSION_TABLE}
@@ -775,6 +775,8 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     """
     from chaos import db as db_module
 
+    # Before the import: alembic narrates its plugin setup at INFO on import.
+    _quiet_alembic(args)
     migrations = resolve_subsystem(
         "chaos.migrations",
         subsystem="Schema migrations",
@@ -782,7 +784,6 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     )
     settings = build_settings(args)
     metadata = _metadata()
-    _quiet_alembic(args)
 
     try:
         engine = db_module.build_engine(settings)

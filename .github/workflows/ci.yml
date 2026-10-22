@@ -60,7 +60,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11"]
+        # 3.11 is what the container image and the shipped Windows runtime
+        # run; 3.12 and 3.13 are the lines the runtime lock file says it
+        # should move to once the suite is green on them, which this proves.
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
@@ -87,7 +90,17 @@ jobs:
           chaos --version
           chaos --help
           chaos validate
+          chaos plugins
+          chaos-simulator --list-scenarios
           chaos --database-url "sqlite:///$RUNNER_TEMP/ci.db" init-db
+          # init-db records the schema revision, so migrate must find nothing to do.
+          # (Output goes to a file first: a CLI failure must not hide behind grep's exit code.)
+          chaos --database-url "sqlite:///$RUNNER_TEMP/ci.db" migrate > "$RUNNER_TEMP/migrate.txt"
+          grep -q 'already at head' "$RUNNER_TEMP/migrate.txt"
+          # And on an empty database migrate alone must build the whole schema.
+          chaos --database-url "sqlite:///$RUNNER_TEMP/migrated.db" migrate
+          chaos --database-url "sqlite:///$RUNNER_TEMP/migrated.db" status --json > "$RUNNER_TEMP/migrated.json"
+          grep -q '"missing_tables": \[\]' "$RUNNER_TEMP/migrated.json"
           chaos --database-url "sqlite:///$RUNNER_TEMP/ci.db" load-registry
           chaos --database-url "sqlite:///$RUNNER_TEMP/ci.db" status --json
           chaos --database-url "sqlite:///$RUNNER_TEMP/ci.db" export \
@@ -96,6 +109,11 @@ jobs:
             --output "$RUNNER_TEMP/backup.tar.gz"
           test -s "$RUNNER_TEMP/export.json"
           tar tzf "$RUNNER_TEMP/backup.tar.gz" | grep -q '^manifest.json$'
+          # A restore dry run validates the archive against an empty database and writes nothing.
+          chaos --database-url "sqlite:///$RUNNER_TEMP/restore.db" init-db
+          chaos --database-url "sqlite:///$RUNNER_TEMP/restore.db" restore --dry-run "$RUNNER_TEMP/backup.tar.gz" \
+            > "$RUNNER_TEMP/restore.txt"
+          grep -q 'nothing written' "$RUNNER_TEMP/restore.txt"
 
       - name: Fail on an unknown subcommand
         run: |
@@ -236,6 +254,7 @@ jobs:
           docker run --rm chaos:ci chaos --version
           docker run --rm chaos:ci chaos validate
           docker run --rm chaos:ci chaos init-db
+          docker run --rm chaos:ci chaos migrate
           docker run --rm chaos:ci chaos status
           # Must run as a non-root user (SDD 15.2).
           test "$(docker run --rm chaos:ci id -u)" != "0"
@@ -313,15 +332,15 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Advisory. Reported, but not a merge gate: several subsystems are landing in
-  # parallel, and a formatting nit should not block a control-path fix. Promote
-  # this to a required check once the tree is stable.
+  # A merge gate like the rest. ruff is pinned: a lint job that floats to the
+  # newest release fails on rules nobody changed any code to violate, and a
+  # gate that fails for reasons outside the diff teaches people to ignore it.
+  # `make lint` runs the same three directories.
   # ---------------------------------------------------------------------------
   lint:
-    name: Lint (advisory)
+    name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -332,10 +351,58 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install ruff
-        run: python -m pip install ruff
+        run: python -m pip install "ruff==0.17.1"
 
       - name: Lint
-        run: ruff check src tests
+        run: ruff check src tests tools
 
       - name: Format check
-        run: ruff format --check src tests
+        run: ruff format --check src tests tools
+
+  # ---------------------------------------------------------------------------
+  # The half that only Windows can build: the WinUI 3 shell compiles nowhere
+  # else, and the installer is a Windows MSI built from a staged tree that
+  # includes the embedded Python runtime. The Linux dotnet job above restores
+  # the shell's package graph and skips its compile, loudly; this job is where
+  # the shell is actually compiled and the installer actually produced. It
+  # cannot be rehearsed off GitHub, so it proves itself only there.
+  # ---------------------------------------------------------------------------
+  windows:
+    name: WinUI shell and installer (Windows)
+    runs-on: windows-latest
+    needs: validate
+    timeout-minutes: 60
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: windows/global.json
+
+      # Chaos.Runtime regenerates the help site during the .NET build, which
+      # runs tools/build_docs.py with a Python from the PATH.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build the WinUI 3 shell
+        # x64 explicitly: WinUI 3 has no AnyCPU, and the installer is x64.
+        run: dotnet build windows/src/Chaos.Shell/Chaos.Shell.csproj -c Release -p:Platform=x64
+
+      - name: Publish, build the embedded runtime, stage and package the installer
+        # `-Task all` = publish + stage (which builds the Python runtime from
+        # python-runtime.lock.json, outbound HTTPS at build time) + package
+        # (WiX 5 is installed as a pinned dotnet tool under windows/build/out).
+        shell: pwsh
+        run: ./windows/build/build.ps1 -Task all
+
+      - name: Keep the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProjectCHAOS-msi
+          path: windows/build/out/package/*.msi
+          if-no-files-found: error
+          retention-days: 14
