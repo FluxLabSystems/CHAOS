@@ -384,8 +384,8 @@ Consequently most of the MVP acceptance criteria are outstanding:
 | 1 | Registry contains all installed core assets | **Met for what is designed** — 90 assets, though most are `planned`, not installed |
 | 2 | Live energy, water, rack, weather and alarm state | **Not met** — needs hardware |
 | 3 | Telemetry follows one documented schema | **Met** |
-| 4 | Critical alarms work during internet loss | **Not met** — a log line is not an alert |
-| 5 | Home automation, flows, dashboards and the API backed up automatically | **Partial** — dashboards and the API yes; the others do not exist |
+| 4 | Critical alarms work during internet loss | **Not met** — the `email` and `push` channels exist and run against a relay or push server on the property network, but neither is configured or proven here; `voice` is a stub. A log line is not an alert. See [Alarms § Notification](./alarms.md#7-notification-and-the-honest-part) |
+| 5 | Home automation, flows, dashboards and the API backed up automatically | **Partial** — the registry and configuration archive is scheduled on Windows by the gateway and by cron on containers (`deploy/backup/backup.sh`, which also takes the database and the dashboards); the platform watches the result and raises `backup_overdue` at 48 h. Home Assistant and Node-RED do not exist, so they are not backed up |
 | 6 | One physical subsystem controlled with acknowledgement and audit | **Not met** — needs hardware |
 | 7 | Communications-loss and server-loss tests | **Not met** against hardware; simulated only |
 | 8 | Property map displays structures and assets | **Not met** — GeoJSON is served, nothing renders it over a basemap |

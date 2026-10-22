@@ -421,6 +421,15 @@ and never credentials; see
 Everything
 the design document named exists, and the implementation goes further.
 
+**`/metrics` on the Windows product is loopback-only.** The backend serves it
+on `127.0.0.1:8081`, and the gateway's route-ownership manifest leaves
+`/metrics` unclaimed, so the gateway never proxies it: a Prometheus on another
+machine cannot scrape a Windows node today. In the container stack the
+platform listens on `:8000` directly and Prometheus scrapes `twin:8000/metrics`
+on the compose network. Exposing it through the gateway is a one-row change to
+the manifest, and whether to make it is the gateway owner's decision, not the
+platform's.
+
 Write endpoints carry authorization, an audit reason, an idempotency key and an
 expiry where applicable. **Authentication is not implemented here** — it
 terminates upstream at the proxy or VPN, and that architecture is still an open

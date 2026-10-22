@@ -223,12 +223,14 @@ the .NET gateway with first-run setup · the WinUI 3 desktop shell ·
 ### Not built
 
 Home Assistant integration · Node-RED flows · property-map rendering on a real
-map · Level 4 forecasting and scenario simulation (the EMS carries a clear-sky PV
-estimate from solar geometry — no weather feed, and inactive until the site survey
-supplies coordinates) · subsystem coordinators for
-water, irrigation, greenhouse, compost, nitrogen storage, spa and security ·
-SNMP/Modbus polling of real devices (the plugin system is where it would go) ·
-camera and NVR integration · voice escalation · the document library.
+map · dedicated wall-display views beyond the console's wall mode · Level 4
+forecasting and scenario simulation (the EMS carries a clear-sky PV estimate
+from solar geometry — no weather feed, and inactive until the site survey
+supplies coordinates) · subsystem coordinators for water, irrigation,
+greenhouse, compost, nitrogen storage, spa and security · SNMP/Modbus polling
+of real devices (the plugin system is where it would go) · camera and NVR
+integration · voice escalation · automated network-device configuration backup
+· a time service with holdover · the document library.
 
 ### The headline
 
