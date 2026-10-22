@@ -13,6 +13,10 @@ One tick is the whole SDD 30-35 cycle:
 ``tick()`` takes ``now`` so every hysteresis, dwell and cooldown behaviour is
 testable without sleeping. The background loop is a daemon thread whose
 interval is injectable; tests call ``tick()`` directly and never start it.
+
+The configuration is re-read at the start of every tick (step 0): a threshold
+changed in the file ``CHAOS_EMS_CONFIG_FILE`` names takes effect at the next
+evaluation and is recorded as one configuration revision (SDD 39 EMS-T015).
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from chaos.config import Settings
 from chaos.ems import CommandPort, ManagerCommandPort
 from chaos.ems.blackstart import BlackStartCoordinator, BlackStartState
-from chaos.ems.config import DEFAULT_CONFIG, EmsConfig, energy_state_topic
+from chaos.ems.config import EmsConfig, EmsConfigError, EmsConfigLoad, energy_state_topic, load_ems_config
 from chaos.ems.derived import (
     DerivedEnergyState,
     PvForecast,
@@ -79,6 +83,11 @@ class TickResult:
     forced_restores: list[dict[str, Any]] = field(default_factory=list)
     published_topic: str | None = None
     skipped_reason: str | None = None
+    #: The ``ems_config`` revision in force for this tick (None when the caller
+    #: passed its own configuration) and the reason the file could not be
+    #: re-read, when it could not.
+    config_revision: int | None = None
+    config_error: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -94,6 +103,8 @@ class TickResult:
             "published_topic": self.published_topic,
             "skipped_reason": self.skipped_reason,
             "data_quality": self.inputs.data_quality if self.inputs else None,
+            "config_revision": self.config_revision,
+            "config_error": self.config_error,
         }
 
 
@@ -101,7 +112,12 @@ class EnergyManagerService:
     """``BackgroundService`` implementation for the EMS.
 
     Constructed by ``chaos.runtime.build_services`` as
-    ``EnergyManagerService(session_factory, bus, settings)``.
+    ``EnergyManagerService(session_factory, bus, settings)``. Without an explicit
+    ``config`` the service takes the effective configuration from
+    :func:`chaos.ems.config.load_ems_config` -- the defaults overridden by the
+    file ``CHAOS_EMS_CONFIG_FILE`` names -- and records the configuration
+    revision that load produces (SDD 39 EMS-T015). A file that cannot be applied
+    stops the service from being built rather than running it on defaults.
     """
 
     name = "ems"
@@ -123,7 +139,14 @@ class EnergyManagerService:
         self.session_factory = session_factory
         self.bus = bus
         self.settings = settings
-        self.config = config or DEFAULT_CONFIG
+        self.config_load: EmsConfigLoad | None = None
+        self.config_error: str | None = None
+        if config is None:
+            with session_factory() as session:
+                self.config_load = load_ems_config(session, settings=settings)
+                session.commit()
+            config = self.config_load.config
+        self.config = config
         self.interval_s = interval_s if interval_s is not None else settings.ems_tick_interval_s
         self.command_port: CommandPort = command_port or ManagerCommandPort(
             session_factory=session_factory, bus=bus, settings=settings
@@ -199,6 +222,9 @@ class EnergyManagerService:
             result = TickResult(at=now, state=snapshot.state, skipped_reason="ems_enabled is false")
             self.last_tick = result
             return result
+
+        # 0. configuration ----------------------------------------------
+        self._refresh_config(session)
 
         profiles = load_profiles(session)
         load_asset_ids = [profile.asset_id for profile in profiles]
@@ -301,9 +327,59 @@ class EnergyManagerService:
             confirmations=[c.as_dict() for c in confirmations],
             forced_restores=[f.as_dict() for f in forced],
             published_topic=topic,
+            config_revision=self.config_load.revision if self.config_load is not None else None,
+            config_error=self.config_error,
         )
         self.last_tick = result
         return result
+
+    # -- configuration (SDD 30.2, 39 EMS-T015) ---------------------------
+    def _refresh_config(self, session: Session) -> None:
+        """Re-read the configuration so a threshold change takes effect at this tick.
+
+        Only when the service owns its configuration; a caller that passed one
+        keeps it. A file that cannot be applied leaves the last good
+        configuration in force -- a typo must not stop supervisory control --
+        and is logged once per distinct problem.
+        """
+        if self.config_load is None:
+            return
+        try:
+            load = load_ems_config(session, settings=self.settings)
+        except EmsConfigError as exc:
+            message = str(exc)
+            if message != self.config_error:
+                logger.error(
+                    "EMS configuration rejected; revision %s stays in force: %s",
+                    self.config_load.revision,
+                    message,
+                )
+                self.config_error = message
+            return
+        if self.config_error is not None:
+            logger.info("EMS configuration readable again")
+            self.config_error = None
+        if load.config != self.config:
+            self._apply_config(load.config)
+            logger.warning(
+                "EMS configuration changed: revision %s now in force (%s; changed by %s)",
+                load.revision,
+                load.source.reason,
+                load.source.changed_by,
+            )
+        self.config_load = load
+
+    def _apply_config(self, config: EmsConfig) -> None:
+        """Swap the configuration on every coordinator.
+
+        Their runtime state -- the generator sequence, black-start progress,
+        the rolling samples and everything in the database -- is untouched;
+        only the parameters change.
+        """
+        self.config = config
+        self.rolling.window_s = config.rolling_window_s
+        for component in (self.state_machine, self.leases, self.shedding, self.generator, self.blackstart):
+            component.config = config
 
     def _publish_budgets(self, session: Session, states: dict[str, LoadState], *, now: dt.datetime) -> None:
         """Publish each load's power budget (SDD 13: state plus load budget)."""

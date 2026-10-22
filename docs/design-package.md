@@ -147,6 +147,11 @@ The second one is not an abstraction. Computing it gives **98 of 137 assets
 lost, 50 of them critical** — see
 [Topology § The answer the design document asks for](./topology-view.md#4-the-answer-the-design-document-asks-for).
 
+**The energy manager's own thresholds are not in this package.** They are
+commissioning parameters in `EmsConfig`, overridable per deployment through a
+file and recorded as configuration revisions when they change — see
+[EMS configuration](./ems-configuration.md).
+
 ---
 
 ## 6. Validation

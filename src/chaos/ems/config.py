@@ -11,16 +11,33 @@ capability, generator, climate and the actual site loads.
 
 No threshold may be written at a call site. Every module takes an
 :class:`EmsConfig` so that a threshold change is one auditable configuration
-revision (SDD 39 test ``EMS-T015``).
+revision (SDD 39 test ``EMS-T015``). :func:`load_ems_config` is where that
+happens: it builds the effective configuration -- the defaults below,
+overridden by the file the ``CHAOS_EMS_CONFIG_FILE`` environment variable
+names -- and, given a database session, appends a ``configuration_revisions``
+row whenever the effective configuration differs from the last one recorded
+for the site. The environment variable is read by this module from the process
+environment, not through :class:`chaos.config.Settings`, so the EMS owns its
+own tunables without widening the platform settings surface.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass, field, fields
+import json
+import os
+import types
+import typing
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field, fields, replace
+from pathlib import Path
 from typing import Any
 
-from chaos.config import Settings
+import yaml
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from chaos.config import Settings, get_settings
+from chaos.models.registry import ConfigurationRevision
 from chaos.topics import DEFAULT_BASE, telemetry_topic
 
 #: Canonical point name the EMS publishes the site energy state on.
@@ -348,6 +365,8 @@ class EmsConfig:
             resolved = derate_curve_between(warning, emergency) if curve is None else normalise_curve(curve)
             # The dataclass is frozen; the resolved curve is written exactly once, here.
             object.__setattr__(self, attribute, resolved)
+        if "medium" not in self.restore_stagger_s:
+            raise ValueError("restore_stagger_s must define the 'medium' inrush class, the fallback stagger")
 
     def thermal_derate_curve_basis(self, kind: str) -> str:
         """Where the ``kind`` (``battery`` or ``container``) derate curve in force came from."""
@@ -388,6 +407,306 @@ class EmsConfig:
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
 
-#: Process-wide default. Override by constructing an ``EmsConfig`` and passing
-#: it to the service; the defaults are documented starting points only.
+#: The built-in defaults. The service and the API take the *effective*
+#: configuration from :func:`load_ems_config` instead; this constant remains for
+#: callers that want the documented starting points themselves.
 DEFAULT_CONFIG = EmsConfig()
+
+
+# ---------------------------------------------------------------------------
+# Effective configuration: file overrides and the configuration revision
+# ---------------------------------------------------------------------------
+
+#: Environment variable naming the EMS configuration file (YAML or JSON): a
+#: mapping of :class:`EmsConfig` field names to values. Read from the process
+#: environment by this module; a relative path resolves against the working
+#: directory. Unset or empty means the built-in defaults are in force.
+EMS_CONFIG_FILE_ENV = "CHAOS_EMS_CONFIG_FILE"
+#: ``configuration_revisions.target_type`` for the effective EMS configuration;
+#: ``target_id`` is the site.
+EMS_CONFIG_TARGET_TYPE = "ems_config"
+#: Keys a configuration file may carry besides field names: who changed it and
+#: why. They are recorded on the revision, never applied as tunables.
+CONFIG_FILE_ATTRIBUTION_KEYS = ("changed_by", "reason")
+DEFAULTS_CHANGED_BY = "chaos.ems.config (built-in defaults)"
+
+
+class EmsConfigError(ValueError):
+    """The EMS configuration file cannot be applied. The message lists every problem."""
+
+
+@dataclass(frozen=True)
+class EmsConfigSource:
+    """Where the effective configuration came from."""
+
+    #: ``defaults`` or ``file``.
+    kind: str
+    path: str | None
+    #: The fields the file set, with the values as applied.
+    overrides: dict[str, Any]
+    changed_by: str
+    reason: str
+    env_var: str = EMS_CONFIG_FILE_ENV
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "path": self.path,
+            "env_var": self.env_var,
+            "overrides": dict(self.overrides),
+            "changed_by": self.changed_by,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class EmsConfigLoad:
+    """The effective configuration, its provenance and its revision."""
+
+    config: EmsConfig
+    source: EmsConfigSource
+    revision_id: str | None = None
+    revision: int | None = None
+    #: True when this load appended the revision; False when it matched the
+    #: last recorded one, or when no session was given to record against.
+    recorded: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "config": plain_config(self.config),
+            "source": self.source.as_dict(),
+            "revision": (
+                None
+                if self.revision_id is None
+                else {
+                    "id": self.revision_id,
+                    "revision": self.revision,
+                    "target_type": EMS_CONFIG_TARGET_TYPE,
+                    "recorded_by_this_load": self.recorded,
+                }
+            ),
+            # Approval is an owner decision made outside the platform (SDD 39
+            # EMS-T015 names it; nothing here can grant it), so it is recorded
+            # as absent rather than assumed.
+            "approved_by": None,
+        }
+
+
+def plain_config(config: EmsConfig) -> dict[str, Any]:
+    """``as_dict`` as JSON would store it (tuples become lists), for diffs and the API."""
+    return json.loads(json.dumps(config.as_dict()))
+
+
+def config_file_path(environ: Mapping[str, str] | None = None) -> Path | None:
+    """The configured file, or ``None`` when the defaults are in force."""
+    raw = (os.environ if environ is None else environ).get(EMS_CONFIG_FILE_ENV, "").strip()
+    return Path(raw) if raw else None
+
+
+def read_config_file(path: str | Path) -> dict[str, Any]:
+    """Parse the configuration file. Missing, unreadable or malformed is an error, not the defaults."""
+    path = Path(path)
+    if not path.is_file():
+        raise EmsConfigError(f"{EMS_CONFIG_FILE_ENV} names {path}, which does not exist")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise EmsConfigError(f"{EMS_CONFIG_FILE_ENV} names {path}, which cannot be read: {exc}") from exc
+    is_json = path.suffix.lower() == ".json"
+    try:
+        document = json.loads(text) if is_json else yaml.safe_load(text)
+    except (ValueError, yaml.YAMLError) as exc:
+        raise EmsConfigError(f"{path} is not valid {'JSON' if is_json else 'YAML'}: {exc}") from exc
+    if document is None:
+        return {}
+    if not isinstance(document, dict):
+        raise EmsConfigError(f"{path} must hold a mapping of EmsConfig field names to values")
+    return document
+
+
+def _describe(hint: Any) -> str:
+    return hint.__name__ if isinstance(hint, type) else str(hint).replace("typing.", "")
+
+
+def _coerce(value: Any, hint: Any, name: str) -> Any:
+    """Check ``value`` against the field's annotation, converting lists to the tuples the fields hold."""
+    origin = typing.get_origin(hint)
+    if origin is typing.Union or origin is types.UnionType:
+        members = [member for member in typing.get_args(hint) if member is not type(None)]
+        if value is None and len(members) < len(typing.get_args(hint)):
+            return None
+        if len(members) == 1:
+            # ``X | None`` with a value: the problem, if any, is X's to name.
+            return _coerce(value, members[0], name)
+        for member in members:
+            try:
+                return _coerce(value, member, name)
+            except EmsConfigError:
+                continue
+        raise EmsConfigError(f"{name}: expected {_describe(hint)}, got {value!r} ({type(value).__name__})")
+    if hint is bool:
+        if isinstance(value, bool):
+            return value
+    elif hint is int:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    elif hint is float:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    elif hint is str:
+        if isinstance(value, str):
+            return value
+    elif origin is tuple:
+        members = typing.get_args(hint)
+        if isinstance(value, (list, tuple)):
+            if len(members) == 2 and members[1] is Ellipsis:
+                return tuple(
+                    _coerce(item, members[0], f"{name}[{index}]") for index, item in enumerate(value)
+                )
+            if len(value) != len(members):
+                raise EmsConfigError(f"{name}: expected {len(members)} items, got {len(value)}")
+            return tuple(
+                _coerce(item, member, f"{name}[{index}]")
+                for index, (item, member) in enumerate(zip(value, members, strict=True))
+            )
+    elif origin is dict:
+        key_hint, value_hint = typing.get_args(hint)
+        if isinstance(value, dict):
+            return {
+                _coerce(key, key_hint, f"{name} key"): _coerce(item, value_hint, f"{name}[{key!r}]")
+                for key, item in value.items()
+            }
+    else:  # pragma: no cover - every EmsConfig field type is handled above
+        raise EmsConfigError(f"{name}: unsupported field type {_describe(hint)}")
+    raise EmsConfigError(f"{name}: expected {_describe(hint)}, got {value!r} ({type(value).__name__})")
+
+
+def build_config(overrides: Mapping[str, Any], *, source: str = "EMS configuration overrides") -> EmsConfig:
+    """Validate ``overrides`` against the :class:`EmsConfig` fields and build the config.
+
+    Every field is checked against its annotation: an unknown key, a value of
+    the wrong type, or a combination :class:`EmsConfig` itself refuses is an
+    :class:`EmsConfigError` naming the field. Nothing is coerced beyond
+    ``int`` to ``float`` and list to tuple.
+    """
+    hints = typing.get_type_hints(EmsConfig)
+    known = {f.name for f in fields(EmsConfig)}
+    values: dict[str, Any] = {}
+    problems: list[str] = []
+    for name, raw in overrides.items():
+        if name in CONFIG_FILE_ATTRIBUTION_KEYS:
+            continue
+        if name not in known:
+            problems.append(f"{name}: not an EmsConfig field")
+            continue
+        try:
+            values[name] = _coerce(raw, hints[name], name)
+        except EmsConfigError as exc:
+            problems.append(str(exc))
+    if problems:
+        raise EmsConfigError(f"{source} rejected:\n  - " + "\n  - ".join(problems))
+    try:
+        return EmsConfig(**values)
+    except (TypeError, ValueError) as exc:
+        raise EmsConfigError(f"{source} rejected:\n  - {exc}") from exc
+
+
+def load_ems_config(
+    session: Session | None = None,
+    *,
+    settings: Settings | None = None,
+    path: str | Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> EmsConfigLoad:
+    """The effective EMS configuration: the defaults, overridden by the configured file.
+
+    ``path`` names the file directly; otherwise ``CHAOS_EMS_CONFIG_FILE`` is
+    read from ``environ`` (the process environment by default). A file that is
+    missing, malformed or carries a wrong-typed value raises
+    :class:`EmsConfigError`: the EMS does not fall back to the defaults the file
+    was meant to override.
+
+    With a ``session`` the result is reconciled against
+    ``configuration_revisions`` (SDD 5.6, 39 EMS-T015): when the effective
+    configuration differs from the last ``ems_config`` revision recorded for the
+    site -- or none exists -- one revision is appended carrying the previous and
+    new values, the fields that changed, the source and ``approved_by: null``.
+    The caller commits. Without a session nothing is recorded.
+    """
+    resolved = Path(path) if path is not None else config_file_path(environ)
+    if resolved is None:
+        config = EmsConfig()
+        source = EmsConfigSource(
+            kind="defaults",
+            path=None,
+            overrides={},
+            changed_by=DEFAULTS_CHANGED_BY,
+            reason=f"built-in defaults in force: {EMS_CONFIG_FILE_ENV} is not set",
+        )
+    else:
+        document = read_config_file(resolved)
+        config = build_config(document, source=f"EMS configuration file {resolved}")
+        attribution: dict[str, str] = {}
+        for key in CONFIG_FILE_ATTRIBUTION_KEYS:
+            if key in document and document[key] is not None:
+                if not isinstance(document[key], str) or not document[key].strip():
+                    raise EmsConfigError(
+                        f"EMS configuration file {resolved} rejected:\n  - {key}: expected a non-empty string"
+                    )
+                attribution[key] = document[key].strip()
+        applied = plain_config(config)
+        source = EmsConfigSource(
+            kind="file",
+            path=str(resolved),
+            overrides={name: applied[name] for name in document if name in applied},
+            changed_by=attribution.get("changed_by", f"unattributed ({EMS_CONFIG_FILE_ENV})"),
+            reason=attribution.get("reason", f"EMS configuration loaded from {resolved}"),
+        )
+    load = EmsConfigLoad(config=config, source=source)
+    if session is None:
+        return load
+    return _reconcile_revision(session, load, (settings or get_settings()).site_id)
+
+
+def _reconcile_revision(session: Session, load: EmsConfigLoad, target_id: str) -> EmsConfigLoad:
+    """Append an ``ems_config`` revision when the effective configuration changed."""
+    effective = plain_config(load.config)
+    last = session.scalars(
+        select(ConfigurationRevision)
+        .where(
+            ConfigurationRevision.target_type == EMS_CONFIG_TARGET_TYPE,
+            ConfigurationRevision.target_id == target_id,
+        )
+        .order_by(ConfigurationRevision.revision.desc())
+    ).first()
+    previous = last.diff.get("new") if last is not None and isinstance(last.diff, dict) else None
+    if last is not None and previous == effective:
+        return replace(load, revision_id=last.id, revision=last.revision, recorded=False)
+
+    # The first revision is compared with the built-in defaults, so the diff
+    # shows what the file changed; later ones with the revision before.
+    baseline = previous if previous is not None else plain_config(EmsConfig())
+    changes = {
+        name: {"old": baseline.get(name), "new": value}
+        for name, value in effective.items()
+        if baseline.get(name) != value
+    }
+    revision = ConfigurationRevision(
+        target_type=EMS_CONFIG_TARGET_TYPE,
+        target_id=target_id,
+        revision=(last.revision if last is not None else 0) + 1,
+        changed_by=load.source.changed_by[:120],
+        reason=load.source.reason,
+        diff={
+            "old": previous,
+            "new": effective,
+            "changes": changes,
+            "compared_with": "previous revision" if previous is not None else "built-in defaults",
+            "source": load.source.as_dict(),
+            "approved_by": None,
+        },
+        source_package_version=None,
+    )
+    session.add(revision)
+    session.flush()
+    return replace(load, revision_id=revision.id, revision=revision.revision, recorded=True)
