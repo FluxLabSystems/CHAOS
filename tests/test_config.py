@@ -40,7 +40,8 @@ def test_an_empty_optional_string_means_unset(field):
     """`CHAOS_X: ${CHAOS_X:-}` in a compose file hands over "" for an unset variable."""
     assert getattr(Settings(database_url="sqlite://", **{field: ""}), field) is None
     assert getattr(Settings(database_url="sqlite://", **{field: "   "}), field) is None
-    assert getattr(Settings(database_url="sqlite://", **{field: "value"}), field) == "value"
+    # backup_directory is a Path field: compare the rendered value, not the type.
+    assert str(getattr(Settings(database_url="sqlite://", **{field: "value"}), field)) == "value"
 
 
 def test_every_optional_string_setting_is_declared_optional():
