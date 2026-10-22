@@ -113,7 +113,10 @@ Two rules keep it safe:
   it answers 404, and a 404 from an alarm endpoint reads like *"no alarms"*.
 
 `Chaos.Api` exists as the destination for ported subsystems, is built and
-tested, and **is not wired into the gateway today**.
+tested, and is referenced by the gateway, which registers and maps its endpoints
+on every start and derives its SQLite file from the platform database URL.
+**No route is owned by it yet**: the shipped manifest sends
+`/api/v1/annunciator` to Python, and flipping that is one configuration row.
 
 ### Health, and what each answer means
 
@@ -139,7 +142,11 @@ on loopback, and gates readiness on its `/health` answering rather than on the
 process having started. It restarts with backoff behind a circuit breaker, so a
 crash loop reports a terminal failure instead of looking like "starting"
 forever. The gateway registers it at composition and `/host/info` reports its
-state.
+state. When the breaker trips the host stops itself with exit code 70 so the
+service manager can restart it (an MSI install needs `sc failureflag ChaosHost 1`
+once for that). On an installed node the gateway reads `chaos.host.json` and
+`homestead.env` from `%ProgramData%\Project CHAOS\config` and writes
+`chaos-host.log` beside them.
 
 `CHAOS_SuperviseBackend=false` turns it off on a node where the backend is
 started by something else; proxying, health reporting and first-run setup work
@@ -333,8 +340,8 @@ over real tables · 2250 Python tests.
 
 | Thing | State |
 |---|---|
-| **Backend process supervision** | The supervisor is built and shipped; the gateway's entry point does not register it |
-| **Ported .NET subsystems** | `Chaos.Api` is built and tested; no route is owned by it |
+| **Backend process supervision** | Registered by the gateway and driving the backend on every start; a tripped circuit breaker stops the host with exit code 70 so the service manager can restart it |
+| **Ported .NET subsystems** | `Chaos.Api` is built, tested, registered and mapped by the gateway; no route is owned by it yet — ownership is one configuration row |
 | **Notification backends** | Only `log` is implemented. `email`, `push` and `voice` record `not_configured` and never claim success |
 | **NetBotz plugin transport** | The mapping, identity routing, API and health are complete and tested. The SNMP and HTTPS transports are not implemented; the plugin reports `not_configured` and never reports a value that did not come from a device |
 | **Prometheus** | Scrapes only itself. No exporters deployed, most target addresses are open items. The API exposes no `/metrics` |

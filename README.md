@@ -67,9 +67,10 @@ Full walkthrough, including what each screen should look like:
 
 Open [`windows/CHAOS.sln`](windows/CHAOS.sln) in **Visual Studio 2026**, set
 **Chaos.Shell** as the startup project, and press **F5**. Tests are in **Test
-Explorer**. See [`docs/visual-studio.md`](docs/visual-studio.md) — including the
-one thing that is not automatic yet (the gateway does not currently start the
-Python backend for you).
+Explorer**. See [`docs/visual-studio.md`](docs/visual-studio.md). The gateway
+starts the Python backend itself; set `CHAOS_SuperviseBackend=false` to run the
+backend under your own debugger (see
+[`docs/advanced-command-line.md`](docs/advanced-command-line.md)).
 
 ---
 
@@ -162,12 +163,13 @@ src/simulator/   simulated site: solar, battery, inverter, generator, loads, wea
 windows/
   CHAOS.sln                 open this in Visual Studio 2026
   src/Chaos.Host/           the .NET gateway — LAN listener, proxy, first-run setup
+  src/Chaos.Host.Abstractions/ the supervisor contract the gateway and supervisor share
   src/Chaos.Host.Supervisor/ supervises the Python backend as a child process
-  src/Chaos.Api/            subsystems ported from Python to .NET (none live yet)
+  src/Chaos.Api/            subsystems ported from Python to .NET (registered; no route owned yet)
   src/Chaos.Runtime/        builds the embedded Python runtime and this help site
   src/Chaos.Shell/          the WinUI 3 desktop shell (Windows only)
   src/Chaos.Shell.Core/     the shell's testable half — runs everywhere
-  tests/                    five xUnit projects
+  tests/                    four xUnit projects and the Chaos.Api conformance host
   build/                    build targets, and the packaging scripts (advanced)
   installer/                installer configuration
 

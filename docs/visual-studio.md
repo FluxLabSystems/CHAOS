@@ -268,7 +268,7 @@ involved at all.
 
 **Test → Test Explorer**, then **Run All** (`Ctrl+R, A`).
 
-All five test projects use xUnit with `xunit.runner.visualstudio`, so discovery
+All four test projects use xUnit with `xunit.runner.visualstudio`, so discovery
 works with no configuration. They target `net10.0` and none of them needs
 Windows — including the shell's tests, because everything the shell decides
 lives in `Chaos.Shell.Core`.
