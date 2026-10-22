@@ -392,12 +392,19 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 ```
 
-**These tests are not in Test Explorer today.** There is no Python project file
-in the repository, so nothing here configures Visual Studio to discover them.
-Visual Studio's Python workload can run pytest against a folder once a Python
-environment and test framework are selected for the workspace, but that is a
-per-machine setup step this repository does not perform for you. If you want the
-numbers without setting that up, CI runs the same suite on every push.
+**These tests are not in Test Explorer today, and that is a decision rather
+than an omission.** The way to put them there is a Python project file
+(`.pyproj`) in the solution, and a `.pyproj` brings back, on every machine
+without the Python workload, the *unsupported project type* dialog and
+migration report that `Chaos.Installer.csproj` exists to remove for the WiX
+sources (see
+[Why Chaos.Installer is a C# project](./advanced-windows-packaging.md#why-chaosinstaller-is-a-c-project)).
+A dialog on every solution open, for everyone, is a worse trade than a
+per-machine setup step for the people who want pytest in the IDE. Visual
+Studio's Python workload can run pytest against a folder once a Python
+environment and test framework are selected for the workspace; this repository
+does not perform that step for you. If you want the numbers without setting it
+up, CI runs the same suite on every push.
 
 ### Which Python the gateway uses
 

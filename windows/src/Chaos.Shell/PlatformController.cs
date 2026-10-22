@@ -411,6 +411,14 @@ internal sealed class PlatformController : IDisposable
                     Log.Add(LogStream.Shell, $"  {name}={value}");
                 }
 
+                // Start, then assign: the same window the supervisor has when it
+                // launches the Python backend (Chaos.Host.Supervisor/Processes/
+                // WindowsJobObject.cs). A grandchild forked in the microseconds
+                // between the two calls would escape the job; Chaos.Host.exe
+                // forks nothing before its runtime is up. Closing the window
+                // needs a raw CreateProcessW with CREATE_SUSPENDED, which is
+                // listed in docs/advanced-windows-packaging.md, "Open items",
+                // and deliberately not written blind.
                 process.Start();
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
