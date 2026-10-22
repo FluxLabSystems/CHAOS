@@ -169,17 +169,24 @@ asset classes or bindings — not a change to the platform.
 | Did the value arrive at all? | Console → Assets → the asset → its points | A current value with a recent timestamp |
 | Is the value's quality usable? | Same screen | **A process alarm whose input quality is `bad` or `stale` is not evaluated at all.** The data-quality alarm is raised against the point instead |
 | Did it cross far enough, for long enough? | The definition's threshold and on-delay | A crossing that goes away before the on-delay elapses is closed out as a transient — still recorded, never notified |
-| Did the message arrive but fail to resolve? | Console → the dead-letter list | A message that arrived and could not be matched to a registry point. **During commissioning this is far more common than a dead sensor** |
-| Was the whole scope in maintenance? | Console → Control → operating modes | Maintenance mode modifies alarms with the lockout visible |
+| Did the message arrive but fail to resolve? | Console → Home → the dead-letter list | A message that arrived and could not be matched to a registry point. **During commissioning this is far more common than a dead sensor** |
+| Was the whole scope in maintenance? | Console → Control → the operating-modes table | Maintenance mode modifies alarms with the lockout visible |
 
 ### 3.3 It fired and nobody was told
 
-Check the notification delivery log on the console. Every attempt on every
-channel is a row, so *"why did nobody get called"* is answerable after the fact.
+Check the notification delivery log on the console's Alarms screen — at the
+foot of the page, or the incident's own panel. Every attempt on every channel
+is a row, so *"why did nobody get called"* is answerable after the fact.
 
-Rows with status `not_configured` mean exactly that: only the `log` channel has
-a working implementation. `email`, `push` and `voice` record the attempt and
-never claim success. See [Alarms § Notification](./alarms.md#7-notification-and-the-honest-part).
+Read the status word. `sent` means the channel accepted the message: the log
+line was written, the SMTP relay took the mail, the push server answered 2xx.
+`failed` carries the relay's or the server's error and is retried on a later
+engine cycle, up to the retry limit. `not_configured` means exactly that: the
+channel has never been given its settings, and the row names the setting it is
+missing — `log` works with no configuration, `email` and `push` need a relay
+or a push server on the property network, and `voice` is not implemented and
+records `not_configured` every time. See
+[Alarms § Notification](./alarms.md#7-notification-and-the-honest-part).
 
 ---
 
@@ -313,15 +320,17 @@ file), and **stops the whole service with exit code 70**. That is the
 `services.msc`, and the last gateway log ends with *Backend supervision has
 given up*.
 
-**Windows restarts the service** — after 5 s, 15 s, then every minute — but
-only if its recovery policy counts that stop. A crash always counts. A stop
-with an error code, which is what the supervisor does, counts only when the
-service's failure flag is set: `sc failureflag ChaosHost 1`, once, elevated.
-`Chaos.Host.exe --install-service` sets it; the MSI's own registration does
-not, so on an MSI install run that command once if you want the machine to
-keep trying unattended. Either way, something is wrong in the backend; read the
-platform log via **Open logs** — the repeated failure is at the top of each
-restart — and fix that before relying on the retries.
+**Windows restarts the service**, on a delay that depends on how it was
+registered: the MSI's own registration restarts it after 60 s, every time;
+`Chaos.Host.exe --install-service` registers 5 s, then 15 s, then every
+minute. Either way it only happens if the recovery policy counts that stop. A
+crash always counts. A stop with an error code, which is what the supervisor
+does, counts only when the service's failure flag is set:
+`sc failureflag ChaosHost 1`, once, elevated. `--install-service` sets it; the
+MSI's own registration does not, so on an MSI install run that command once if
+you want the machine to keep trying unattended. Either way, something is wrong
+in the backend; read the platform log via **Open logs** — the repeated failure
+is at the top of each restart — and fix that before relying on the retries.
 
 The counts and delays are the `Backend` keys in `chaos.host.json`
 (`MaxStartFailures`, `FailureWindow`, `InitialRestartDelay`, `MaxRestartDelay`,

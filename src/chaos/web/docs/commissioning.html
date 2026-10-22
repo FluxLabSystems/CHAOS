@@ -45,11 +45,15 @@ no.</li></ul>
 <p>Turning on the global flag does not arm anything that has not been commissioned.
 That is deliberate: <strong>one switch should not be able to arm the property.</strong></p>
 <h3 id="where-you-do-this" class="doc-h"><span class="doc-h-text">Where you do this</span><a class="doc-anchor" href="#where-you-do-this" aria-label="Link to this section"></a></h3>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Task</th><th scope="col">Where</th></tr></thead><tbody><tr><td>See where an asset stands</td><td>Console → <strong>Control</strong> → the asset. Its commissioning status is on the screen</td></tr><tr><td>Record a step outcome</td><td>The commissioning endpoint, with the <code>maintainer</code> role</td></tr><tr><td>Enable a binding once the gate allows it</td><td>The commissioning endpoint, with the <code>maintainer</code> role</td></tr><tr><td>Track progress across every asset</td><td>Console → <strong>Assets</strong>, and the binding statuses</td></tr></tbody></table></div>
-<p><strong>There is no dedicated commissioning form in the console today.</strong> Recording a
-step is an API call; the request bodies are in
-<a href="api.html#10-maintenance-and-commissioning">API reference § Maintenance and commissioning</a>.
-Reading the state — which is what you do far more often — is on screen.</p>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Task</th><th scope="col">Where</th></tr></thead><tbody><tr><td>See where an asset stands</td><td>Console → <strong>Commissioning</strong> → the asset: steps passed, prerequisites, whether supervisory control is permitted, the twelve records</td></tr><tr><td>Record a step outcome</td><td>The same screen's <strong>Record a step outcome</strong> form, with the <code>maintainer</code> role</td></tr><tr><td>Enable a binding once the gate allows it</td><td>The same screen's <strong>Point bindings</strong> table, with the <code>maintainer</code> role</td></tr><tr><td>Track progress across every asset</td><td>Console → <strong>Assets</strong> for the binding statuses; Console → <strong>Commissioning</strong> for each asset's record</td></tr></tbody></table></div>
+<p>The console's <strong>Commissioning</strong> screen is the form for this record. Recording a
+step asks for the step, the outcome, the preconditions, the injected
+condition, the expected sequence, what was observed and the evidence — the
+fields SDD 39 requires of a test record — and refuses a pass or fail with
+nothing observed. The same request bodies are in
+<a href="api.html#10-maintenance-and-commissioning">API reference § Maintenance and commissioning</a>
+for anyone recording from a script. See
+<a href="operator-console.html#49-commissioning">The operator console § Commissioning</a>.</p>
 <h3 id="the-four-outcomes" class="doc-h"><span class="doc-h-text">The four outcomes</span><a class="doc-anchor" href="#the-four-outcomes" aria-label="Link to this section"></a></h3>
 <p><code>pass</code> · <code>fail</code> · <code>blocked</code> · <code>not_run</code></p>
 <p>Recording <strong><code>blocked</code></strong> is useful and honest: it says the step could not be run,
@@ -154,8 +158,10 @@ what each refusal means.</p>
 <h3 id="step-10--alarm_and_notification_test" class="doc-h"><span class="doc-h-text">Step 10 — <code>alarm_and_notification_test</code></span><a class="doc-anchor" href="#step-10--alarm_and_notification_test" aria-label="Link to this section"></a></h3>
 <p>Make a real alarm fire and follow it all the way out.</p>
 <ul><li>Drive the condition. Confirm the alarm activates at the right severity.</li><li>Confirm the tile lights on <a href="annunciator.html">the annunciator</a>, with the horn.</li><li>Confirm the notification arrives on <strong>every</strong> configured channel.</li><li>Confirm the alarm links to its operating procedure, affected assets,
-dependencies and manual controls.</li><li>Confirm the lifecycle works: acknowledge → mitigate → clear → review.</li><li><strong>Confirm it works with the internet down.</strong> If the only channel is <code>log</code> or
-<code>email</code>, this step fails.</li></ul>
+dependencies and manual controls.</li><li>Confirm the lifecycle works: acknowledge → mitigate → clear → review.</li><li><strong>Confirm it works with the internet down.</strong> If the only working channel is
+<code>log</code>, or every relay and push server the <code>email</code> and <code>push</code> channels reach
+is outside the property, this step fails. The delivery log on the console's
+Alarms screen says which channel said what.</li></ul>
 <p><strong>Pass:</strong> the alarm fires, reaches a human, carries its context, and clears
 properly.
 <strong>Record:</strong> alarm key, trigger, notification channels and their delivery times.</p>
@@ -178,7 +184,11 @@ it.</strong></p>
 <a href="advanced-command-line.html#7-export">Command line § Export</a>.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Setpoints, dead-bands and timings recorded in the registry, not in
 someone's head.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Manual-override and failure-state records complete for every controlled
 asset.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Binding addresses, protocol and scaling recorded; the binding status is no
-longer <code>tbd</code>.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Alarm definitions reviewed against what actually fired during steps 6–10.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Photos, wiring notes and vendor documents attached as document records.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Broker topic-permission verification re-run for the new identity.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Backup taken <strong>and restored into a scratch database</strong> to prove it works.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>A portable archive copied off the property.</span></li></ul>
+longer <code>tbd</code>.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Alarm definitions reviewed against what actually fired during steps 6–10.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Photos, wiring notes and vendor documents attached as document records
+(Console → <strong>Assets</strong> → the asset → <strong>Documentation</strong>; the record says
+where the document lives — the platform stores no files).</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Broker topic-permission verification re-run for the new identity.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>Backup taken (Console → <strong>Home</strong> → <strong>Backups</strong>, or <code>chaos backup</code>)
+<strong>and restored into a scratch database</strong> to prove it works — the restore
+is a command-line drill.</span></li><li class="doc-task" data-state="todo"><input type="checkbox" disabled><span>A portable archive copied off the property.</span></li></ul>
 <p><strong>Pass:</strong> someone who was not there could operate and troubleshoot this
 subsystem from the record.
 <strong>Record:</strong> the baseline export, and the date it was taken.</p>
@@ -186,8 +196,10 @@ subsystem from the record.
 <h2 id="3-after-the-sequence" class="doc-h"><span class="doc-h-text">3. After the sequence</span><a class="doc-anchor" href="#3-after-the-sequence" aria-label="Link to this section"></a></h2>
 <p>Confirm the asset reports supervisory control permitted and fully commissioned.</p>
 <p>Then enable the bindings that need automatic control — <strong>one at a time, with a
-reason</strong>. The platform returns a refusal, not a success, if the prerequisites
-have not passed; that refusal is the point of the endpoint.</p>
+reason</strong>, from the Commissioning screen's point-bindings table or the
+endpoint. The platform returns a refusal, not a success, if the prerequisites
+have not passed; that refusal is the point of the endpoint, and the screen
+shows it with its reason.</p>
 <p>Then <strong>watch it for a while</strong> before commissioning the next subsystem. The
 failure modes that matter usually appear on the second night, not the first
 hour.</p>
@@ -209,7 +221,7 @@ are read-only, and they are what tells you the container is in trouble. The
 battery and inverters last, because they are the ones that can hurt you.</p>
 <hr>
 <h2 id="5-common-failure-modes" class="doc-h"><span class="doc-h-text">5. Common failure modes</span><a class="doc-anchor" href="#5-common-failure-modes" aria-label="Link to this section"></a></h2>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">What happens</th><th scope="col">What it usually means</th></tr></thead><tbody><tr><td>Step 2 passes but values look wrong</td><td>Unit mismatch between the device and the point dictionary. <strong>Fix the binding, not the dashboard</strong></td></tr><tr><td>Step 6 "passes" because nothing alarmed</td><td>The platform did not notice the loss. That is a <strong>fail</strong>, not a pass — check the point's stale window</td></tr><tr><td>Step 7 passes with a sensor reading zero</td><td>Zero is plausible. Confirm the <strong>quality model</strong> marks it bad, rather than the range check accepting it</td></tr><tr><td>Step 9 acknowledgement never arrives</td><td>The gateway has no permission to publish acknowledgements. Check the broker log for denied publishes</td></tr><tr><td>Step 10 notification never arrives</td><td>Only the <code>log</code> channel is implemented. A log line is not an alert</td></tr><tr><td>Step 10 alarm never fires</td><td>Check the annunciator tile. It may be <code>OUT OF SVC</code> — it cannot fire</td></tr><tr><td>Everything passes in a day</td><td>Steps 6, 7, 8 and 11 require actually breaking things. <strong>If nothing was broken, they were not tested</strong></td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">What happens</th><th scope="col">What it usually means</th></tr></thead><tbody><tr><td>Step 2 passes but values look wrong</td><td>Unit mismatch between the device and the point dictionary. <strong>Fix the binding, not the dashboard</strong></td></tr><tr><td>Step 6 "passes" because nothing alarmed</td><td>The platform did not notice the loss. That is a <strong>fail</strong>, not a pass — check the point's stale window</td></tr><tr><td>Step 7 passes with a sensor reading zero</td><td>Zero is plausible. Confirm the <strong>quality model</strong> marks it bad, rather than the range check accepting it</td></tr><tr><td>Step 9 acknowledgement never arrives</td><td>The gateway has no permission to publish acknowledgements. Check the broker log for denied publishes</td></tr><tr><td>Step 10 notification never arrives</td><td>Read the delivery log on the console's Alarms screen. <code>not configured</code> means the channel was never given its settings and the row names which; <code>failed</code> carries the relay or push server's error. Only <code>log</code> works with no configuration, and a log line is not an alert</td></tr><tr><td>Step 10 alarm never fires</td><td>Check the annunciator tile. It may be <code>OUT OF SVC</code> — it cannot fire</td></tr><tr><td>Everything passes in a day</td><td>Steps 6, 7, 8 and 11 require actually breaking things. <strong>If nothing was broken, they were not tested</strong></td></tr></tbody></table></div>
 <hr>
 <h2 id="6-what-this-platform-cannot-commission-for-you" class="doc-h"><span class="doc-h-text">6. What this platform cannot commission for you</span><a class="doc-anchor" href="#6-what-this-platform-cannot-commission-for-you" aria-label="Link to this section"></a></h2>
 <p>The records, gates and endpoints here <strong>track and enforce</strong> the sequence. They
