@@ -513,6 +513,8 @@ const ROUTES = [
   { pattern: /^\/assets\/(.+)$/,      view: 'assets',  nav: 'assets', param: 'assetId' },
   { pattern: /^\/control$/,           view: 'control', nav: 'control' },
   { pattern: /^\/control\/(.+)$/,     view: 'control', nav: 'control', param: 'assetId' },
+  { pattern: /^\/commissioning$/,     view: 'commissioning', nav: 'commissioning' },
+  { pattern: /^\/commissioning\/(.+)$/, view: 'commissioning', nav: 'commissioning', param: 'assetId' },
 ];
 
 let activeView = null;
