@@ -33,7 +33,7 @@ public readonly record struct ServiceabilityResult(bool Serviceable, string? Rea
 /// So an unserviceable tile reports <c>out_of_service</c> rather than
 /// <c>normal</c> — the software equivalent of the paper OUT OF SERVICE tag taped
 /// over a window on a real panel. <c>docs/integration-findings.md</c> F-007 is
-/// exactly this case: ten of the forty shipped alarms are enabled, look healthy
+/// exactly this case: ten of the forty-one shipped alarms are enabled, look healthy
 /// in the alarm list, and have a trigger point that does not exist for their
 /// asset. All three SAFETY-bay alarms are among them.
 /// </para>

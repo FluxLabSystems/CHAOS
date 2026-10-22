@@ -9,7 +9,7 @@ namespace Chaos.Api.Tests;
 /// </summary>
 /// <remarks>
 /// <c>docs/integration-findings.md</c> F-007 is the reason this file exists. Ten
-/// of the forty shipped alarms are enabled, read as healthy in the alarm list,
+/// of the forty-one shipped alarms are enabled, read as healthy in the alarm list,
 /// and have a trigger point that does not exist for their asset — including all
 /// three SAFETY-bay alarms, covering smoke and water ingress in the 20-foot
 /// container that holds the batteries, the power conversion equipment and the

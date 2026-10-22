@@ -187,7 +187,7 @@ fire** is reported `out_of_service` rather than dark. See
 [The annunciator panel § Out of service](./annunciator.md#6-out-of-service--the-honest-dark-tile)
 for the full rules and the list.
 
-On the shipped definition set, **ten of the forty cannot fire**, including all
+On the shipped definition set, **ten of the forty-one cannot fire**, including all
 three in the SAFETY bay. Each is enabled, appears healthy in the alarm list, and
 has a trigger point that does not exist for its asset.
 
