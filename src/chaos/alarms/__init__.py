@@ -21,9 +21,14 @@ The subsystem is four cooperating pieces:
 
 ``notify``
     Routes an incident (not each member alarm) to the configured channels,
-    escalates unacknowledged critical alarms, and records every attempt --
-    including the honest ``not_configured`` result for channels that have no
-    working implementation yet.
+    escalates unacknowledged critical alarms, retries failed deliveries, and
+    records every attempt -- including the honest ``not_configured`` result
+    for a channel that has not been given a transport.
+
+``published``
+    Turns the platform's own alarm publications -- the EMS asserting
+    ``load_shed_failed`` on the alarm topic -- into ordinary alarm rows, so
+    everything above treats them exactly as evaluated alarms.
 
 Two rules run through all of it:
 
@@ -64,6 +69,7 @@ from chaos.alarms.notify import (
     Notifier,
     build_channels,
 )
+from chaos.alarms.published import PublishedAlarmOutcome, apply_published_alarm
 from chaos.alarms.service import AlarmCycleResult, AlarmEngineService
 
 __all__ = [
@@ -83,7 +89,9 @@ __all__ = [
     "EvaluationResult",
     "NotificationResult",
     "Notifier",
+    "PublishedAlarmOutcome",
     "SuppressionReason",
+    "apply_published_alarm",
     "build_channels",
     "definition_meta",
     "load_document",

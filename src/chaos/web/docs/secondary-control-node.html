@@ -136,16 +136,20 @@ The right action there is to alert a human, not to dispatch.</p>
 primary is gone, the answer is a human deciding, with the secondary node telling
 them what it knows.</p>
 <h3 id="how-that-is-enforced" class="doc-h"><span class="doc-h-text">How that is enforced</span><a class="doc-anchor" href="#how-that-is-enforced" aria-label="Link to this section"></a></h3>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Mechanism</th><th scope="col">Enforces</th></tr></thead><tbody><tr><td><code>runtime.build_services</code> skips <code>EnergyManagerService</code> when <code>settings.is_secondary</code></td><td>No EMS. This is in the platform, not the deployment</td></tr><tr><td><code>CHAOS_EMS_ENABLED: "false"</code> in the compose file</td><td>Belt and braces</td></tr><tr><td><code>CHAOS_ALLOW_PHYSICAL_CONTROL: "false"</code>, hard-coded, not read from <code>.env</code></td><td>No commands</td></tr><tr><td>MQTT ACL: <code>svc-twin-secondary</code> has no write on <code>cmd/</code> or <code>setpoint/</code></td><td>Enforced at the broker, independently of the application</td></tr><tr><td>MQTT bridge has no <code>out</code> rule for the command namespace</td><td>Nothing crosses even if the application misbehaves</td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Mechanism</th><th scope="col">Enforces</th></tr></thead><tbody><tr><td><code>runtime.build_services</code> skips <code>EnergyManagerService</code>, <code>CommandDispatchService</code> and <code>MaintenanceSchedulerService</code> when <code>settings.is_secondary</code></td><td>No EMS, no command dispatch, no duplicate work orders. This is in the platform, not the deployment</td></tr><tr><td><code>CHAOS_EMS_ENABLED: "false"</code> in the compose file</td><td>Belt and braces</td></tr><tr><td><code>CHAOS_ALLOW_PHYSICAL_CONTROL: "false"</code>, hard-coded, not read from <code>.env</code></td><td>No commands</td></tr><tr><td>MQTT ACL: <code>svc-twin-secondary</code> has no write on <code>cmd/</code> or <code>setpoint/</code></td><td>Enforced at the broker, independently of the application</td></tr><tr><td>MQTT bridge has no <code>out</code> rule for the command namespace</td><td>Nothing crosses even if the application misbehaves</td></tr></tbody></table></div>
 <p>Four independent layers, in three different systems. That redundancy is
 proportionate: the failure it prevents is two controllers fighting over a
 battery.</p>
-<p><strong>One gap worth stating.</strong> <code>runtime.build_services</code> suppresses only the EMS on a
-secondary node; <code>CommandDispatchService</code> is still registered whenever MQTT is
-enabled. The application-level protection is therefore
-<code>CHAOS_ALLOW_PHYSICAL_CONTROL=false</code>, backed by the broker ACL. That is why
-the compose file hard-codes the flag rather than defaulting it, and why the ACL
-denial is not treated as belt-and-braces but as a primary control.</p>
+<p><strong>What the application itself withholds.</strong> On a secondary node
+<code>runtime.build_services</code> registers neither the EMS, nor <code>CommandDispatchService</code>
+— so there is no second supervisory control source whatever the broker carries
+— nor the maintenance scheduler, which would raise every work order twice.
+Ingest, the alarm engine and the plugin mirror run as on the primary.
+<code>CHAOS_ALLOW_PHYSICAL_CONTROL=false</code> and the broker ACL stay in force regardless:
+the compose file hard-codes the flag rather than defaulting it, and the ACL
+denial is treated as a primary control rather than belt-and-braces, because a
+defence that lives in one branch of one Python function should never be the
+only thing between a partitioned node and a battery.</p>
 <hr>
 <h2 id="5-replication" class="doc-h"><span class="doc-h-text">5. Replication</span><a class="doc-anchor" href="#5-replication" aria-label="Link to this section"></a></h2>
 <p>SDD 16.2 asks for "replicated PostgreSQL backups and time-series exports" — not

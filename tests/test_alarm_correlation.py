@@ -521,6 +521,9 @@ def test_unconfigured_channels_record_an_honest_failure(db_session, settings, de
         assert "No message was sent" in record.detail
         # The intended role is recorded; no address was ever resolved.
         assert record.recipient in (None, "operator", "on_call")
+    # A real channel without its settings says which setting is missing.
+    assert "CHAOS_NOTIFY_SMTP_HOST" in by_channel["email"].detail
+    assert "CHAOS_NOTIFY_PUSH_URL" in by_channel["push"].detail
     assert "CUCM" in by_channel["voice"].detail  # FR-007 names the escalation path
 
 

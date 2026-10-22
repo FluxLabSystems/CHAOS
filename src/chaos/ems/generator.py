@@ -636,6 +636,16 @@ class GeneratorCoordinator:
 
     # -- publication -------------------------------------------------------
     def _event(self, name: str, detail: dict[str, Any]) -> None:
+        """Publish a generator event on the asset's alarm topic with ``source="ems"``.
+
+        Ingest routes these by source rather than resolving them to a point
+        (:mod:`chaos.ingest.service`): ``generator_start_failed`` has an alarm
+        definition and becomes a real alarm through
+        :mod:`chaos.alarms.published`; the sequence events
+        (``generator_start_requested``, ``generator_stopped``, ...) have none
+        and are counted as platform events, with the sequence itself recorded
+        in the energy state snapshot. Nothing published here is dead-lettered.
+        """
         logger.info("Generator event %s: %s", name, detail)
         if self.bus is None or self.settings is None:
             return

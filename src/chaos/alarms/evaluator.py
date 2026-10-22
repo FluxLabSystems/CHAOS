@@ -60,6 +60,11 @@ CLOSED_STATES = ("cleared", "reviewed")
 #: SDD 26.6 quality codes that make a measurement unusable for a decision.
 QUALITY_BLOCKING = frozenset({"bad", "stale"})
 
+#: ``trigger_value`` key marking an alarm raised by publication rather than by
+#: this evaluator (see :mod:`chaos.alarms.published`). Such an alarm has no
+#: point to evaluate a reset against and must never be closed for want of one.
+PUBLISHED_BY = "published_by"
+
 _SEVERITY_RANK = {name: index for index, name in enumerate(SEVERITIES)}
 _DOWNGRADE = {"emergency": "critical", "critical": "major", "major": "warning", "warning": "info"}
 
@@ -475,7 +480,13 @@ class AlarmEvaluator:
         return event
 
     def _publish(self, alarm: Alarm, definition: AlarmDefinition | None = None) -> None:
-        """Publish the alarm's current state (SDD 10.1 alarm topic namespace)."""
+        """Publish the alarm's current state (SDD 10.1 alarm topic namespace).
+
+        ``source="alarm-engine"`` is what lets ingest recognise this as the
+        store's own echo and count it rather than feed it back or dead-letter
+        it (:mod:`chaos.ingest.service`). Local controllers and the secondary
+        node's bridge are the intended readers.
+        """
         if self.bus is None or not alarm.asset_id:
             return
         try:
@@ -983,12 +994,19 @@ class AlarmEvaluator:
     def _reconcile_quality_alarms(
         self, quality_keys: set[str], now: dt.datetime, result: EvaluationResult
     ) -> None:
-        """Close data-quality alarms whose point has disappeared from current state."""
+        """Close data-quality alarms whose point has disappeared from current state.
+
+        A data-quality alarm raised by publication (the EMS asserting
+        ``energy_meter_data_invalid`` when it cannot verify reserve) names no
+        point at all; it is the publisher's to clear, not this pass's.
+        """
         if not quality_keys:
             return
         statement = select(Alarm).where(Alarm.alarm_key.in_(quality_keys), Alarm.state.in_(OPEN_STATES))
         for alarm in self.session.scalars(statement).all():
             if alarm.point_id and alarm.point_id in self.states:
+                continue
+            if isinstance(alarm.trigger_value, dict) and alarm.trigger_value.get(PUBLISHED_BY):
                 continue
             self.transition(
                 alarm,

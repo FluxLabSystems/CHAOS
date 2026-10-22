@@ -288,7 +288,7 @@ fact.
 | `POST` | `/api/v1/alarms/definitions/reload` | Reload from the design package (`strict`) | maintainer |
 | `GET` | `/api/v1/incidents` | Correlated incidents (`state`, `severity`, `since`, `limit`) | viewer |
 | `GET` | `/api/v1/incidents/{incident_id}` | One incident with member alarms | viewer |
-| `GET` | `/api/v1/notifications` | Delivery log (`channel`, `status`, `incident_id`, `alarm_id`, `limit`) | viewer |
+| `GET` | `/api/v1/notifications` | Delivery log (`channel`, `status` — `sent`, `failed` or `not_configured` — `incident_id`, `alarm_id`, `limit`) | viewer |
 
 `/annunciator` returns **every definition as a tile**, whether or not it is in
 alarm, with a computed serviceability flag. A tile that cannot light is reported
@@ -316,7 +316,7 @@ alarms; correlation groups them so a human sees one incident. See
 | `POST` | `/api/v1/maintenance/plans` | Create a plan | maintainer |
 | `DELETE` | `/api/v1/maintenance/plans/{plan_id}` | Delete a plan | maintainer |
 | `GET` | `/api/v1/maintenance/due` | Work due (`horizon_days`) | viewer |
-| `POST` | `/api/v1/maintenance/generate` | Generate work orders from due plans | maintainer |
+| `POST` | `/api/v1/maintenance/generate` | Generate work orders from due plans, including alarm-triggered plans with an open alarm | maintainer |
 | `GET` | `/api/v1/work-orders` | List (`state`, `asset_id`, `priority`, `limit`) | viewer |
 | `POST` | `/api/v1/work-orders` | Create | maintainer |
 | `GET` | `/api/v1/work-orders/{work_order_id}` | One work order | viewer |
@@ -329,6 +329,15 @@ alarms; correlation groups them so a human sees one incident. See
 | `GET` | `/api/v1/commissioning/{asset_id}/records` | Full records | viewer |
 | `POST` | `/api/v1/commissioning/{asset_id}/steps` | Record a step outcome | maintainer |
 | `POST` | `/api/v1/commissioning/bindings/{point_id}` | Enable a binding | maintainer |
+
+A plan's `trigger_type` is one of `calendar`, `runtime_hours`, `cycle_count`,
+`condition`, `alarm`, `seasonal` or `inspection` (SDD 18). The polled kinds are
+evaluated by the maintenance scheduler and by `/maintenance/generate`. `alarm`
+plans are event-driven: the alarm engine raises their work **when an alarm on
+the plan's asset activates**, once per alarm occurrence, on the primary node
+only. For that trigger type `condition_point` may name the one `alarm_key` that
+raises the plan; blank means any alarm on the asset. `inspection` plans are
+raised when a failed or advisory inspection is recorded.
 
 Recording a step outcome:
 
@@ -403,7 +412,13 @@ The shipped NetBotz plugin contributes five:
 ## 12. Surface size
 
 **87 core operations under `/api/v1`**, plus five contributed by the shipped
-NetBotz plugin under `/api/v1/ext`, plus the platform's own `/health`. Everything
+NetBotz plugin under `/api/v1/ext`, plus the platform's own `/health` and
+`/metrics` (Prometheus text exposition of the platform's own counters: active
+alarms by severity, open incidents, dead letters, ingest and mirror counters,
+notification outcomes by channel and status, plugin health — never point values
+and never credentials; see
+[Operations § Monitoring the platform itself](./operations.md#8-monitoring-the-platform-itself)).
+Everything
 the design document named exists, and the implementation goes further.
 
 Write endpoints carry authorization, an audit reason, an idempotency key and an
@@ -416,12 +431,12 @@ decision.
 ## 13. Not in the API
 
 Nothing here polls SNMP or Modbus, renders a map over a basemap, integrates a
-home-automation platform, forecasts anything, or exposes Prometheus metrics. See
+home-automation platform, or forecasts anything. See
 [Architecture § Status summary](./architecture.md#8-status-summary).
 
-The [plugin system](./plugins.md) is where a vendor poller *would* live, and the
-NetBotz plugin is the worked example — but its transport is an honest stub, so
-the platform still speaks to no vendor system over the network.
+The [plugin system](./plugins.md) is where a vendor poller lives, and the
+NetBotz plugin is the worked example: its HTTPS transport is real and its SNMP
+transport is not (see [Plugins § The NetBotz plugin](./plugins.md#6-the-netbotz-plugin)).
 
 In the container deployment, Grafana reads PostgreSQL directly rather than going
 through this API — it is a read path, and putting a dashboard's query load

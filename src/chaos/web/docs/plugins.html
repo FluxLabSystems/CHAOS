@@ -188,13 +188,34 @@ point, with aliases and unit conversion), both identity routes, the API, and the
 health reporting. There is a test asserting that every point name the mapping
 can publish exists in <code>data/point_dictionary.yaml</code>, so the catalogue cannot
 drift into producing dead letters.</p>
-<p><strong>What is not:</strong> the network transport. <code>UnconfiguredTransport</code> returns no
-readings and reports exactly what implementing SNMP or HTTPS would require. The
-plugin therefore reports <code>not_configured</code> on a real deployment and <strong>never
-reports a temperature that did not come from a device</strong>. An integration you
-believe in but that does not exist is worse than no integration, because the
-temperature it is not reporting looks like a temperature that is fine — the same
-rule the <a href="alarms.html">notification channels</a> live under.</p>
+<p><strong>The HTTPS transport is real, and honest about what it knows.</strong> The NetBotz
+5.x user guide documents that the appliance's REST API lives at
+<code>https&#58;//&lt;host&gt;/rest</code>, that its interactive documentation is at
+<code>https&#58;//&lt;host&gt;/docs/rest</code> (log on to the Web UI first), that <code>GET /rest/assets</code>
+lists assets with an <code>id</code> and a <code>label</code>, and that times are milliseconds since
+the epoch. All of that is built in: with <code>CHAOS_PLUGIN_NETBOTZ_TRANSPORT=http</code>
+and a host, the plugin proves reachability, trust and credentials through the
+assets operation and lists the appliance's assets as enclosures. What the
+documentation does <strong>not</strong> describe is the operation that lists sensor
+<em>values</em>, or its field names — so the readings path is a setting with no
+default and the field names are settings with documented defaults. Until the
+readings path is set the plugin reports <code>not_configured</code> with the exact
+instruction; a path that answers 404, a response of the wrong shape, or items
+without the configured fields are reported as <code>degraded</code> with the status or the
+parse error, on the plugin's health, on the mirror's counters and in the log.
+<strong>Never as a reading.</strong> TLS verification is not negotiable: a private CA is
+trusted through <code>CHAOS_PLUGIN_NETBOTZ_CA_FILE</code>, and there is no option that
+turns verification off.</p>
+<p><strong>What is not:</strong> SNMP. NetBotz appliances expose sensors through the
+NETBOTZV2-MIB, the platform declares no SNMP dependency, and the column layout
+of those tables was not confirmed against an appliance's own MIB file — a walk
+of the wrong columns would mirror the wrong value under the right name, which is
+exactly the failure this plugin exists to avoid. <code>UnconfiguredTransport</code> says
+what SNMP would need and returns nothing. <strong>The plugin never reports a
+temperature that did not come from a device.</strong> An integration you believe in
+but that does not exist is worse than no integration, because the temperature
+it is not reporting looks like a temperature that is fine — the same rule the
+<a href="alarms.html">notification channels</a> live under.</p>
 <p>Four sensor types are listed and deliberately <strong>not</strong> mapped: airflow, audio,
 vibration and camera motion. Each is a real NetBotz capability with no point in
 the dictionary. Mirroring one would mean inventing a point, which is a design
@@ -208,7 +229,9 @@ up — <em>why is the NetBotz not showing anything?</em> — by reporting which 
 rows exist and which are still <code>TBD</code>. "The appliance is unreachable" and
 "nothing is bound to it" look identical on a dashboard and have opposite fixes.</p>
 <h3 id="options" class="doc-h"><span class="doc-h-text">Options</span><a class="doc-anchor" href="#options" aria-label="Link to this section"></a></h3>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Option</th><th scope="col">Values</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>CHAOS_PLUGIN_NETBOTZ_TRANSPORT</code></td><td><code>none</code>, <code>snmp</code>, <code>http</code></td><td>Which transport to use. Both real ones are unimplemented in this release</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_HOST</code></td><td>An address on VLAN 10</td><td>The appliance</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_POLL_INTERVAL_S</code></td><td>seconds, default <code>30</code></td><td>Clamped to 1–3600</td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Option</th><th scope="col">Values</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>CHAOS_PLUGIN_NETBOTZ_TRANSPORT</code></td><td><code>none</code>, <code>http</code>, <code>snmp</code></td><td>Which transport to use. <code>http</code> is implemented; <code>snmp</code> is not and says so</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_HOST</code></td><td>An address on VLAN 10</td><td>The appliance. HTTPS always; <code>PORT</code> defaults to 443</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_USERNAME</code> / <code>PASSWORD</code>, or <code>TOKEN</code></td><td></td><td>HTTP Basic credentials of a read-only account, or a bearer token</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_LOGIN_PATH</code></td><td>e.g. <code>login</code></td><td>If the appliance's API uses a cookie session: the login operation (relative to <code>/rest</code>) that takes <code>{"username", "password"}</code>. Read it off <code>/docs/rest</code></td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_CA_FILE</code></td><td>a path</td><td>CA bundle that issued the appliance's certificate. The only way to trust a private CA; verification cannot be disabled</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_READINGS_PATH</code></td><td>e.g. <code>sensors</code></td><td><strong>Required for readings.</strong> The operation at <code>/docs/rest</code> that lists sensor values, relative to <code>/rest</code>. No default: the documentation does not confirm it, so the plugin does not guess</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_READINGS_KEY</code></td><td>dotted key</td><td>Where the readings response holds its list, if it is an object rather than a list (<code>data.sensors</code>)</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_READING_ID_FIELD</code>, <code>_TYPE_FIELD</code>, <code>_VALUE_FIELD</code>, <code>_UNIT_FIELD</code>, <code>_LABEL_FIELD</code>, <code>_TS_FIELD</code>, <code>_ENCLOSURE_FIELD</code></td><td>field names</td><td>How a reading item maps to a sensor: defaults <code>id</code>, <code>type</code>, <code>value</code>, <code>unit</code>, <code>label</code>, <code>timestamp</code>, and the appliance itself as the enclosure. Items without the id, type and value fields are dropped and counted; if none has them the poll fails loudly</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_BASE_PATH</code>, <code>ASSETS_PATH</code>, <code>ASSETS_KEY</code>, <code>ASSET_TYPES</code></td><td></td><td><code>/rest</code>, <code>assets</code> (both confirmed), the list key if the assets response is an object, and a <code>types</code> filter for the assets operation</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_ENCLOSURE_ID</code></td><td>default: the host</td><td>The identity the plugin reports for the appliance, and for every reading that does not name its own enclosure. Put the same value in the <code>external_identifiers</code> row</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_TIMEOUT_S</code>, <code>CACHE_TTL_S</code></td><td>seconds, <code>10</code> / <code>30</code></td><td>Request timeout, and how long an assets listing is reused so a health check per scrape is not a request per scrape</td></tr><tr><td><code>CHAOS_PLUGIN_NETBOTZ_POLL_INTERVAL_S</code></td><td>seconds, default <code>30</code></td><td>Clamped to 1–3600</td></tr></tbody></table></div>
+<p><code>GET /api/v1/ext/netbotz</code> shows the transport's non-secret facts — base URL,
+paths, auth mode, field map, last error — and never a credential.</p>
 <hr>
 <h2 id="7-what-a-plugin-may-not-do" class="doc-h"><span class="doc-h-text">7. What a plugin may not do</span><a class="doc-anchor" href="#7-what-a-plugin-may-not-do" aria-label="Link to this section"></a></h2>
 <p>Not conventions — structural properties, each with a test behind it.</p>

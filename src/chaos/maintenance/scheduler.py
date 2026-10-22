@@ -4,11 +4,22 @@ Each asset can generate work from a calendar interval, runtime hours, cycle
 count, a condition threshold, an alarm occurrence, a seasonal procedure or an
 inspection result. The scheduler is deliberately pure: every entry point takes
 ``now`` so seasonal and interval logic is testable without waiting a year.
+
+The polled triggers (calendar, counters, condition, seasonal) are evaluated by
+:func:`generate_work_orders`. The two event-driven triggers each have an entry
+point of their own that the originating subsystem calls: the alarm engine calls
+:func:`raise_for_alarm_plans` every cycle once alarms have activated and been
+correlated, and the inspection endpoint calls :func:`raise_for_inspection`.
+:func:`generate_work_orders` covers alarm plans as well, so the periodic
+scheduler and the maintainer's "generate" action catch anything the alarm
+engine did not get to; the ``(plan, alarm)`` idempotency rule means the two
+paths can never raise the same work twice.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -18,6 +29,14 @@ from chaos.models.alarms import Alarm
 from chaos.models.maintenance import Inspection, MaintenancePlan, SparePart, WorkOrder
 from chaos.models.registry import Asset
 from chaos.models.telemetry import CurrentState
+
+#: Alarm lifecycle states in which an occurrence raises work. Mirrors
+#: :data:`chaos.alarms.evaluator.ACTIVE_STATES` without importing the engine,
+#: so the scheduler stays importable when the alarm subsystem is not. A
+#: ``detected`` candidate still inside its on-delay is not an occurrence.
+ALARM_WORK_STATES = ("active", "acknowledged", "mitigated")
+
+_PRIORITY_RANK = {"low": 0, "normal": 1, "high": 2, "urgent": 3}
 
 #: Trigger types understood by the scheduler, in SDD section 18 order.
 TRIGGER_TYPES = (
@@ -134,8 +153,13 @@ def plan_is_due(session: Session, plan: MaintenancePlan, now: dt.datetime) -> tu
             return False, "already_done_this_season"
         return True, "season_started"
 
-    if plan.trigger_type in {"alarm", "inspection"}:
-        # Event-driven: raised by raise_for_alarm / raise_for_inspection, not polled.
+    if plan.trigger_type == "alarm":
+        # Event-driven: raise_for_alarm_plans decides per open alarm occurrence,
+        # and generate_work_orders routes alarm plans through it.
+        return False, "event_driven"
+
+    if plan.trigger_type == "inspection":
+        # Event-driven: raised by raise_for_inspection when a result is recorded.
         return False, "event_driven"
 
     return False, f"unknown_trigger:{plan.trigger_type}"
@@ -151,13 +175,23 @@ def _has_open_work(session: Session, plan_id: str) -> bool:
 def generate_work_orders(
     session: Session, now: dt.datetime, plan_ids: list[str] | None = None
 ) -> ScheduleResult:
-    """Create work orders for every due plan. Idempotent while work stays open."""
+    """Create work orders for every due plan. Idempotent while work stays open.
+
+    Alarm-triggered plans are included: an open alarm occurrence on the plan's
+    asset is what makes such a plan due, and the ``(plan, alarm)`` rule in
+    :func:`raise_for_alarm_plans` keeps this path and the alarm engine's from
+    raising the same work twice.
+    """
     result = ScheduleResult()
     stmt = select(MaintenancePlan)
     if plan_ids:
         stmt = stmt.where(MaintenancePlan.id.in_(plan_ids))
 
+    alarm_plans: list[MaintenancePlan] = []
     for plan in session.execute(stmt).scalars():
+        if plan.trigger_type == "alarm":
+            alarm_plans.append(plan)
+            continue
         due, reason = plan_is_due(session, plan, now)
         if not due:
             result.skipped.append((plan.id, reason))
@@ -182,6 +216,9 @@ def generate_work_orders(
         session.add(order)
         result.created.append(order)
 
+    if alarm_plans:
+        _raise_for_alarm_plans(session, alarm_plans, now, result)
+
     session.flush()
     return result
 
@@ -197,8 +234,139 @@ def _priority_for(asset: Asset | None) -> str:
     }.get(asset.criticality, "normal")
 
 
+def raise_for_alarm_plans(
+    session: Session,
+    now: dt.datetime,
+    *,
+    alarms: Iterable[Alarm] | None = None,
+    plan_ids: list[str] | None = None,
+) -> ScheduleResult:
+    """Raise work for every ``trigger_type="alarm"`` plan whose asset has an open alarm.
+
+    SDD section 18, "alarm occurrence". The alarm engine calls this once per
+    cycle after evaluation and correlation; it is also what
+    :func:`generate_work_orders` runs for alarm plans.
+
+    * **One work order per (plan, alarm occurrence), ever.** A second alarm on
+      the same asset is a second occurrence and raises again; the same alarm
+      seen on the next cycle does not, and neither does it after the work is
+      completed. Idempotency is keyed on the alarm row, not on "is work open".
+    * **Only alarms that would notify raise work.** A ``detected`` candidate
+      still inside its on-delay has not occurred yet, and a suppressed alarm --
+      the symptom of an incident, a flood member, an asset in maintenance --
+      is either carried by its root cause or already being worked on.
+    * A plan may name one alarm in ``condition_point`` (the column is otherwise
+      unused for this trigger type); blank means any alarm on the asset.
+    * Priority is the higher of the asset's criticality and the alarm's
+      severity: a critical alarm on a discretionary asset still needs attention
+      now.
+
+    ``alarms`` restricts the pass to those rows (the engine passes what just
+    activated); ``None`` considers every open alarm on an asset that has a plan.
+    """
+    result = ScheduleResult()
+    stmt = select(MaintenancePlan).where(MaintenancePlan.trigger_type == "alarm")
+    if plan_ids:
+        stmt = stmt.where(MaintenancePlan.id.in_(plan_ids))
+    plans = list(session.execute(stmt).scalars())
+    if plans:
+        _raise_for_alarm_plans(session, plans, now, result, alarms=alarms)
+    session.flush()
+    return result
+
+
+def _raise_for_alarm_plans(
+    session: Session,
+    plans: list[MaintenancePlan],
+    now: dt.datetime,
+    result: ScheduleResult,
+    *,
+    alarms: Iterable[Alarm] | None = None,
+) -> None:
+    by_asset: dict[str, list[MaintenancePlan]] = {}
+    for plan in plans:
+        if not plan.enabled:
+            result.skipped.append((plan.id, "plan_disabled"))
+            continue
+        by_asset.setdefault(plan.asset_id, []).append(plan)
+    if not by_asset:
+        return
+
+    if alarms is None:
+        alarms = (
+            session.execute(
+                select(Alarm)
+                .where(Alarm.asset_id.in_(list(by_asset)), Alarm.state.in_(ALARM_WORK_STATES))
+                .order_by(Alarm.detected_at)
+            )
+            .scalars()
+            .all()
+        )
+
+    raised: set[str] = set()
+    for alarm in alarms:
+        if alarm.asset_id not in by_asset or alarm.state not in ALARM_WORK_STATES or alarm.suppressed:
+            continue
+        for plan in by_asset[alarm.asset_id]:
+            wanted_key = (plan.condition_point or "").strip()
+            if wanted_key and wanted_key != alarm.alarm_key:
+                continue
+            if _has_work_for_occurrence(session, plan.id, alarm.id):
+                continue
+            asset = session.get(Asset, plan.asset_id)
+            order = WorkOrder(
+                asset_id=plan.asset_id,
+                plan_id=plan.id,
+                alarm_id=alarm.id,
+                title=f"{plan.name} — {asset.name if asset else plan.asset_id}",
+                description=_alarm_work_description(plan, alarm),
+                priority=_higher_priority(_priority_for(asset), _priority_for_severity(alarm.severity)),
+                state="open",
+                opened_at=now,
+                due_at=now,
+                parts_used=[],
+            )
+            session.add(order)
+            result.created.append(order)
+            raised.add(plan.id)
+
+    for asset_plans in by_asset.values():
+        for plan in asset_plans:
+            if plan.id not in raised:
+                result.skipped.append((plan.id, "no_new_alarm_occurrence"))
+
+
+def _has_work_for_occurrence(session: Session, plan_id: str, alarm_id: str) -> bool:
+    stmt = select(WorkOrder.id).where(WorkOrder.plan_id == plan_id, WorkOrder.alarm_id == alarm_id)
+    return session.execute(stmt).first() is not None
+
+
+def _alarm_work_description(plan: MaintenancePlan, alarm: Alarm) -> str:
+    raised_by = f"Raised by alarm {alarm.alarm_key} ({alarm.severity}) on {alarm.asset_id}"
+    if alarm.message:
+        raised_by = f"{raised_by}: {alarm.message}"
+    return f"{plan.procedure}\n\n{raised_by}" if plan.procedure else raised_by
+
+
+def _priority_for_severity(severity: str | None) -> str:
+    if severity in {"critical", "emergency"}:
+        return "urgent"
+    if severity == "major":
+        return "high"
+    return "normal"
+
+
+def _higher_priority(first: str, second: str) -> str:
+    return first if _PRIORITY_RANK.get(first, 1) >= _PRIORITY_RANK.get(second, 1) else second
+
+
 def raise_for_alarm(session: Session, alarm: Alarm, now: dt.datetime) -> WorkOrder | None:
-    """Create corrective work from an alarm occurrence (SDD section 18)."""
+    """Create corrective work from one alarm, outside any plan (SDD section 18).
+
+    The alarm engine does not call this; alarm-triggered plans go through
+    :func:`raise_for_alarm_plans`. This is the ad-hoc path for an operator or
+    an integration that wants corrective work for an alarm no plan covers.
+    """
     existing = (
         session.execute(
             select(WorkOrder).where(

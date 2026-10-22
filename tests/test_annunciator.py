@@ -87,8 +87,8 @@ def seeded_registry_and_alarms(db_session, settings):
     convenient fixture, because the properties under test are about how the
     package and the platform disagree.
     """
-    load_package = pytest.importorskip("chaos.registry.loader").load_package
-    sync_definitions = pytest.importorskip("chaos.alarms.definitions").sync_definitions
+    from chaos.alarms.definitions import sync_definitions
+    from chaos.registry.loader import load_package
 
     load_package(db_session)
     sync_definitions(db_session, settings=settings, strict=False)

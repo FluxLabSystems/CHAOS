@@ -24,9 +24,9 @@ PORT        ?= 8000
 ARGS ?=
 
 .PHONY: help install install-postgres test test-cov lint format validate \
-        init-db load load-registry status export backup retention run serve \
-        simulate cli build up down restart logs ps shell secondary-up \
-        secondary-down clean distclean ci
+        validate-report init-db load load-registry status export backup restore \
+        retention run serve simulate cli build up down restart logs ps shell \
+        secondary-up secondary-down clean distclean ci
 
 # ---------------------------------------------------------------------------
 help: ## Show this help
@@ -87,6 +87,10 @@ export: ## Export the registry as JSON to var/export.json
 
 backup: ## Write a portable registry + configuration archive
 	$(TWIN) backup
+
+restore: ## Restore an archive: make restore ARCHIVE=var/backups/<file>.tar.gz [ARGS=--force]
+	@test -n "$(ARCHIVE)" || { echo "Usage: make restore ARCHIVE=var/backups/<file>.tar.gz [ARGS=--force|--dry-run]"; exit 2; }
+	$(TWIN) restore $(ARGS) $(ARCHIVE)
 
 retention: ## Dry-run the data-retention policy (add ARGS="--apply" to commit)
 	$(TWIN) retention $(ARGS)

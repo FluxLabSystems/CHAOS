@@ -244,13 +244,35 @@ health reporting. There is a test asserting that every point name the mapping
 can publish exists in `data/point_dictionary.yaml`, so the catalogue cannot
 drift into producing dead letters.
 
-**What is not:** the network transport. `UnconfiguredTransport` returns no
-readings and reports exactly what implementing SNMP or HTTPS would require. The
-plugin therefore reports `not_configured` on a real deployment and **never
-reports a temperature that did not come from a device**. An integration you
-believe in but that does not exist is worse than no integration, because the
-temperature it is not reporting looks like a temperature that is fine — the same
-rule the [notification channels](./alarms.md) live under.
+**The HTTPS transport is real, and honest about what it knows.** The NetBotz
+5.x user guide documents that the appliance's REST API lives at
+`https://<host>/rest`, that its interactive documentation is at
+`https://<host>/docs/rest` (log on to the Web UI first), that `GET /rest/assets`
+lists assets with an `id` and a `label`, and that times are milliseconds since
+the epoch. All of that is built in: with `CHAOS_PLUGIN_NETBOTZ_TRANSPORT=http`
+and a host, the plugin proves reachability, trust and credentials through the
+assets operation and lists the appliance's assets as enclosures. What the
+documentation does **not** describe is the operation that lists sensor
+*values*, or its field names — so the readings path is a setting with no
+default and the field names are settings with documented defaults. Until the
+readings path is set the plugin reports `not_configured` with the exact
+instruction; a path that answers 404, a response of the wrong shape, or items
+without the configured fields are reported as `degraded` with the status or the
+parse error, on the plugin's health, on the mirror's counters and in the log.
+**Never as a reading.** TLS verification is not negotiable: a private CA is
+trusted through `CHAOS_PLUGIN_NETBOTZ_CA_FILE`, and there is no option that
+turns verification off.
+
+**What is not:** SNMP. NetBotz appliances expose sensors through the
+NETBOTZV2-MIB, the platform declares no SNMP dependency, and the column layout
+of those tables was not confirmed against an appliance's own MIB file — a walk
+of the wrong columns would mirror the wrong value under the right name, which is
+exactly the failure this plugin exists to avoid. `UnconfiguredTransport` says
+what SNMP would need and returns nothing. **The plugin never reports a
+temperature that did not come from a device.** An integration you believe in
+but that does not exist is worse than no integration, because the temperature
+it is not reporting looks like a temperature that is fine — the same rule the
+[notification channels](./alarms.md) live under.
 
 Four sensor types are listed and deliberately **not** mapped: airflow, audio,
 vibration and camera motion. Each is a real NetBotz capability with no point in
@@ -277,9 +299,21 @@ rows exist and which are still `TBD`. "The appliance is unreachable" and
 
 | Option | Values | Meaning |
 |---|---|---|
-| `CHAOS_PLUGIN_NETBOTZ_TRANSPORT` | `none`, `snmp`, `http` | Which transport to use. Both real ones are unimplemented in this release |
-| `CHAOS_PLUGIN_NETBOTZ_HOST` | An address on VLAN 10 | The appliance |
+| `CHAOS_PLUGIN_NETBOTZ_TRANSPORT` | `none`, `http`, `snmp` | Which transport to use. `http` is implemented; `snmp` is not and says so |
+| `CHAOS_PLUGIN_NETBOTZ_HOST` | An address on VLAN 10 | The appliance. HTTPS always; `PORT` defaults to 443 |
+| `CHAOS_PLUGIN_NETBOTZ_USERNAME` / `PASSWORD`, or `TOKEN` | | HTTP Basic credentials of a read-only account, or a bearer token |
+| `CHAOS_PLUGIN_NETBOTZ_LOGIN_PATH` | e.g. `login` | If the appliance's API uses a cookie session: the login operation (relative to `/rest`) that takes `{"username", "password"}`. Read it off `/docs/rest` |
+| `CHAOS_PLUGIN_NETBOTZ_CA_FILE` | a path | CA bundle that issued the appliance's certificate. The only way to trust a private CA; verification cannot be disabled |
+| `CHAOS_PLUGIN_NETBOTZ_READINGS_PATH` | e.g. `sensors` | **Required for readings.** The operation at `/docs/rest` that lists sensor values, relative to `/rest`. No default: the documentation does not confirm it, so the plugin does not guess |
+| `CHAOS_PLUGIN_NETBOTZ_READINGS_KEY` | dotted key | Where the readings response holds its list, if it is an object rather than a list (`data.sensors`) |
+| `CHAOS_PLUGIN_NETBOTZ_READING_ID_FIELD`, `_TYPE_FIELD`, `_VALUE_FIELD`, `_UNIT_FIELD`, `_LABEL_FIELD`, `_TS_FIELD`, `_ENCLOSURE_FIELD` | field names | How a reading item maps to a sensor: defaults `id`, `type`, `value`, `unit`, `label`, `timestamp`, and the appliance itself as the enclosure. Items without the id, type and value fields are dropped and counted; if none has them the poll fails loudly |
+| `CHAOS_PLUGIN_NETBOTZ_BASE_PATH`, `ASSETS_PATH`, `ASSETS_KEY`, `ASSET_TYPES` | | `/rest`, `assets` (both confirmed), the list key if the assets response is an object, and a `types` filter for the assets operation |
+| `CHAOS_PLUGIN_NETBOTZ_ENCLOSURE_ID` | default: the host | The identity the plugin reports for the appliance, and for every reading that does not name its own enclosure. Put the same value in the `external_identifiers` row |
+| `CHAOS_PLUGIN_NETBOTZ_TIMEOUT_S`, `CACHE_TTL_S` | seconds, `10` / `30` | Request timeout, and how long an assets listing is reused so a health check per scrape is not a request per scrape |
 | `CHAOS_PLUGIN_NETBOTZ_POLL_INTERVAL_S` | seconds, default `30` | Clamped to 1–3600 |
+
+`GET /api/v1/ext/netbotz` shows the transport's non-secret facts — base URL,
+paths, auth mode, field map, last error — and never a credential.
 
 ---
 

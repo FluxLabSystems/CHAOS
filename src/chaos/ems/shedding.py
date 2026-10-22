@@ -412,9 +412,18 @@ class ShedController:
     def _alarm(self, asset_id: str, alarm_key: str, severity: str, detail: dict[str, Any]) -> None:
         """Publish an energy alarm event (SDD 37.1).
 
-        The EMS does not own the alarm store; it publishes on the alarm topic so
-        the alarm engine, the notifier and any local controller can react. That
-        keeps the EMS independent of the alarm subsystem's availability.
+        The EMS does not own the alarm store; it publishes on the alarm topic
+        with ``source="ems"``. Ingest recognises the platform's own producers
+        and hands the envelope to :func:`chaos.alarms.published.apply_published_alarm`,
+        which raises a real :class:`~chaos.models.alarms.Alarm` when
+        ``alarm_key`` has a definition (``load_shed_failed``,
+        ``load_restore_failed``, ``energy_meter_data_invalid``) -- so
+        correlation, notification and alarm-triggered maintenance see it as
+        they would an evaluated alarm -- and counts it as a platform event
+        otherwise (``load_shed_requested``, ``load_budget_withdrawn``). Local
+        controllers read the topic directly. That keeps the EMS independent of
+        the alarm subsystem's availability: a dead alarm engine costs the
+        alarm, never the shed.
         """
         logger.warning("EMS alarm %s for %s: %s", alarm_key, asset_id, detail)
         if self.bus is None or self.settings is None:

@@ -450,6 +450,47 @@ def test_overview_empty_water_is_unavailable_marker(client):
     assert water["available"] is False
     assert water["reserve_pct"]["value"] is None
     assert "not zero" in water["note"]
+    # The 47 water assets exist as an unratified extension, not as a later phase
+    # that nobody has started: the note must say which.
+    assert "water_assets.yaml" in water["note"]
+    assert "not merged" in water["note"]
+    assert "later phase" not in water["note"]
+
+
+def _seed_site_temperature(session: Session, celsius: float) -> None:
+    _asset(session, "site.site.primary.01", domain="site", asset_class="site", name="Primary Site")
+    point = _point(session, "site.site.primary.01", "temperature_air_c", unit="degC")
+    session.flush()
+    _state(session, point, numeric=celsius)
+    session.commit()
+
+
+def test_overview_weather_risk_uses_the_default_thresholds(client, db_session):
+    _seed_site_temperature(db_session, 1.5)
+    risk = client.get(OVERVIEW).json()["weather"]["risk"]
+    assert risk["available"] is True
+    assert risk["risk"] == "freeze"
+    assert risk["thresholds_c"] == {"freeze": 2.0, "heat": 32.0}
+    assert "CHAOS_OVERVIEW_FREEZE_RISK_C" in risk["note"]
+
+
+def test_overview_weather_risk_thresholds_are_settings(app, client, db_session, settings):
+    """A site can move the trip points without a code change."""
+    _seed_site_temperature(db_session, 20.0)
+    app.state.settings = settings.model_copy(update={"overview_heat_risk_c": 18.0})
+    risk = client.get(OVERVIEW).json()["weather"]["risk"]
+    assert risk["risk"] == "heat"
+    assert risk["thresholds_c"] == {"freeze": 2.0, "heat": 18.0}
+
+    app.state.settings = settings.model_copy(update={"overview_freeze_risk_c": 25.0})
+    assert client.get(OVERVIEW).json()["weather"]["risk"]["risk"] == "freeze"
+
+
+def test_overview_weather_risk_without_a_station_still_names_the_thresholds(client):
+    risk = client.get(OVERVIEW).json()["weather"]["risk"]
+    assert risk["available"] is False
+    assert risk["risk"] is None
+    assert risk["thresholds_c"] == {"freeze": 2.0, "heat": 32.0}
 
 
 def test_overview_empty_lists_every_sdd_domain(client):
@@ -779,16 +820,12 @@ def test_interlocks_accept_the_command_services_record_shape(client, seeded, db_
 
 
 # ---------------------------------------------------------------------------
-# Real design package (skipped until the registry loader lands)
+# Real design package
 # ---------------------------------------------------------------------------
 
 
 def test_overview_against_real_v03_registry(client, db_session):
     """The shipped v0.3 package: 90 planned assets, no coordinates, no telemetry."""
-    pytest.importorskip(
-        "chaos.registry.loader",
-        reason="registry loader is built by another agent; skipped until present",
-    )
     from chaos.registry.loader import load_package
 
     load_package(db_session)

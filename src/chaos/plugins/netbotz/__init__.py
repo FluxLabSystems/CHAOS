@@ -15,18 +15,28 @@ surface:
 * health -- one honest sentence about whether any of it is working.
 
 **What this release actually does.** The mapping, the identity routes, the API
-and the health reporting are complete and tested. The network transport is not:
-:class:`~chaos.plugins.netbotz.client.UnconfiguredTransport` returns no readings
-and reports what implementing SNMP or HTTPS would require. The plugin therefore
-reports ``not_configured`` on a real deployment and never reports a temperature
-that did not come from a device. See
-:mod:`chaos.plugins.netbotz.client` for what a real transport needs.
+and the health reporting are complete and tested, and so is the HTTPS
+transport: :class:`~chaos.plugins.netbotz.client.HttpTransport` reads a
+NetBotz 5.x appliance's REST API over verified TLS. What the public
+documentation confirms about that API (``/rest``, ``/rest/assets``,
+millisecond timestamps) is built in; the operation that lists sensor values is
+not documented, so it is a setting rather than a guess, and until it is set the
+plugin reports ``not_configured`` with the exact instruction. SNMP is not
+implemented and :class:`~chaos.plugins.netbotz.client.UnconfiguredTransport`
+says what it would need. Nothing here reports a temperature that did not come
+from a device.
 
-Configuration, all optional, all through the environment::
+Configuration, all through the environment (``CHAOS_PLUGIN_NETBOTZ_<KEY>``)::
 
-    CHAOS_PLUGIN_NETBOTZ_TRANSPORT=snmp        # none | snmp | http
-    CHAOS_PLUGIN_NETBOTZ_HOST=10.10.10.40      # VLAN 10, per SDD 15.3
+    CHAOS_PLUGIN_NETBOTZ_TRANSPORT=http            # none | http | snmp (unimplemented)
+    CHAOS_PLUGIN_NETBOTZ_HOST=10.10.10.40          # VLAN 10, per SDD 15.3
+    CHAOS_PLUGIN_NETBOTZ_USERNAME=... PASSWORD=... # or TOKEN=..., or LOGIN_PATH=...
+    CHAOS_PLUGIN_NETBOTZ_CA_FILE=/path/to/ca.crt   # the private CA; never "verify=false"
+    CHAOS_PLUGIN_NETBOTZ_READINGS_PATH=...         # from https://<host>/docs/rest
     CHAOS_PLUGIN_NETBOTZ_POLL_INTERVAL_S=30
+
+See :class:`~chaos.plugins.netbotz.client.HttpTransportConfig` for the
+remaining keys (paths, list keys and field names, all with defaults).
 """
 
 from __future__ import annotations
@@ -132,13 +142,34 @@ class NetBotzPlugin(PluginBase):
                 unreachable=sorted(unreachable),
                 **facts,
             )
+        # A transport can be reachable and still not deliver readings: the
+        # HTTP transport until its readings operation is named, or after a
+        # poll that failed. Neither is "ok", and they are different states.
+        if not getattr(self.transport, "readings_ready", True):
+            requirement = getattr(
+                self.transport, "readings_requirement", "the readings operation is not configured"
+            )
+            return PluginHealth.not_configured(
+                f"{len(enclosures)} appliance(s) answered, but no readings are read: {requirement}",
+                enclosures=len(enclosures),
+                **facts,
+            )
+        read_error = getattr(self.transport, "last_read_error", None)
+        if read_error:
+            return PluginHealth.degraded(
+                f"{len(enclosures)} appliance(s) reachable, but the last readings poll failed: {read_error}",
+                enclosures=len(enclosures),
+                **facts,
+            )
         return PluginHealth.ok(
             f"{len(enclosures)} appliance(s) reachable", enclosures=len(enclosures), **facts
         )
 
 
 def _default_transport(context: PluginContext) -> NetBotzTransport:
-    return build_transport(context.option("transport", TRANSPORT_NONE), context.option("host"))
+    return build_transport(
+        context.option("transport", TRANSPORT_NONE), context.option("host"), options=context.options
+    )
 
 
 #: What :mod:`chaos.plugins.manager` discovers.

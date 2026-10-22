@@ -16,6 +16,7 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 from chaos.config import Settings, get_settings
@@ -143,7 +144,7 @@ class PahoBus:
         if self.settings.mqtt_username:
             client.username_pw_set(self.settings.mqtt_username, self.settings.mqtt_password)
         if self.settings.mqtt_tls:
-            client.tls_set()
+            self._configure_tls(client)
 
         def on_connect(_client, _userdata, _flags, reason_code, *_args):
             if reason_code not in (0, "Success"):
@@ -173,6 +174,55 @@ class PahoBus:
         client.on_disconnect = on_disconnect
         client.on_message = on_message
         return client
+
+    def _configure_tls(self, client) -> None:
+        """Apply ``CHAOS_MQTT_TLS_*`` to the client.
+
+        The broker certificate is issued by the property's private CA
+        (deploy/mosquitto/README.md), so ``CHAOS_MQTT_TLS_CA`` is what makes
+        verification possible: a bare ``tls_set()`` would trust only the
+        system store and could never verify that broker. Each configured file
+        must exist -- a mistyped CA path that silently fell back to the system
+        store would leave the connection failing for a reason nobody can see.
+        Verification is only relaxed when ``mqtt_tls_insecure`` is set
+        explicitly, and that is logged as the weakening it is.
+        """
+        import ssl
+
+        settings = self.settings
+        material = {
+            "CHAOS_MQTT_TLS_CA": settings.mqtt_tls_ca,
+            "CHAOS_MQTT_TLS_CERT": settings.mqtt_tls_cert,
+            "CHAOS_MQTT_TLS_KEY": settings.mqtt_tls_key,
+        }
+        for name, path in material.items():
+            if path and not Path(path).is_file():
+                raise FileNotFoundError(f"{name} points at {path}, which is not a readable file")
+        if settings.mqtt_tls_cert and not settings.mqtt_tls_key:
+            logger.warning(
+                "CHAOS_MQTT_TLS_CERT is set without CHAOS_MQTT_TLS_KEY; the certificate file "
+                "must therefore carry its own private key"
+            )
+        client.tls_set(
+            ca_certs=settings.mqtt_tls_ca or None,
+            certfile=settings.mqtt_tls_cert or None,
+            keyfile=settings.mqtt_tls_key or None,
+            cert_reqs=ssl.CERT_REQUIRED,
+            tls_version=ssl.PROTOCOL_TLS_CLIENT,
+        )
+        if settings.mqtt_tls_ca:
+            logger.info("MQTT TLS enabled; broker certificate verified against %s", settings.mqtt_tls_ca)
+        else:
+            logger.warning(
+                "MQTT TLS enabled without CHAOS_MQTT_TLS_CA: the broker certificate is verified "
+                "against the system trust store only, which cannot verify a private-CA broker"
+            )
+        if settings.mqtt_tls_insecure:
+            logger.warning(
+                "CHAOS_MQTT_TLS_INSECURE is set: broker hostname verification is DISABLED. "
+                "This is acceptable on a bench and nowhere else."
+            )
+            client.tls_insecure_set(True)
 
     def publish(self, topic: str, payload: bytes | str, qos: int = 0, retain: bool = False) -> None:
         if self._client is None:
