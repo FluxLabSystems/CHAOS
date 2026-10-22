@@ -275,8 +275,8 @@ lives in `Chaos.Shell.Core`.
 
 | Test project | Covers |
 |---|---|
-| `Chaos.Host.Tests` | Host endpoints, route-ownership table and validator, setup assessor, setup endpoints, startup validation |
-| `Chaos.Host.Supervisor.Tests` | Python runtime resolution, restart policy |
+| `Chaos.Host.Tests` | Host endpoints, route-ownership table and validator, setup assessor, setup endpoints, startup validation, the installed layout and configuration files, supervisor wiring (with a faked interpreter, process and probe), backend version refusal, the ported endpoints' wiring, file logging |
+| `Chaos.Host.Supervisor.Tests` | Python runtime resolution, restart policy, the supervision loop and its circuit breaker, the contract mapping, `homestead.env`, the service-control switches and registration plan, the rolling file logger |
 | `Chaos.Api.Tests` | Annunciator panel builder, legends, serviceability, read store, timestamps, query parsing |
 | `Chaos.Shell.Core.Tests` | Launcher state machine, platform lifecycle, probe client, settings, tray state, window placement, setup contract |
 | `Chaos.Api.ConformanceHost` | Not a test project — a minimal host that composes `Chaos.Api` alone, so the .NET port can be exercised against a real HTTP pipeline |

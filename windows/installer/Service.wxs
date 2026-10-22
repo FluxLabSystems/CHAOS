@@ -40,7 +40,7 @@
   the directory holding the alarm history, and it has not been tested on real
   Windows by the author of this file. Shipping an untested ACL that locks the
   service out of its own database would be worse than shipping the honest
-  compromise. Tracked in docs/windows-deployment.md, "Open items".
+  compromise. Tracked in docs/advanced-windows-packaging.md, "Open items".
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">

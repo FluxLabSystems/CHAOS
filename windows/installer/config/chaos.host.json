@@ -27,9 +27,10 @@
     "Every key can also be set as an environment variable by joining the path",
     "with a double underscore: Chaos:Docs:ListenUrl is CHAOS_Docs__ListenUrl.",
     "",
-    "After editing, restart the platform from the desktop shell (Settings ->",
-    "Restart platform). Restarting the ChaosHost service by any other means",
-    "works too, but the shell reports whether it actually came back."
+    "After editing, restart the ChaosHost service: Restart-Service ChaosHost",
+    "from an elevated prompt, or services.msc. The desktop shell offers a",
+    "restart only after saving a shell setting that needs one, and its",
+    "launcher reports whether the platform actually came back."
   ],
 
   "Chaos": {

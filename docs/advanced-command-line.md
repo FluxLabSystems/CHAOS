@@ -116,7 +116,7 @@ Project CHAOS 0.4.0
 
 Registry and history
   assets                 90
-  points                 701
+  points                 702
   point_bindings         245
   power_load_profiles    12
   alarm_definitions      40
@@ -220,23 +220,24 @@ step 12 captures a subsystem's baseline.
 
 ## 8. Running the backend for development
 
-**This is the one development task with no GUI path today.**
-
-The gateway is built to supervise the Python backend as a child process, and
-ships the supervisor — but its shipped entry point registers the no-op
-supervisor, so nothing launches the backend. See
+**You normally do not.** The gateway starts the Python backend itself —
+`Chaos:SuperviseBackend` is on by default — resolving the embedded runtime or,
+in a checkout, the Python on your `PATH` with `src` on `PYTHONPATH`. See
 [Visual Studio § What happens when you press F5](./visual-studio.md#what-happens-when-you-press-f5).
 
-Until that is wired up, start the backend yourself on the port the gateway
-expects:
+Run it yourself when you want it under its own debugger. Tell the gateway to
+leave it alone and start it on the port the gateway expects:
 
 ```sh
+CHAOS_SuperviseBackend=false    # in the launch profile, or the shell's environment
 chaos serve --host 127.0.0.1 --port 8081
 ```
 
 Then press F5 on `Chaos.Host` (or `Chaos.Shell`) and everything works: the
 gateway proxies to it, `/health` returns 200 with `backend: "up"`, and the
-launcher reaches *Project CHAOS is ready*.
+launcher reaches *Project CHAOS is ready*. `/host/info` reports
+`supervisor.registered: false` in that mode, which is the gateway saying it is
+not managing the process — not that the process is absent.
 
 `serve --reload` restarts on source changes, which is useful while working on
 the Python half and pointless otherwise.

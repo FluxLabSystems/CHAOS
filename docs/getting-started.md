@@ -191,7 +191,7 @@ screen should agree on these counts:
 | Thing | Count |
 |---|---|
 | Assets | 90 |
-| Points | 701 |
+| Points | 702 |
 | Point bindings | 245 |
 | Load-schedule records | 12 |
 | Alarm definitions | 40 |

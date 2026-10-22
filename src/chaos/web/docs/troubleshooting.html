@@ -165,9 +165,9 @@ platform</strong>. The shell starts it as a child process, and the run-mode bann
 will then read <em>managed by this shell</em> — which means <strong>closing the shell stops
 the platform</strong>.</li><li>If it did not find the executable, set its location in <strong>Settings →
 <code>Chaos.Host.exe</code> location</strong>, or install the product properly.</li><li>If the service <em>is</em> installed under a different name, correct <strong>Settings →
-Windows service name</strong>. This is worth checking first: the shell looks for
-<code>ChaosPlatform</code> by default, while the gateway currently registers itself under
-<code>ChaosHost</code>. A running service under the other name reads as <em>not installed</em>.</li></ul>
+Windows service name</strong>. The shell and the installer both use <code>ChaosHost</code>, so
+this only applies to a service someone registered by hand under another name.
+A running service under a different name reads as <em>not installed</em>.</li></ul>
 <h3 id="54-the-launcher-says-it-cannot-start-it-at-all" class="doc-h"><span class="doc-h-text">5.4 The launcher says it cannot start it at all</span><a class="doc-anchor" href="#54-the-launcher-says-it-cannot-start-it-at-all" aria-label="Link to this section"></a></h3>
 <p>The headline reads <em>"The platform is not answering, and this shell cannot start
 it"</em>, and the summary explains why. It also adds, correctly:</p>
@@ -178,10 +178,15 @@ node directly before assuming it has stopped.</p></blockquote>
 nothing to show; <code>/health</code> answers 503 with <code>backend: "down"</code>.</p>
 <ol><li>Press <strong>Check again</strong> — a cold start on a low-power node takes a minute or
 so, and the backend check distinguishes <em>starting</em> from <em>down</em>.</li><li>Read the backend detail on the check row. It carries the gateway's own last
-error.</li><li><strong>On a development build this is expected.</strong> The gateway's shipped entry
-point does not register a backend supervisor, so nothing starts the Python
-backend for it. See
-<a href="visual-studio.html#what-happens-when-you-press-f5">Visual Studio § What happens when you press F5</a>.</li></ol>
+error.</li><li>Read <code>supervisor</code> on <code>http&#58;//&lt;node&gt;:8080/host/info</code>. The gateway starts the
+backend itself; <code>state</code> says where it got to, <code>lastError</code> says why the last
+attempt ended, and <code>standardErrorTail</code> is the backend's own last words —
+usually a Python traceback naming the cause. <code>Restarting</code> with a
+<code>nextRestartUtc</code> means it is being retried; <code>Faulted</code> means it gave up (see
+5.6). <code>registered: false</code> means supervision was switched off
+(<code>CHAOS_SuperviseBackend=false</code>) and something else is expected to start
+the backend — see
+<a href="advanced-command-line.html#8-running-the-backend-for-development">Command line § Running the backend for development</a>.</li></ol>
 <h3 id="56-it-starts-then-stops-then-starts-again" class="doc-h"><span class="doc-h-text">5.6 It starts, then stops, then starts again</span><a class="doc-anchor" href="#56-it-starts-then-stops-then-starts-again" aria-label="Link to this section"></a></h3>
 <p>Two layers restart things, and it helps to know which one you are watching.</p>
 <p><strong>The gateway restarts the backend.</strong> When the Python backend dies or stops

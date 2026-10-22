@@ -281,7 +281,7 @@ function Get-ChaosVerifiedFile {
             }
             catch {
                 Stop-Chaos -Message "Could not download $Url" `
-                           -Hint 'This machine needs outbound HTTPS for the BUILD only. The installed product never downloads anything; see docs/windows-deployment.md.'
+                           -Hint 'This machine needs outbound HTTPS for the BUILD only. The installed product never downloads anything; see docs/advanced-windows-packaging.md.'
             }
             finally { $ProgressPreference = $progress }
         }

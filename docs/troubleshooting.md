@@ -263,9 +263,9 @@ survives a sign-out.
 - If it did not find the executable, set its location in **Settings →
   `Chaos.Host.exe` location**, or install the product properly.
 - If the service *is* installed under a different name, correct **Settings →
-  Windows service name**. This is worth checking first: the shell looks for
-  `ChaosPlatform` by default, while the gateway currently registers itself under
-  `ChaosHost`. A running service under the other name reads as *not installed*.
+  Windows service name**. The shell and the installer both use `ChaosHost`, so
+  this only applies to a service someone registered by hand under another name.
+  A running service under a different name reads as *not installed*.
 
 ### 5.4 The launcher says it cannot start it at all
 
@@ -284,10 +284,15 @@ nothing to show; `/health` answers 503 with `backend: "down"`.
    so, and the backend check distinguishes *starting* from *down*.
 2. Read the backend detail on the check row. It carries the gateway's own last
    error.
-3. **On a development build this is expected.** The gateway's shipped entry
-   point does not register a backend supervisor, so nothing starts the Python
-   backend for it. See
-   [Visual Studio § What happens when you press F5](./visual-studio.md#what-happens-when-you-press-f5).
+3. Read `supervisor` on `http://<node>:8080/host/info`. The gateway starts the
+   backend itself; `state` says where it got to, `lastError` says why the last
+   attempt ended, and `standardErrorTail` is the backend's own last words —
+   usually a Python traceback naming the cause. `Restarting` with a
+   `nextRestartUtc` means it is being retried; `Faulted` means it gave up (see
+   5.6). `registered: false` means supervision was switched off
+   (`CHAOS_SuperviseBackend=false`) and something else is expected to start
+   the backend — see
+   [Command line § Running the backend for development](./advanced-command-line.md#8-running-the-backend-for-development).
 
 ### 5.6 It starts, then stops, then starts again
 

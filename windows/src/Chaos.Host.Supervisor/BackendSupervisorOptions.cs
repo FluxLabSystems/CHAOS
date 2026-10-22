@@ -48,9 +48,10 @@ public sealed class BackendSupervisorOptions
     public string BindAddress { get; set; } = "127.0.0.1";
 
     /// <summary>
-    /// Backend port. Defaults to the platform's own documented default so a
-    /// gateway configured from <c>docs/deployment.md</c> lines up without
-    /// extra configuration.
+    /// Backend port. Defaults to the platform's own documented default
+    /// (<c>docs/advanced-container-deployment.md</c>) so a gateway configured
+    /// from that page lines up without extra configuration; the gateway
+    /// itself overrides it from <c>Chaos:BackendUrl</c>.
     /// </summary>
     public int Port { get; set; } = 8000;
 
@@ -187,7 +188,12 @@ public sealed class BackendSupervisorOptions
 
     // -- Windows Event Log -------------------------------------------------
 
-    /// <summary>Event Log source. Created at install time; see README.md.</summary>
+    /// <summary>
+    /// Event Log source. Registered, elevated, by <c>--install-service</c>
+    /// (docs/advanced-command-line.md, "The gateway's own switches"); the MSI
+    /// does not register it, and without it lifecycle events go to the log
+    /// file only - <see cref="Events.ChaosEventSinkFactory"/> says which at startup.
+    /// </summary>
     public string EventLogSource { get; set; } = "Project CHAOS";
 
     /// <summary>Event Log to write to.</summary>

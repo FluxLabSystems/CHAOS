@@ -46,7 +46,9 @@ internal static partial class GracefulSignals
     /// the honest answer, not a bug: closing this gap properly needs the child
     /// launched via raw <c>CreateProcessW</c> with
     /// <c>CREATE_NEW_PROCESS_GROUP</c>, or a loopback shutdown endpoint on the
-    /// platform itself. Both are cross-component changes; see README.md.
+    /// platform itself - <c>src/chaos/api</c> has none today. Both are
+    /// cross-component changes; see docs/advanced-windows-packaging.md,
+    /// "Open items".
     /// </item>
     /// <item>
     /// <b>Console mode</b> (<c>--console</c>) — the child shares our console.

@@ -218,6 +218,7 @@ Open annunciator
 Open in browser
 ───────────────
 Settings…
+Help (F1)
 ───────────────
 Exit shell …            (wording depends on the run mode — see section 1)
 ```
@@ -278,7 +279,7 @@ a message naming the field you got wrong instead of *"that URL is invalid"*.
 | **Start the platform when this shell opens** | On | If nothing is answering, the shell starts the platform itself instead of waiting for you. This is what makes launching the executable the whole procedure |
 | **Open this shell when I sign in to Windows** | Off | Opens the window, not the platform. A platform installed as a Windows service runs whether or not anyone signs in |
 | **Prefer the Windows service when it is installed** | On | A service keeps the homestead controlled when nobody is logged in |
-| **Windows service name** | `ChaosPlatform` | What the shell looks for and controls. **The gateway currently registers itself under `ChaosHost`**, so if the service check reads *not installed* on a machine where the service is plainly running, this is the field to correct |
+| **Windows service name** | `ChaosHost` | What the shell looks for and controls. The installer registers the service under the same name, so change this only for a service someone registered by hand under another name — if the service check reads *not installed* on a machine where the service is plainly running, this is the field to correct |
 | **`Chaos.Host.exe` location** | empty | Leave empty to let the shell find it. When found, the page says where |
 
 ### Where the data lives

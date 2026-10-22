@@ -115,7 +115,7 @@
 
       <!-- CHAOSFIREWALL=none installs neither, and the LAN interface is then
            reachable only from the machine itself until an administrator adds a
-           rule by hand. Documented in docs/windows-deployment.md. -->
+           rule by hand. Documented in docs/advanced-windows-packaging.md. -->
 
     </ComponentGroup>
   </Fragment>

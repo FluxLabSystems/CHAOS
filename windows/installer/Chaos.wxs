@@ -142,8 +142,9 @@
     <!-- ARPNOMODIFY is set by WixUI_Minimal; setting it again here is a
          duplicate-symbol error at link time. -->
 
-    <!-- The icon comes off the host, not the shell: the host is always present,
-         the shell is skipped if windows\src has no Chaos.Shell.csproj yet. -->
+    <!-- The icon comes off the host executable, which the service registration
+         already depends on; taking it from the shell would make the same picture
+         depend on a second file. -->
     <Icon Id="ChaosIcon" SourceFile="!(bindpath.Stage)\$(var.ChaosHostExe)" />
   </Package>
 

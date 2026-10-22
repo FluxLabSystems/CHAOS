@@ -82,7 +82,7 @@ engine should still get a registry.</p>
 
 Registry and history
   assets                 90
-  points                 701
+  points                 702
   point_bindings         245
   power_load_profiles    12
   alarm_definitions      40</code></pre></div>
@@ -144,17 +144,19 @@ chaos <span class="t-k">export</span> <span class="t-o">--include</span> all <sp
 step 12 captures a subsystem's baseline.</p>
 <hr>
 <h2 id="8-running-the-backend-for-development" class="doc-h"><span class="doc-h-text">8. Running the backend for development</span><a class="doc-anchor" href="#8-running-the-backend-for-development" aria-label="Link to this section"></a></h2>
-<p><strong>This is the one development task with no GUI path today.</strong></p>
-<p>The gateway is built to supervise the Python backend as a child process, and
-ships the supervisor — but its shipped entry point registers the no-op
-supervisor, so nothing launches the backend. See
+<p><strong>You normally do not.</strong> The gateway starts the Python backend itself —
+<code>Chaos:SuperviseBackend</code> is on by default — resolving the embedded runtime or,
+in a checkout, the Python on your <code>PATH</code> with <code>src</code> on <code>PYTHONPATH</code>. See
 <a href="visual-studio.html#what-happens-when-you-press-f5">Visual Studio § What happens when you press F5</a>.</p>
-<p>Until that is wired up, start the backend yourself on the port the gateway
-expects:</p>
-<div class="doc-code" data-lang="sh"><div class="doc-code-bar"><span class="doc-code-lang">sh</span><button type="button" class="doc-copy" data-copy><span class="doc-copy-label">Copy</span></button></div><pre class="doc-pre"><code class="lang-sh">chaos serve <span class="t-o">--host</span> <span class="t-n">127.0</span>.<span class="t-n">0.1</span> <span class="t-o">--port</span> <span class="t-n">8081</span></code></pre></div>
+<p>Run it yourself when you want it under its own debugger. Tell the gateway to
+leave it alone and start it on the port the gateway expects:</p>
+<div class="doc-code" data-lang="sh"><div class="doc-code-bar"><span class="doc-code-lang">sh</span><button type="button" class="doc-copy" data-copy><span class="doc-copy-label">Copy</span></button></div><pre class="doc-pre"><code class="lang-sh">CHAOS_SuperviseBackend=false    <span class="t-c"># in the launch profile, or the shell's environment</span>
+chaos serve <span class="t-o">--host</span> <span class="t-n">127.0</span>.<span class="t-n">0.1</span> <span class="t-o">--port</span> <span class="t-n">8081</span></code></pre></div>
 <p>Then press F5 on <code>Chaos.Host</code> (or <code>Chaos.Shell</code>) and everything works: the
 gateway proxies to it, <code>/health</code> returns 200 with <code>backend: "up"</code>, and the
-launcher reaches <em>Project CHAOS is ready</em>.</p>
+launcher reaches <em>Project CHAOS is ready</em>. <code>/host/info</code> reports
+<code>supervisor.registered: false</code> in that mode, which is the gateway saying it is
+not managing the process — not that the process is absent.</p>
 <p><code>serve --reload</code> restarts on source changes, which is useful while working on
 the Python half and pointless otherwise.</p>
 <p><strong>Bind it to loopback.</strong> The backend is an unauthenticated control API. It is
