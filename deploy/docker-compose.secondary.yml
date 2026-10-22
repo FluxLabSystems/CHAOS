@@ -109,54 +109,132 @@ services:
       mosquitto:
         condition: service_started
     environment:
+      # The same pass-through as the primary stack (see docker-compose.yml and
+      # tests/test_deploy_compose.py), with one rule on top: anything that is
+      # a secret -- a password, a token, a stop secret -- comes from a
+      # SECONDARY_* variable, because this node is a different trust subject
+      # and must not share a credential with the container it exists to
+      # outlive. Site-wide facts (relay host, recipients, the NetBotz
+      # appliance) are shared with the primary.
       TZ: ${TZ:-America/Toronto}
 
-      # Role. runtime.build_services refuses to start the energy manager when
-      # node_role is 'secondary' -- there is exactly one EMS on the property.
+      # --- Identity ---------------------------------------------------
+      # runtime.build_services withholds the energy manager, command dispatch
+      # and the maintenance scheduler on a secondary node: there is exactly one
+      # EMS and one supervisory control source on the property.
       CHAOS_NODE_ROLE: secondary
       CHAOS_EMS_ENABLED: "false"
 
       # HARD-CODED, deliberately not overridable from .env.
       #
-      # runtime.build_services suppresses only the EMS on a secondary node; the
-      # command-dispatch service is still registered whenever MQTT is enabled.
-      # This flag is therefore the single thing standing between the secondary
-      # node and a second source of physical commands. Leave it false.
+      # The platform already refuses to start command dispatch on a secondary
+      # node. This flag is the second, independent layer (the broker ACL is the
+      # third): a defence that lives in one branch of one Python function must
+      # never be the only thing between a partitioned node and a battery.
+      # Leave it false.
       CHAOS_ALLOW_PHYSICAL_CONTROL: "false"
 
       CHAOS_SITE_ID: ${CHAOS_SITE_ID:-site.site.primary.01}
       CHAOS_TIMEZONE: ${TZ:-America/Toronto}
+
+      # --- Storage ----------------------------------------------------
       CHAOS_DATABASE_URL: >-
         postgresql+psycopg://${POSTGRES_USER}:${SECONDARY_POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-homestead}
+      CHAOS_SQL_ECHO: ${CHAOS_SQL_ECHO:-false}
 
+      # --- MQTT -------------------------------------------------------
       CHAOS_MQTT_HOST: mosquitto
-      CHAOS_MQTT_PORT: 1883
+      CHAOS_MQTT_PORT: ${CHAOS_MQTT_PORT:-1883}
       CHAOS_MQTT_USERNAME: ${SECONDARY_MQTT_USERNAME:?set a distinct MQTT identity for the secondary node}
       CHAOS_MQTT_PASSWORD: ${SECONDARY_MQTT_PASSWORD:?set a distinct MQTT secret for the secondary node}
       CHAOS_MQTT_TLS: ${CHAOS_MQTT_TLS:-false}
+      # This node's own client material, under this node's /run/secrets.
+      CHAOS_MQTT_TLS_CA: ${CHAOS_MQTT_TLS_CA:-}
+      CHAOS_MQTT_TLS_CERT: ${CHAOS_MQTT_TLS_CERT:-}
+      CHAOS_MQTT_TLS_KEY: ${CHAOS_MQTT_TLS_KEY:-}
+      CHAOS_MQTT_TLS_INSECURE: ${CHAOS_MQTT_TLS_INSECURE:-false}
       CHAOS_MQTT_CLIENT_ID: chaos-secondary
       CHAOS_MQTT_BASE_TOPIC: ${CHAOS_MQTT_BASE_TOPIC:-homestead}
       CHAOS_MQTT_ENABLED: "true"
 
-      # Alarms and notification are the point of this node (SDD 16.1
-      # mitigation 4: essential alerts can originate independently).
-      CHAOS_ALARM_ENGINE_ENABLED: "true"
-      CHAOS_NOTIFICATION_BACKENDS: ${SECONDARY_NOTIFICATION_BACKENDS:-log}
-      # A plugin loads here only if its manifest names the secondary role.
-      # Environmental monitoring does: the NetBotz 500 is mounted in the power
-      # container this node exists to outlive (SDD 16.1).
-      CHAOS_PLUGINS_ENABLED: ${SECONDARY_PLUGINS_ENABLED:-*}
-      CHAOS_PLUGINS_DISABLED: ${SECONDARY_PLUGINS_DISABLED:-}
-      CHAOS_PLUGIN_MIRROR_ENABLED: ${SECONDARY_PLUGIN_MIRROR_ENABLED:-true}
-
+      # --- Historian and telemetry semantics --------------------------
       CHAOS_HISTORIAN_BACKEND: sql
       # Shorter raw retention: this is a low-power node with limited storage.
       CHAOS_HISTORIAN_RAW_RETENTION_DAYS: ${SECONDARY_RAW_RETENTION_DAYS:-14}
+      CHAOS_DEFAULT_STALE_AFTER_S: ${CHAOS_DEFAULT_STALE_AFTER_S:-60}
 
+      # --- API --------------------------------------------------------
       CHAOS_API_HOST: 0.0.0.0
       CHAOS_API_PORT: 8000
+      CHAOS_API_TITLE: ${CHAOS_API_TITLE:-Project CHAOS API}
+      CHAOS_API_ROOT_PATH: ${CHAOS_API_ROOT_PATH:-}
+      CHAOS_SUPERVISOR_STOP_SECRET: ${SECONDARY_SUPERVISOR_STOP_SECRET:-}
+
+      # --- Overview thresholds ----------------------------------------
+      CHAOS_OVERVIEW_FREEZE_RISK_C: ${CHAOS_OVERVIEW_FREEZE_RISK_C:-2.0}
+      CHAOS_OVERVIEW_HEAT_RISK_C: ${CHAOS_OVERVIEW_HEAT_RISK_C:-32.0}
+
+      # --- Control safety ---------------------------------------------
+      CHAOS_COMMAND_DEFAULT_TTL_S: ${CHAOS_COMMAND_DEFAULT_TTL_S:-300}
+
+      # --- EMS --------------------------------------------------------
+      # Not running here (see CHAOS_EMS_ENABLED above); passed through so the
+      # setting set is the same on both nodes.
+      CHAOS_EMS_TICK_INTERVAL_S: ${CHAOS_EMS_TICK_INTERVAL_S:-5}
+
+      # --- Alarms and notification ------------------------------------
+      # Alarms and notification are the point of this node (SDD 16.1
+      # mitigation 4: essential alerts can originate independently). The relay
+      # and the recipients are site-wide; the relay credential and the push
+      # token are this node's own.
+      CHAOS_ALARM_ENGINE_ENABLED: "true"
+      CHAOS_NOTIFICATION_BACKENDS: ${SECONDARY_NOTIFICATION_BACKENDS:-log}
+      CHAOS_NOTIFY_EMAIL_RECIPIENTS: ${CHAOS_NOTIFY_EMAIL_RECIPIENTS:-}
+      CHAOS_NOTIFY_PUSH_TARGETS: ${CHAOS_NOTIFY_PUSH_TARGETS:-}
+      CHAOS_NOTIFY_SMTP_HOST: ${CHAOS_NOTIFY_SMTP_HOST:-}
+      CHAOS_NOTIFY_SMTP_PORT: ${CHAOS_NOTIFY_SMTP_PORT:-587}
+      CHAOS_NOTIFY_SMTP_SECURITY: ${CHAOS_NOTIFY_SMTP_SECURITY:-starttls}
+      CHAOS_NOTIFY_SMTP_USERNAME: ${SECONDARY_NOTIFY_SMTP_USERNAME:-}
+      CHAOS_NOTIFY_SMTP_PASSWORD: ${SECONDARY_NOTIFY_SMTP_PASSWORD:-}
+      CHAOS_NOTIFY_SMTP_FROM: ${CHAOS_NOTIFY_SMTP_FROM:-}
+      CHAOS_NOTIFY_SMTP_TIMEOUT_S: ${CHAOS_NOTIFY_SMTP_TIMEOUT_S:-10.0}
+      CHAOS_NOTIFY_PUSH_URL: ${CHAOS_NOTIFY_PUSH_URL:-}
+      CHAOS_NOTIFY_PUSH_TOKEN: ${SECONDARY_NOTIFY_PUSH_TOKEN:-}
+      CHAOS_NOTIFY_PUSH_TIMEOUT_S: ${CHAOS_NOTIFY_PUSH_TIMEOUT_S:-10.0}
+      CHAOS_NOTIFY_RETRY_LIMIT: ${CHAOS_NOTIFY_RETRY_LIMIT:-3}
+      CHAOS_NOTIFY_RETRY_INTERVAL_S: ${CHAOS_NOTIFY_RETRY_INTERVAL_S:-300}
+
+      # --- Backups and self-monitoring --------------------------------
+      # `chaos backup` on this node writes into its own volume. The backup-age
+      # monitor does not run here (it describes the primary's backups), and
+      # the register has no asset for this node's API service yet, so no
+      # availability is announced until SECONDARY_PLATFORM_ASSET_ID names one.
+      CHAOS_BACKUP_DIRECTORY: ${SECONDARY_BACKUP_DIRECTORY:-/app/var/backups}
+      CHAOS_BACKUP_AGE_ASSET_ID: ${CHAOS_BACKUP_AGE_ASSET_ID:-it.application_service.rack_01.postgres_01}
+      CHAOS_PLATFORM_ASSET_ID: ${SECONDARY_PLATFORM_ASSET_ID:-}
+
+      # --- Plugins ----------------------------------------------------
+      # A plugin loads here only if its manifest names the secondary role.
+      # Environmental monitoring does: the NetBotz 500 is mounted in the power
+      # container this node exists to outlive (SDD 16.1). The appliance is the
+      # same one the primary reads; the account used to read it is this node's.
+      CHAOS_PLUGINS_ENABLED: ${SECONDARY_PLUGINS_ENABLED:-*}
+      CHAOS_PLUGINS_DISABLED: ${SECONDARY_PLUGINS_DISABLED:-}
+      CHAOS_PLUGIN_OPTIONS: ${SECONDARY_PLUGIN_OPTIONS:-}
+      CHAOS_PLUGIN_MIRROR_ENABLED: ${SECONDARY_PLUGIN_MIRROR_ENABLED:-true}
+      CHAOS_PLUGIN_NETBOTZ_TRANSPORT: ${CHAOS_PLUGIN_NETBOTZ_TRANSPORT:-none}
+      CHAOS_PLUGIN_NETBOTZ_HOST: ${CHAOS_PLUGIN_NETBOTZ_HOST:-}
+      CHAOS_PLUGIN_NETBOTZ_USERNAME: ${SECONDARY_PLUGIN_NETBOTZ_USERNAME:-}
+      CHAOS_PLUGIN_NETBOTZ_PASSWORD: ${SECONDARY_PLUGIN_NETBOTZ_PASSWORD:-}
+      CHAOS_PLUGIN_NETBOTZ_CA_FILE: ${CHAOS_PLUGIN_NETBOTZ_CA_FILE:-}
+      CHAOS_PLUGIN_NETBOTZ_READINGS_PATH: ${CHAOS_PLUGIN_NETBOTZ_READINGS_PATH:-}
+      CHAOS_PLUGIN_NETBOTZ_ENCLOSURE_ID: ${CHAOS_PLUGIN_NETBOTZ_ENCLOSURE_ID:-}
+      CHAOS_PLUGIN_NETBOTZ_POLL_INTERVAL_S: ${CHAOS_PLUGIN_NETBOTZ_POLL_INTERVAL_S:-30}
     volumes:
       - secondary-twin-var:/app/var
+      # This node's own certificate material (its client certificate differs
+      # from the primary's), mounted read-only. See docker-compose.yml.
+      - ${SECRETS_DIR:-./secrets}:/run/secrets:ro
     ports:
       - "${SECONDARY_BIND_ADDRESS:-127.0.0.1}:${SECONDARY_TWIN_PORT:-8000}:8000"
     healthcheck:

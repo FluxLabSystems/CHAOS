@@ -2,6 +2,11 @@ var/
 __pycache__/
 *.pyc
 .env
+# Certificate material mounted into the twin container at /run/secrets
+# (deploy/docker-compose.yml). The directory exists so Docker never has to
+# create it as root; nothing inside it is ever committed.
+deploy/secrets/*
+!deploy/secrets/.gitkeep
 .pytest_cache/
 *.egg-info/
 node_modules/
