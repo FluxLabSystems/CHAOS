@@ -515,6 +515,7 @@ const ROUTES = [
   { pattern: /^\/control\/(.+)$/,     view: 'control', nav: 'control', param: 'assetId' },
   { pattern: /^\/commissioning$/,     view: 'commissioning', nav: 'commissioning' },
   { pattern: /^\/commissioning\/(.+)$/, view: 'commissioning', nav: 'commissioning', param: 'assetId' },
+  { pattern: /^\/maintenance$/,       view: 'maintenance', nav: 'maintenance' },
 ];
 
 let activeView = null;
