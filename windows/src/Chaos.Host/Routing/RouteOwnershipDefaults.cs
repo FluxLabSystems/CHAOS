@@ -10,8 +10,9 @@ namespace Chaos.Host.Routing;
 /// <para>
 /// Today every <c>/api/v1/*</c> prefix is <see cref="RouteOwner.Python"/>. The
 /// prefixes mirror the FastAPI routers in <c>src/chaos/api/routers/</c>
-/// and the endpoint reference in <c>docs/api.md</c>, one row per subsystem, so a
-/// port is a one-row change rather than a surgical edit of a catch-all.
+/// (plus the plugin manager's <c>/ext</c> mount) and the endpoint reference in
+/// <c>docs/api.md</c>, one row per router, so a port is a one-row change
+/// rather than a surgical edit of a catch-all.
 /// </para>
 /// <para>
 /// The <c>/api/v1</c> row is a deliberate catch-all: an endpoint added to the
@@ -79,6 +80,11 @@ public static class RouteOwnershipDefaults
         Python("/api/v1/maintenance", "Maintenance plans, due work, inspections, calibrations, spare parts."),
         Python("/api/v1/work-orders", "Work orders."),
         Python("/api/v1/commissioning", "SDD 19 commissioning records and binding enablement."),
+        Python("/api/v1/topology", "The dependency graph and per-asset impact analysis."),
+        Python("/api/v1/rack", "The 42U elevation, feeds, port plan and findings."),
+        Python("/api/v1/plugins", "Plugin discovery, health, the mirror engine's counters, and reload."),
+        Python("/api/v1/ext", "Everything a plugin serves, under /api/v1/ext/<plugin>. Routers are mounted by "
+                            + "the plugin manager at startup, so the set below this prefix is not known to the gateway."),
 
         // ---------------------------------------------------------------
         // Platform surface that is not /api/v1 but still belongs to Python.

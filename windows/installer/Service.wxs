@@ -40,7 +40,7 @@
   the directory holding the alarm history, and it has not been tested on real
   Windows by the author of this file. Shipping an untested ACL that locks the
   service out of its own database would be worse than shipping the honest
-  compromise. Tracked in docs/windows-deployment.md, "Open items".
+  compromise. Tracked in docs/advanced-windows-packaging.md, "Open items".
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
@@ -86,11 +86,20 @@
           you stop checking.
 
           The policy: restart after 60 s, three times, with the failure count
-          reset once a day. A backend that crash-loops therefore keeps being
-          restarted rather than being given up on after three tries in the small
-          hours — but the 60 s delay means a genuinely broken build does not
-          spin the CPU, and the Event Log shows a clean 60-second cadence that
-          is easy to recognise as a crash loop.
+          reset once a day. A host that crashes therefore keeps being restarted
+          rather than being given up on after three tries in the small hours —
+          but the 60 s delay means a genuinely broken build does not spin the
+          CPU, and the Event Log shows a clean 60-second cadence that is easy
+          to recognise as a crash loop.
+
+          KNOWN GAP: the host does not only crash. When its backend supervisor
+          gives up (five backend failures in ten minutes) it STOPS ITSELF with
+          exit code 70 - a stop with an error, not a crash - and SCM applies
+          this policy to such a stop only when the service's failure flag is
+          set. util:ServiceConfig cannot set that flag; it is one elevated
+          command, `sc failureflag ChaosHost 1`, which the host-registration
+          path (`--install-service`, below) runs and this path does not. See
+          docs/advanced-windows-packaging.md, "Open items".
         -->
         <util:ServiceConfig ServiceName="$(var.ChaosServiceName)"
                             FirstFailureActionType="restart"

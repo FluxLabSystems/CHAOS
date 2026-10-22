@@ -23,7 +23,7 @@ public sealed class ServiceInstallOptions
     public string? BinaryPath { get; set; }
 
     /// <summary>Argument appended to the registered binary path.</summary>
-    public string ServiceArgument { get; set; } = "--service";
+    public string ServiceArgument { get; set; } = ServiceCommandLine.ServiceFlag;
 
     /// <summary>
     /// <c>auto</c>, <c>delayed-auto</c> or <c>demand</c>. Auto by default:
@@ -72,6 +72,40 @@ public sealed class ServiceInstallOptions
     public string EventLogSource { get; set; } = "Project CHAOS";
 
     public string EventLogName { get; set; } = "Application";
+
+    /// <summary>
+    /// Options that register the process that is running now. A published
+    /// <c>Chaos.Host.exe</c> registers itself with <c>--service</c>; a host
+    /// started as <c>dotnet Chaos.Host.dll</c> registers the muxer with the
+    /// assembly as its first argument, because registering <c>dotnet.exe</c>
+    /// alone would be a service that starts the SDK's help text.
+    /// </summary>
+    /// <param name="processPath">The running executable, typically <see cref="Environment.ProcessPath"/>.</param>
+    /// <param name="entryAssemblyPath">The entry assembly, for the <c>dotnet</c> case.</param>
+    /// <returns>Options with <see cref="BinaryPath"/> and <see cref="ServiceArgument"/> set.</returns>
+    public static ServiceInstallOptions ForProcess(string? processPath, string? entryAssemblyPath)
+    {
+        var options = new ServiceInstallOptions { BinaryPath = processPath };
+
+        // Split on both separators by hand: this decides a Windows path and
+        // is unit-tested on Linux, where '\' is not a separator.
+        var fileName = processPath ?? string.Empty;
+        var cut = fileName.LastIndexOfAny(['\\', '/']);
+        if (cut >= 0)
+        {
+            fileName = fileName[(cut + 1)..];
+        }
+
+        var muxer = string.Equals(fileName, "dotnet", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(fileName, "dotnet.exe", StringComparison.OrdinalIgnoreCase);
+
+        if (muxer && !string.IsNullOrWhiteSpace(entryAssemblyPath))
+        {
+            options.ServiceArgument = $"\"{entryAssemblyPath}\" {ServiceCommandLine.ServiceFlag}";
+        }
+
+        return options;
+    }
 }
 
 /// <summary>One command in an installation plan.</summary>

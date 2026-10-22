@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Chaos.Host.Abstractions - the contract between the gateway and the backend
+    supervisor.
+
+    IBackendSupervisor, BackendState and BackendStatus live here, in a project
+    that references nothing, so that Chaos.Host (which consumes the contract)
+    and Chaos.Host.Supervisor (which implements it) compile against ONE
+    definition. Before this project existed the supervisor compiled a mirror of
+    the contract and the gateway kept its own copy; the two drifted, and the
+    gateway's DI container ended up holding a NullBackendSupervisor even with
+    supervision switched on, because the supervisor had registered an interface
+    of the same name from a different assembly.
+
+    Keep it small. Anything here is a public surface two projects and the
+    gateway's tests code against, so an undocumented public member is a build
+    error (GenerateDocumentationFile + TreatWarningsAsErrors).
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>$(ChaosTargetFramework)</TargetFramework>
+    <AssemblyName>Chaos.Host.Abstractions</AssemblyName>
+    <RootNamespace>Chaos.Host.Abstractions</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>

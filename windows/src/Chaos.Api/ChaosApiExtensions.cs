@@ -63,10 +63,10 @@ public static class ChaosApiExtensions
             if (string.IsNullOrWhiteSpace(options.SqliteDatabasePath))
             {
                 throw new InvalidOperationException(
-                    "Chaos.Api has no database to read. Set ChaosApiOptions.SqliteDatabasePath, "
-                    + "or register an IChaosConnectionFactory before calling AddChaosApi() to use "
-                    + "PostgreSQL. It must open the database READ-ONLY: the Python platform owns "
-                    + "this schema.");
+                    "Chaos.Api has no database to read. Set ChaosApiOptions.SqliteDatabasePath (a file path; "
+                    + "the gateway derives it from a sqlite:/// database URL), or register an "
+                    + "IChaosConnectionFactory before calling AddChaosApi() to use PostgreSQL. It must open "
+                    + "the database READ-ONLY: the Python platform owns this schema.");
             }
 
             return new SqliteReadOnlyConnectionFactory(options.SqliteDatabasePath);

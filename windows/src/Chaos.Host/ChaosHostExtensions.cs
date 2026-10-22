@@ -1,8 +1,7 @@
-extern alias ChaosSupervisor;
-
 using Chaos.Api;
 using Chaos.Host.Abstractions;
-using ChaosSupervisor::Chaos.Host.Supervisor;
+using Chaos.Host.Supervisor;
+using Chaos.Host.Supervisor.Logging;
 using Chaos.Host.Configuration;
 using Chaos.Host.Docs;
 using Chaos.Host.Endpoints;
@@ -16,6 +15,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Chaos.Host;
@@ -32,34 +32,111 @@ namespace Chaos.Host;
 public static class ChaosHostExtensions
 {
     /// <summary>
+    /// The supervisor's section, relative to the gateway's <c>Chaos</c> section:
+    /// <c>Chaos:Backend</c> in a file, <c>CHAOS_Backend__*</c> as a variable.
+    /// </summary>
+    public const string BackendSectionName = "Backend";
+
+    /// <summary>The gateway's rolling log file, under <see cref="ChaosHostOptions.LogDirectory"/>.</summary>
+    public const string HostLogFileName = "chaos-host.log";
+
+    /// <summary>
+    /// The ported endpoints' section, relative to the gateway's <c>Chaos</c>
+    /// section: <c>Chaos:Api</c> in a file, <c>CHAOS_Api__*</c> as a variable.
+    /// </summary>
+    public const string ApiSectionName = "Api";
+
+    /// <summary>
     /// Registers everything the gateway needs and applies
     /// <see cref="ChaosHostOptions.ListenUrl"/> to the web host.
     /// </summary>
     /// <param name="builder">The application builder.</param>
+    /// <param name="windowsServiceLifetime">
+    /// Whether to register the Windows Service lifetime when the process was
+    /// started by the service control manager. <c>Program.cs</c> passes false
+    /// for <c>--console</c>; it is a no-op off Windows and in a console
+    /// session either way.
+    /// </param>
     /// <returns>The builder, for chaining.</returns>
     /// <exception cref="RouteOwnershipException">The route-ownership manifest is malformed or ambiguous.</exception>
-    public static WebApplicationBuilder AddChaosHost(this WebApplicationBuilder builder)
+    public static WebApplicationBuilder AddChaosHost(this WebApplicationBuilder builder, bool windowsServiceLifetime = true)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        // appsettings' "Chaos" section, overridden by CHAOS_-prefixed
-        // environment variables at the same level: CHAOS_BackendUrl overrides
-        // Chaos:BackendUrl, CHAOS_Routes__0__Owner overrides Chaos:Routes:0:Owner.
-        var chaosConfiguration = new ConfigurationBuilder()
-            .AddConfiguration(builder.Configuration.GetSection(ChaosHostOptions.SectionName))
-            .AddEnvironmentVariables(ChaosHostOptions.EnvironmentPrefix)
-            .Build();
+        // The installed layout first, from a bootstrap read of the Chaos
+        // section and the CHAOS_ variables: the config directory it names holds
+        // chaos.host.json, which is itself a configuration source and has to
+        // be in place before anything binds. On a checkout there is no layout
+        // and this is a no-op that /host/info explains.
+        var bootstrap = InstalledConfiguration.BuildChaosConfiguration(builder.Configuration);
+        var layout = InstalledLayoutResolver.Resolve(
+            bootstrap[nameof(ChaosHostOptions.ConfigDirectory)],
+            bootstrap[nameof(ChaosHostOptions.LogDirectory)],
+            InstalledLayoutResolver.PlatformRegistry(),
+            InstalledLayoutResolver.PlatformProgramData());
+        var hostConfigurationLoaded = InstalledConfiguration.AddHostConfigurationFile(builder.Configuration, layout);
+        var installed = InstalledConfiguration.ReadBackendEnvironment(layout, hostConfigurationLoaded, out var backendEnvironment);
+        builder.Services.AddSingleton(layout);
+        builder.Services.AddSingleton(installed);
 
-        builder.Services.AddSingleton<IValidateOptions<ChaosHostOptions>, ChaosHostOptionsValidator>();
-        builder.Services
-            .AddOptions<ChaosHostOptions>()
-            .Bind(chaosConfiguration)
-            .ValidateOnStart();
+        // appsettings' "Chaos" section (now including the installed file),
+        // overridden by CHAOS_-prefixed environment variables at the same
+        // level: CHAOS_BackendUrl overrides Chaos:BackendUrl,
+        // CHAOS_Routes__0__Owner overrides Chaos:Routes:0:Owner.
+        var chaosConfiguration = InstalledConfiguration.BuildChaosConfiguration(builder.Configuration);
 
         // The table has to exist before the pipeline is built, so it is bound
         // eagerly here rather than resolved from IOptions later.
         var options = new ChaosHostOptions();
         chaosConfiguration.Bind(options);
+
+        // One answer for "which database, which design package", handed to
+        // setup, the supervisor and the ported endpoints alike. The supervisor
+        // section is bound from the gateway's view so that CHAOS_Backend__X -
+        // the form the desktop shell sets on a child it starts - reaches it.
+        var backendSection = chaosConfiguration.GetSection(BackendSectionName);
+        var storage = PlatformStorage.Resolve(
+            options.DatabaseUrl,
+            options.DataDirectory,
+            backendSection[nameof(BackendSupervisorOptions.DatabaseUrl)],
+            backendSection[nameof(BackendSupervisorOptions.DataDirectory)],
+            backendEnvironment,
+            layout);
+        options.DatabaseUrl = storage.DatabaseUrl;
+        options.DataDirectory = storage.DataDirectory;
+        options.ConfigDirectory ??= layout.ConfigDirectory;
+        options.LogDirectory ??= layout.LogDirectory;
+        builder.Services.AddSingleton(storage);
+
+        // Log files, in the installed layout's logs folder (or wherever
+        // Chaos:LogDirectory says). A service has no console; without this
+        // the folder the shell's "Open logs" button opens stays empty, and the
+        // manuals that say to read the gateway log there are describing a
+        // file that was never written. A checkout with no layout logs to the
+        // console as before.
+        if (!string.IsNullOrWhiteSpace(options.LogDirectory))
+        {
+            builder.Logging.AddProvider(new RollingFileLoggerProvider(new RollingFileLoggerOptions
+            {
+                Directory = options.LogDirectory,
+                FileName = HostLogFileName,
+                MaxFileSizeBytes = options.LogFileMaxBytes,
+                MaxRetainedFiles = options.LogFilesRetained,
+            }));
+        }
+
+        builder.Services.AddSingleton<IValidateOptions<ChaosHostOptions>, ChaosHostOptionsValidator>();
+        builder.Services
+            .AddOptions<ChaosHostOptions>()
+            .Bind(chaosConfiguration)
+            .PostConfigure(bound =>
+            {
+                bound.DatabaseUrl = storage.DatabaseUrl;
+                bound.DataDirectory = storage.DataDirectory;
+                bound.ConfigDirectory ??= layout.ConfigDirectory;
+                bound.LogDirectory ??= layout.LogDirectory;
+            })
+            .ValidateOnStart();
 
         var table = RouteOwnershipTable.Build(
             RouteOwnershipDefaults.Manifest,
@@ -124,17 +201,47 @@ public static class ChaosHostExtensions
         // owned is inert; a route marked Dotnet with no endpoint behind it 404s,
         // which is why the startup check refuses that combination. Registering
         // first means flipping ownership is a configuration change.
-        builder.Services.AddChaosApi(api => api.SqliteDatabasePath = options.DatabaseUrl);
+        //
+        // Their options bind from Chaos:Api (CHAOS_Api__SqliteDatabasePath),
+        // and when nothing is set there the SQLite file is derived from the one
+        // resolved database URL - a URL, not a path, which is what used to be
+        // handed over as if it were one. A non-SQLite URL leaves the endpoints
+        // without a database, and ChaosApiStartupCheck refuses to start a host
+        // that owns one of their routes in that state.
+        var apiSection = chaosConfiguration.GetSection(ApiSectionName);
+        var apiDatabase = ChaosApiDatabaseResolution.Resolve(
+            apiSection[nameof(ChaosApiOptions.SqliteDatabasePath)],
+            storage.DatabaseUrl);
+        builder.Services.AddSingleton(apiDatabase);
+        builder.Services.AddOptions<ChaosApiOptions>().Bind(apiSection);
+        builder.Services.AddChaosApi(api =>
+        {
+            if (string.IsNullOrWhiteSpace(api.SqliteDatabasePath))
+            {
+                api.SqliteDatabasePath = apiDatabase.SqlitePath;
+            }
+        });
+        builder.Services.AddHostedService<ChaosApiStartupCheck>();
 
         // The real supervisor must be registered BEFORE the TryAdd below, which
         // is a fallback and not a default: TryAdd keeps whatever is already
         // there. Without this call the gateway would register
         // NullBackendSupervisor, start nothing, and proxy /api/v1 to a port
         // with no listener -- a console that loads and then answers nothing.
+        //
+        // Both registrations name the same IBackendSupervisor, from
+        // Chaos.Host.Abstractions. That is what makes the TryAdd a fallback:
+        // when the supervisor compiled its own mirror of the contract the two
+        // interfaces merely shared a name, the TryAdd always won, and the
+        // gateway reported "no supervisor registered" with supervision on.
         if (options.SuperviseBackend)
         {
+            // Registered before the supervisor's TryAdd so a breaker trip
+            // reports its exit code to SCM as well as to the process.
+            builder.Services.TryAddSingleton<IHostExitCodeReporter, Supervision.WindowsServiceExitCodeReporter>();
+
             builder.Services.AddChaosBackendSupervisor(
-                builder.Configuration.GetSection(BackendSupervisorOptions.SectionName),
+                backendSection,
                 supervisor =>
                 {
                     // The gateway owns where the backend listens, because it is
@@ -145,6 +252,28 @@ public static class ChaosHostExtensions
                         supervisor.BindAddress = backend.Host;
                         supervisor.Port = backend.Port;
                     }
+
+                    // And it owns the storage answer, resolved once above from
+                    // every place it can be named. homestead.env goes to the
+                    // child verbatim; a key already set from configuration
+                    // keeps its configured value.
+                    supervisor.DatabaseUrl = storage.DatabaseUrl;
+                    supervisor.DataDirectory = storage.DataDirectory;
+                    foreach (var (key, value) in backendEnvironment)
+                    {
+                        supervisor.Environment.TryAdd(key, value);
+                    }
+
+                    // The gateway drives the lifecycle through
+                    // BackendSupervisorHost, bounded by Chaos:BackendStartTimeout
+                    // and placed after route validation and first-run setup in
+                    // the hosted-service order. The supervisor's own hosted
+                    // service would start it a second time, unbounded, from
+                    // wherever this call happens to sit; so it is switched off
+                    // and the one budget is handed down as the supervisor's
+                    // startup gate.
+                    supervisor.RegisterHostedService = false;
+                    supervisor.StartupGate = options.BackendStartTimeout;
                 });
         }
 
@@ -153,7 +282,10 @@ public static class ChaosHostExtensions
         builder.Services.AddHostedService<BackendHealthMonitor>();
         builder.Services.AddHostedService<DocumentationSiteHost>();
 
-        WindowsServiceIntegration.AddWindowsServiceIfAvailable(builder);
+        if (windowsServiceLifetime)
+        {
+            WindowsServiceIntegration.AddWindowsServiceIfAvailable(builder);
+        }
 
         if (!string.IsNullOrWhiteSpace(options.ListenUrl))
         {

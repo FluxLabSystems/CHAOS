@@ -53,8 +53,8 @@
         "CPython 3.11 release with Windows binaries.  3.11.10 and later are",
         "source-only security releases, so this embeddable will never receive a",
         "python.org security update.  Moving up is a one-line change here plus a",
-        "matching entry in the Python CI matrix; see docs/windows-deployment.md",
-        "section 'Embedded Python runtime'."
+        "matching entry in the Python CI matrix; see docs/advanced-windows-packaging.md,",
+        "section 'Changing the pinned Python version'."
       ]
     },
 

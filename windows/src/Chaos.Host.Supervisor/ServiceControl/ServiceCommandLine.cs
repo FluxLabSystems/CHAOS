@@ -32,15 +32,26 @@ public sealed record HostCommandLine(HostRunMode Mode, IReadOnlyList<string> Rem
 /// The service-control surface of the host's command line.
 /// </summary>
 /// <remarks>
-/// The gateway owns <c>Program.Main</c>; this is the piece of it that belongs
-/// with the supervisor, so both agree on the flag names without either owning
-/// the other's entry point. See README.md for the intended Main.
+/// The gateway owns <c>Program.Main</c> (<c>Chaos.Host/Program.cs</c>) and
+/// parses with this first, before the web host sees the arguments; this is
+/// the piece that belongs with the supervisor, so the flag names, the
+/// registration plan and the installer's custom actions all agree. The
+/// operator-facing description is docs/advanced-command-line.md, "The
+/// gateway's own switches".
 /// </remarks>
 public static class ServiceCommandLine
 {
     public const string InstallFlag = "--install-service";
     public const string UninstallFlag = "--uninstall-service";
     public const string ConsoleFlag = "--console";
+
+    /// <summary>
+    /// What the registered service's command line carries
+    /// (<see cref="ServiceInstallOptions.ServiceArgument"/>). It means "run
+    /// as the service" and is consumed here so it never reaches the web
+    /// host's own command-line configuration.
+    /// </summary>
+    public const string ServiceFlag = "--service";
 
     public static HostCommandLine Parse(IReadOnlyList<string> arguments)
     {
@@ -61,6 +72,9 @@ public static class ServiceCommandLine
                     break;
                 case ConsoleFlag:
                     modes.Add(HostRunMode.Console);
+                    break;
+                case ServiceFlag:
+                    modes.Add(HostRunMode.RunService);
                     break;
                 case "--help":
                 case "-h":
@@ -89,13 +103,21 @@ public static class ServiceCommandLine
     /// <summary>Usage text for the service-control flags.</summary>
     public static string Usage =>
         $"""
+         Project CHAOS host (Chaos.Host)
+
          Service control:
            {InstallFlag}     Register the Windows Service (requires an elevated prompt), then exit.
            {UninstallFlag}   Stop and remove the Windows Service, then exit.
            {ConsoleFlag}             Run in the foreground with a console instead of as a service.
+           {ServiceFlag}             Run as the Windows Service; what the registered service passes.
+           --help                Print this and exit.
 
          With no option the host runs as a Windows Service when started by the Service Control
-         Manager, and as an ordinary foreground process otherwise.
+         Manager, and as an ordinary foreground process otherwise. Every other argument is
+         passed to the host's configuration (for example --Chaos:ListenUrl=http://0.0.0.0:8080).
+
+         Exit codes for {InstallFlag} / {UninstallFlag}: 0 done, 1 a command failed
+         (usually: not elevated), 3 not possible on this operating system.
          """;
 
     private static string Flag(HostRunMode mode) => mode switch
@@ -103,6 +125,7 @@ public static class ServiceCommandLine
         HostRunMode.InstallService => InstallFlag,
         HostRunMode.UninstallService => UninstallFlag,
         HostRunMode.Console => ConsoleFlag,
+        HostRunMode.RunService => ServiceFlag,
         _ => "--help",
     };
 }

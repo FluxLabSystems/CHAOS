@@ -82,6 +82,17 @@ internal sealed partial class BackendForwarder : IDisposable
     /// <returns>A task that completes when the response has been written.</returns>
     public async Task ForwardAsync(HttpContext context, RouteOwnershipEntry entry)
     {
+        // The route-ownership manifest describes one API surface - the
+        // platform version this host was built against. When the backend
+        // reports another major.minor the mismatch is always on /health; with
+        // Chaos:RefuseIncompatibleBackend on, it is also refused here, before
+        // a request built for one API reaches the other.
+        if (_options.RefuseIncompatibleBackend && _health.Current is { VersionCompatible: false } incompatible)
+        {
+            await WriteIncompatibleAsync(context, entry, incompatible).ConfigureAwait(false);
+            return;
+        }
+
         var error = await _forwarder
             .SendAsync(context, _destinationPrefix, _invoker, _requestConfig, _transformer)
             .ConfigureAwait(false);
@@ -165,6 +176,52 @@ internal sealed partial class BackendForwarder : IDisposable
             .ConfigureAwait(false);
     }
 
+    private async Task WriteIncompatibleAsync(HttpContext context, RouteOwnershipEntry entry, BackendHealthSnapshot snapshot)
+    {
+        var reported = snapshot.BackendVersion ?? "unknown";
+        LogRefusedIncompatible(context.Request.Path, reported, HostVersion.PlatformVersionContract);
+
+        context.Response.Clear();
+        context.Response.StatusCode = StatusCodes.Status502BadGateway;
+        context.Response.ContentType = "application/json; charset=utf-8";
+        context.Response.Headers.CacheControl = "no-store";
+
+        var body = new
+        {
+            error = "backend_incompatible",
+            detail = $"The Python platform backend reports version {reported}, which does not satisfy this gateway's "
+                   + $"platform version contract {HostVersion.PlatformVersionContract} (compared on major.minor). "
+                   + "Chaos:RefuseIncompatibleBackend is on, so the request was not proxied.",
+            path = context.Request.Path.Value,
+            route = new
+            {
+                prefix = entry.PathPrefix,
+                owner = entry.Owner.ToString(),
+                source = entry.Source.ToString(),
+            },
+            backend = new
+            {
+                url = _options.BackendUrl,
+                status = snapshot.BackendWireValue,
+                reportedVersion = snapshot.BackendVersion,
+                platformVersionContract = HostVersion.PlatformVersionContract,
+                versionCompatible = snapshot.VersionCompatible,
+                lastCheckedUtc = snapshot.LastCheckedUtc,
+            },
+            gateway = new
+            {
+                component = "Chaos.Host",
+                version = HostVersion.Version,
+            },
+            hint = "Install a backend and gateway built for the same platform version. To proxy regardless and rely on "
+                 + "/health reporting the mismatch, set Chaos:RefuseIncompatibleBackend=false.",
+        };
+
+        await context.Response
+            .WriteAsync(JsonSerializer.Serialize(body, JsonOptions), context.RequestAborted)
+            .ConfigureAwait(false);
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private static (int Status, string Code, string Detail) Classify(ForwarderError error) => error switch
@@ -226,4 +283,11 @@ internal sealed partial class BackendForwarder : IDisposable
     [LoggerMessage(EventId = 2003, Level = LogLevel.Debug,
         Message = "Client aborted {Path} while it was being proxied ({ForwarderError}).")]
     private partial void LogClientAborted(PathString path, ForwarderError forwarderError);
+
+    // Debug, not Warning: the health monitor already warned once when the
+    // mismatch appeared, and a console polling every few seconds must not
+    // turn one fact into a log storm.
+    [LoggerMessage(EventId = 2004, Level = LogLevel.Debug,
+        Message = "Refused to proxy {Path}: the backend reports platform version {BackendVersion}, the contract is {ContractVersion} and Chaos:RefuseIncompatibleBackend is on.")]
+    private partial void LogRefusedIncompatible(PathString path, string backendVersion, string contractVersion);
 }

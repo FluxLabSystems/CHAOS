@@ -91,6 +91,13 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IBackendSupervisorDiagnostics>(
             provider => provider.GetRequiredService<BackendSupervisor>());
 
+        // A tripped breaker ends the host, not just the supervision loop -
+        // unless the options say otherwise. The host decides how an exit code
+        // is reported (a Windows service also tells SCM); the default sets
+        // Environment.ExitCode.
+        services.TryAddSingleton<IHostExitCodeReporter, EnvironmentExitCodeReporter>();
+        services.AddSingleton<IHostedService, SupervisionFailureHostStop>();
+
         services.AddSingleton<IHostedService>(provider =>
         {
             var options = provider.GetRequiredService<IOptions<BackendSupervisorOptions>>().Value;

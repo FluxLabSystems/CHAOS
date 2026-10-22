@@ -1,7 +1,8 @@
 """Cross-implementation conformance: Python and .NET must answer identically.
 
-This is the safety net for the whole ``docs/dotnet-migration.md`` sequence. Each
-stage of that plan moves one ``/api/v1`` prefix from the Python platform to the
+This is the safety net for the migration described in ``docs/visual-studio.md``,
+"What is not ported yet", and ``docs/architecture.md``, "Route ownership". Each
+stage of it moves one ``/api/v1`` prefix from the Python platform to the
 .NET gateway by flipping a route-ownership entry. The only thing that makes
 those flips safe is evidence that the two implementations return the same thing,
 gathered *before* the flip and re-gathered on every commit afterwards.
@@ -262,9 +263,22 @@ def compare_responses(python_response, dotnet_response, case: Case) -> list[str]
 
 
 def _dotnet_executable() -> str | None:
-    """The dotnet CLI, if this machine has one."""
-    for candidate in (shutil.which("dotnet"), "/usr/local/dotnet/dotnet"):
-        if candidate and Path(candidate).exists():
+    """The dotnet CLI, if this machine has one.
+
+    PATH first, then the places an SDK lands without being on PATH: the
+    ``DOTNET_ROOT`` the SDK's own tooling honours, the per-user install that
+    ``dotnet-install.sh`` produces (``~/.dotnet``), and the two system-wide
+    locations. The suffix differs on Windows only because the muxer does.
+    """
+    name = "dotnet.exe" if os.name == "nt" else "dotnet"
+    candidates: list[str | None] = [shutil.which("dotnet")]
+    dotnet_root = os.environ.get("DOTNET_ROOT")
+    if dotnet_root:
+        candidates.append(str(Path(dotnet_root) / name))
+    candidates.append(str(Path.home() / ".dotnet" / name))
+    candidates.extend(["/usr/local/dotnet/dotnet", "/usr/share/dotnet/dotnet"])
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
             return candidate
     return None
 
@@ -281,7 +295,10 @@ def dotnet_host() -> Path:
 
     executable = _dotnet_executable()
     if executable is None:
-        pytest.skip("no dotnet CLI on PATH or at /usr/local/dotnet; skipping .NET conformance")
+        pytest.skip(
+            "no dotnet CLI on PATH, at $DOTNET_ROOT, in ~/.dotnet or under /usr/local or /usr/share; "
+            "skipping .NET conformance"
+        )
     if not CONFORMANCE_HOST_PROJECT.is_dir():
         pytest.skip(f"{CONFORMANCE_HOST_PROJECT} is absent; skipping .NET conformance")
 
@@ -369,7 +386,7 @@ def conformance_database(tmp_path_factory) -> Path:
     # Fold the write-ahead log back into the main file. Chaos.Api opens the
     # database with SQLite's Mode=ReadOnly, and a read-only connection cannot
     # create the -shm file a WAL database needs when no writer holds it open.
-    # See docs/dotnet-migration.md, "SQLite WAL and read-only readers".
+    # See SqliteReadOnlyConnectionFactory in windows/src/Chaos.Api/Data.
     with engine.connect() as connection:
         connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
     engine.dispose()
@@ -457,7 +474,9 @@ def _seed_alarms(session) -> None:
     orders open alarms by ``detected_at DESC`` alone, so equal timestamps leave
     "newest wins the tile" undefined and the two implementations would be
     entitled to disagree. That ambiguity is a real defect in the Python query
-    and is recorded in docs/dotnet-migration.md rather than papered over here.
+    and is recorded in the comment on the .NET copy of the query
+    (windows/src/Chaos.Api/Data/AnnunciatorReadStore.cs) rather than papered
+    over here.
     """
     import datetime as dt
 
@@ -741,7 +760,8 @@ def test_python_and_dotnet_agree(case: Case, http_client, python_base_url: str, 
     assert not differences, (
         f"{case.name}: the Python and .NET implementations disagree on "
         f"{case.path} {dict(case.query)}.\n"
-        "Fix the port or record the difference in docs/dotnet-migration.md. "
+        "Fix the port or record the difference in docs/visual-studio.md, "
+        "'What is not ported yet'. "
         "Do NOT relax the comparison.\n  - " + "\n  - ".join(differences)
     )
 

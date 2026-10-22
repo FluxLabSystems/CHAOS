@@ -30,7 +30,8 @@ namespace Chaos.Host.Supervisor.Processes;
 /// spawned in the microseconds before assignment would escape. Closing that
 /// window needs a raw <c>CreateProcessW</c> P/Invoke including pipe handle
 /// inheritance; it is not worth the surface area here, because the Python
-/// entry point does no forking before the interpreter is up.
+/// entry point does no forking before the interpreter is up. Listed in
+/// docs/advanced-windows-packaging.md, "Open items".
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows")]

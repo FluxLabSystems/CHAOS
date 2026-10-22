@@ -16,17 +16,20 @@ internal static class SetupPayload
     /// <summary>The full report.</summary>
     /// <param name="snapshot">The current reading.</param>
     /// <param name="options">Gateway options, for the configuration echo.</param>
+    /// <param name="storage">Where the database and data directory were resolved from.</param>
     /// <param name="recordPath">Where the setup state file lives, or null.</param>
     /// <param name="nowUtc">The current time.</param>
     /// <returns>An object ready for <c>Results.Json</c>.</returns>
     public static object Create(
         SetupSnapshot snapshot,
         ChaosHostOptions options,
+        PlatformStorage storage,
         string? recordPath,
         DateTimeOffset nowUtc)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(storage);
 
         return new
         {
@@ -93,12 +96,12 @@ internal static class SetupPayload
             configuration = new
             {
                 autoSetup = options.AutoSetup,
-                databaseUrl = snapshot.DatabaseUrl,
-                databaseUrlSource = string.IsNullOrWhiteSpace(options.DatabaseUrl)
-                    ? "platform default (Chaos:DatabaseUrl is not set)"
-                    : "Chaos:DatabaseUrl",
+                databaseUrl = PlatformStorage.Redact(snapshot.DatabaseUrl),
+                databaseUrlSource = storage.DatabaseUrlSource,
                 dataDirectory = snapshot.DataDirectory,
-                dataDirectorySource = snapshot.DataDirectorySource,
+                dataDirectorySource = snapshot.DataDirectorySource == "configured"
+                    ? storage.DataDirectorySource
+                    : snapshot.DataDirectorySource,
                 runtime = snapshot.RuntimeDescription,
                 logPath = snapshot.LogPath,
                 logProblem = snapshot.LogProblem,
@@ -156,6 +159,7 @@ internal static class SetupPayload
     /// <param name="forced">Whether the caller asked to override the gateway's own guards.</param>
     /// <param name="snapshot">The reading as it stood when the request was answered.</param>
     /// <param name="options">Gateway options.</param>
+    /// <param name="storage">Where the database and data directory were resolved from.</param>
     /// <param name="recordPath">Where the setup state file lives, or null.</param>
     /// <param name="nowUtc">The current time.</param>
     /// <returns>An object ready for <c>Results.Json</c>.</returns>
@@ -164,6 +168,7 @@ internal static class SetupPayload
         bool forced,
         SetupSnapshot snapshot,
         ChaosHostOptions options,
+        PlatformStorage storage,
         string? recordPath,
         DateTimeOffset nowUtc)
     {
@@ -175,7 +180,7 @@ internal static class SetupPayload
             reason = acceptance.Reason,
             detail = acceptance.Detail,
             forced,
-            setup = Create(snapshot, options, recordPath, nowUtc),
+            setup = Create(snapshot, options, storage, recordPath, nowUtc),
         };
     }
 

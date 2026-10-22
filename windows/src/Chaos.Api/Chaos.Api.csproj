@@ -35,7 +35,8 @@
       a second description of the same tables AND `dotnet ef migrations`, which
       is a DDL writer pointed at a database another system already owns. There
       is no configuration that removes that risk once the tool is in the repo.
-      See docs/dotnet-migration.md, "Data access".
+      See Data/IChaosConnectionFactory.cs, and docs/visual-studio.md, "What is
+      not ported yet".
 
       PostgreSQL is reached through the same System.Data.Common abstraction:
       the host registers an Npgsql connection factory and no query changes.

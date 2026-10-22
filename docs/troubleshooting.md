@@ -68,7 +68,8 @@ and the shell log location. It also says, deliberately:
    administrator**.
 5. If the address is wrong — you moved the platform to another node, or changed
    its port — open **Settings → Gateway** and correct it.
-6. Press **Open logs folder** and read the newest shell log.
+6. Press **Open logs folder** and read the end of `chaos-host.log` — the
+   gateway, the supervisor and the backend's own output are all in it.
 
 ### If it says "WebView2 runtime is not installed"
 
@@ -262,9 +263,9 @@ survives a sign-out.
 - If it did not find the executable, set its location in **Settings →
   `Chaos.Host.exe` location**, or install the product properly.
 - If the service *is* installed under a different name, correct **Settings →
-  Windows service name**. This is worth checking first: the shell looks for
-  `ChaosPlatform` by default, while the gateway currently registers itself under
-  `ChaosHost`. A running service under the other name reads as *not installed*.
+  Windows service name**. The shell and the installer both use `ChaosHost`, so
+  this only applies to a service someone registered by hand under another name.
+  A running service under a different name reads as *not installed*.
 
 ### 5.4 The launcher says it cannot start it at all
 
@@ -283,20 +284,49 @@ nothing to show; `/health` answers 503 with `backend: "down"`.
    so, and the backend check distinguishes *starting* from *down*.
 2. Read the backend detail on the check row. It carries the gateway's own last
    error.
-3. **On a development build this is expected.** The gateway's shipped entry
-   point does not register a backend supervisor, so nothing starts the Python
-   backend for it. See
-   [Visual Studio § What happens when you press F5](./visual-studio.md#what-happens-when-you-press-f5).
+3. Read `supervisor` on `http://<node>:8080/host/info`. The gateway starts the
+   backend itself; `state` says where it got to, `lastError` says why the last
+   attempt ended, and `standardErrorTail` is the backend's own last words —
+   usually a Python traceback naming the cause. `Restarting` with a
+   `nextRestartUtc` means it is being retried; `Faulted` means it gave up (see
+   5.6). `registered: false` means supervision was switched off
+   (`CHAOS_SuperviseBackend=false`) and something else is expected to start
+   the backend — see
+   [Command line § Running the backend for development](./advanced-command-line.md#8-running-the-backend-for-development).
 
 ### 5.6 It starts, then stops, then starts again
 
-Restart behaviour is deliberate: a homestead does not have someone watching the
-console, so the supervisor keeps restarting with a backoff rather than giving up
-after a counter. The alarm for *"the backend is crash-looping"* is the operator's
-signal, not a give-up threshold.
+Two layers restart things, and it helps to know which one you are watching.
 
-Read the platform log via **Open logs** — the repeated failure is at the top of
-each restart.
+**The gateway restarts the backend.** When the Python backend dies or stops
+answering `/health`, the gateway's supervisor restarts it with a growing delay —
+2 s, doubling, up to 2 min — and `/host/info` shows `supervisionState:
+"Restarting"` with the reason and the next attempt time. A backend that then
+stays healthy for two minutes has its history forgiven.
+
+**After five failures inside ten minutes it gives up**, and it does not sit
+there looking *Starting* forever: the supervisor reports `Faulted` with the
+reason, writes a critical entry (Event Log IDs 1030 and 1031 under the source
+`Project CHAOS` when that source is registered, and always the gateway log
+file), and **stops the whole service with exit code 70**. That is the
+"crash-loop" signal: the `ChaosHost` service shows as stopped in
+`services.msc`, and the last gateway log ends with *Backend supervision has
+given up*.
+
+**Windows restarts the service** — after 5 s, 15 s, then every minute — but
+only if its recovery policy counts that stop. A crash always counts. A stop
+with an error code, which is what the supervisor does, counts only when the
+service's failure flag is set: `sc failureflag ChaosHost 1`, once, elevated.
+`Chaos.Host.exe --install-service` sets it; the MSI's own registration does
+not, so on an MSI install run that command once if you want the machine to
+keep trying unattended. Either way, something is wrong in the backend; read the
+platform log via **Open logs** — the repeated failure is at the top of each
+restart — and fix that before relying on the retries.
+
+The counts and delays are the `Backend` keys in `chaos.host.json`
+(`MaxStartFailures`, `FailureWindow`, `InitialRestartDelay`, `MaxRestartDelay`,
+`HealthyRunDuration`); `Backend.StopHostOnCircuitBreakerTrip: false` keeps the
+gateway up, answering 503, with no backend behind it.
 
 ---
 
@@ -333,6 +363,21 @@ not that the console broke — see
 **Check clocks before anything else** if a time-filtered view is empty while
 counts are rising. Clock skew makes alarm correlation wrong, command expiries
 wrong, and time-windowed queries silently return nothing.
+
+### 6.4 Every API call answers `502 backend_incompatible`
+
+The gateway and the backend were built for different platform versions. The
+gateway is contracted against one `major.minor` (`platformVersionContract` on
+`/host/info`); `/health` reports the version the backend actually answers with
+as `reportedVersion` and sets `versionCompatible: false`, and the status reads
+*degraded*.
+
+That report is always made. The **refusal** happens only when
+`RefuseIncompatibleBackend` is `true` in `chaos.host.json` — it is `false` as
+shipped — and then every proxied request answers `502` with a JSON body naming
+both versions until the backend reports a compatible one. Fix it by installing
+a gateway and backend from the same release; to keep proxying and live with the
+report, set the key back to `false` and restart the service.
 
 ---
 
@@ -375,7 +420,7 @@ nothing.
 
 | Want | Where |
 |---|---|
-| The shell and platform logs | Launcher → **Open logs**, or the diagnostic panel's **Open logs folder** |
+| The platform logs | Launcher → **Open logs**, or the diagnostic panel's **Open logs folder**: `chaos-host.log` (gateway, supervisor and backend output; rotated at 8 MiB, ten kept) and `chaos-setup.log` (the first-run setup transcript) |
 | What the gateway thinks it is | `http://<node>:8080/host/info` — version, listen and backend addresses, web-root resolution, supervisor state, route counts |
 | Who serves which route | `http://<node>:8080/host/routes` |
 | The full setup report | `http://<node>:8080/host/setup` — always 200; a report that a machine needs setting up is a successful report |

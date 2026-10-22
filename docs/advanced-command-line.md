@@ -116,7 +116,7 @@ Project CHAOS 0.4.0
 
 Registry and history
   assets                 90
-  points                 701
+  points                 702
   point_bindings         245
   power_load_profiles    12
   alarm_definitions      40
@@ -220,23 +220,24 @@ step 12 captures a subsystem's baseline.
 
 ## 8. Running the backend for development
 
-**This is the one development task with no GUI path today.**
-
-The gateway is built to supervise the Python backend as a child process, and
-ships the supervisor — but its shipped entry point registers the no-op
-supervisor, so nothing launches the backend. See
+**You normally do not.** The gateway starts the Python backend itself —
+`Chaos:SuperviseBackend` is on by default — resolving the embedded runtime or,
+in a checkout, the Python on your `PATH` with `src` on `PYTHONPATH`. See
 [Visual Studio § What happens when you press F5](./visual-studio.md#what-happens-when-you-press-f5).
 
-Until that is wired up, start the backend yourself on the port the gateway
-expects:
+Run it yourself when you want it under its own debugger. Tell the gateway to
+leave it alone and start it on the port the gateway expects:
 
 ```sh
+CHAOS_SuperviseBackend=false    # in the launch profile, or the shell's environment
 chaos serve --host 127.0.0.1 --port 8081
 ```
 
 Then press F5 on `Chaos.Host` (or `Chaos.Shell`) and everything works: the
 gateway proxies to it, `/health` returns 200 with `backend: "up"`, and the
-launcher reaches *Project CHAOS is ready*.
+launcher reaches *Project CHAOS is ready*. `/host/info` reports
+`supervisor.registered: false` in that mode, which is the gateway saying it is
+not managing the process — not that the process is absent.
 
 `serve --reload` restarts on source changes, which is useful while working on
 the Python half and pointless otherwise.
@@ -275,7 +276,41 @@ done in Visual Studio** — see [Building in Visual Studio 2026](./visual-studio
 
 ---
 
-## 11. Related reading
+## 11. The gateway's own switches
+
+`Chaos.Host.exe` is the Windows service and the gateway in one executable. It
+takes four switches of its own, parsed before anything else sees the command
+line; every other argument goes to the host's configuration (for example
+`--Chaos:ListenUrl=http://0.0.0.0:8080`).
+
+| Switch | Does | Exit code |
+|---|---|---|
+| `--install-service` | Registers the `ChaosHost` Windows service for *this* executable under the virtual account `NT SERVICE\ChaosHost`, with automatic start, a dependency on `Tcpip`, the recovery policy (restart after 5 s, 15 s, then every 60 s, failure count reset daily), **recovery on a stop with an error as well as on a crash** (`sc failureflag … 1`), and the `Project CHAOS` Event Log source. Needs an elevated prompt | `0` done · `1` a command failed (usually: not elevated) · `3` not Windows |
+| `--uninstall-service` | Stops and removes the service and the Event Log source. "It was not there" is not an error | as above |
+| `--console` | Runs the gateway in the foreground with a console and without the Windows service lifetime — for commissioning and for watching the backend's output directly | the gateway's |
+| `--service` | What the registered service passes. Runs as the service; consumed so it never reaches configuration | the gateway's |
+| `--help` | Prints the switches and exits | `0` · `2` when switches contradict |
+
+Each registration step is printed as the `sc.exe` command it runs, so the
+output doubles as a script. Off Windows, `--install-service` prints the plan it
+would have run and exits `3` rather than pretending.
+
+**You normally never type these.** The MSI registers the service itself
+(`ChaosServiceRegistration=msi`, the default) and owns its rollback; the
+switches are the hand path, and the installer's alternative
+`ChaosServiceRegistration=host` build calls exactly the same two commands.
+
+One difference between the two paths is worth knowing: the MSI's recovery
+policy restarts the service after a crash, but does not set the failure flag, so
+a service that *stops itself with an error* — which is what the backend
+supervisor does when its circuit breaker trips, see
+[Troubleshooting § It starts, then stops](./troubleshooting.md#56-it-starts-then-stops-then-starts-again)
+— is restarted by SCM only after `sc failureflag ChaosHost 1` has been run once,
+elevated. `--install-service` does that for you.
+
+---
+
+## 12. Related reading
 
 | Document | Why |
 |---|---|

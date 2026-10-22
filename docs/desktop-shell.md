@@ -218,6 +218,7 @@ Open annunciator
 Open in browser
 ───────────────
 Settings…
+Help (F1)
 ───────────────
 Exit shell …            (wording depends on the run mode — see section 1)
 ```
@@ -278,15 +279,15 @@ a message naming the field you got wrong instead of *"that URL is invalid"*.
 | **Start the platform when this shell opens** | On | If nothing is answering, the shell starts the platform itself instead of waiting for you. This is what makes launching the executable the whole procedure |
 | **Open this shell when I sign in to Windows** | Off | Opens the window, not the platform. A platform installed as a Windows service runs whether or not anyone signs in |
 | **Prefer the Windows service when it is installed** | On | A service keeps the homestead controlled when nobody is logged in |
-| **Windows service name** | `ChaosPlatform` | What the shell looks for and controls. **The gateway currently registers itself under `ChaosHost`**, so if the service check reads *not installed* on a machine where the service is plainly running, this is the field to correct |
+| **Windows service name** | `ChaosHost` | What the shell looks for and controls. The installer registers the service under the same name, so change this only for a service someone registered by hand under another name — if the service check reads *not installed* on a machine where the service is plainly running, this is the field to correct |
 | **`Chaos.Host.exe` location** | empty | Leave empty to let the shell find it. When found, the page says where |
 
 ### Where the data lives
 
 | Field | Notes |
 |---|---|
-| **Database location** | A file path or a full connection URL. Empty leaves the platform's own default alone |
-| **Data directory** | The design package the registry is built from. Empty leaves the platform's default alone |
+| **Database location** | A file path or a full connection URL. Empty leaves the gateway's own answer alone: the installed database under `%ProgramData%\Project CHAOS\db` on an installed node, or the platform's default on a checkout |
+| **Data directory** | The design package the registry is built from. Empty leaves the gateway's own answer alone |
 
 **These only apply to a platform this shell starts itself.** A Windows service
 reads its own configuration, installed once by the installer, and this shell does
@@ -327,7 +328,7 @@ is ignored is worse than one that was refused.
 |---|---|
 | Settings | `%APPDATA%\ProjectCHAOS\Shell\settings.json` |
 | Window layout | `%APPDATA%\ProjectCHAOS\Shell\layout.json` |
-| Logs (shell and platform) | `%ProgramData%\Project CHAOS\logs` |
+| Platform logs | `%ProgramData%\Project CHAOS\logs` — `chaos-host.log` (gateway, supervisor and backend output, rotated) and `chaos-setup.log`. The shell's own platform log is the one on the launcher screen, not a file |
 
 **Open logs** on the launcher and **Open logs folder** on the diagnostic panel
 open that directory in Explorer. You are never asked to type a path.
@@ -351,7 +352,12 @@ Options 2 and 3 exist for shortcuts and scripted deployments. Option 1 is the
 one to use.
 
 A second launch of the shell is redirected to the running instance rather than
-opening a second window.
+opening a second window, and the running instance acts on the switches it was
+launched with: the Start-menu **Annunciator** shortcut (`--annunciator`) opens
+or brings forward the annunciator window whether or not the shell was already
+running, `--acknowledge` does the same, and anything else focuses the console.
+A `--host` on a second launch is reported in the launcher's notices and
+otherwise ignored — the running shell keeps the gateway it started with.
 
 ---
 

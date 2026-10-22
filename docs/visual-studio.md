@@ -41,6 +41,7 @@ CHAOS
 ├── src
 │   ├── Chaos.Api                 subsystems ported from Python to .NET
 │   ├── Chaos.Host                the gateway — LAN listener, proxy, first-run setup
+│   ├── Chaos.Host.Abstractions   the supervisor contract both of its neighbours compile against
 │   ├── Chaos.Host.Supervisor     supervises the Python backend as a child process
 │   ├── Chaos.Runtime             builds the things that are not .NET — see section 6
 │   ├── Chaos.Shell               the WinUI 3 desktop shell (Windows only)
@@ -63,8 +64,9 @@ at the repository root and is a separate build. Section 7 covers it.
 | Project | Role |
 |---|---|
 | `Chaos.Host` | The front door. The only LAN listener, a reverse proxy to the Python backend on loopback, the host of the operator console, and where ported subsystems land |
+| `Chaos.Host.Abstractions` | `IBackendSupervisor` and its status types — the contract between the gateway and the supervisor, in a project that references nothing, so there is exactly one definition of it |
 | `Chaos.Host.Supervisor` | Resolves which Python runs the platform and supervises it as a child process, with a restart policy |
-| `Chaos.Api` | Where `/api/v1` routes ported to .NET live. Built and tested; **nothing in it is live yet** — see section 8 |
+| `Chaos.Api` | Where `/api/v1` routes ported to .NET live. Registered and mapped by the gateway; **no route is owned by it yet** — the manifest still sends its one endpoint to Python, and flipping that is a configuration row. See section 8 |
 | `Chaos.Shell` | The WinUI 3 windows: launcher, console, settings, annunciator, tray icon |
 | `Chaos.Shell.Core` | Every decision the shell makes — launcher state machine, settings validation, tray state, diagnostics — with no Windows dependency, so it can be tested anywhere |
 | `Chaos.Runtime` | Compiles no code. It builds the two parts of the product that are not .NET: the embedded Python interpreter and this documentation site. Section 6 |
@@ -193,6 +195,7 @@ run with none, come from `windows/src/Chaos.Host/appsettings.json`:
 | `Chaos:Docs:Enabled` | `true` | Serve the offline documentation site |
 | `Chaos:Docs:ListenUrl` | `http://0.0.0.0:8090` | Where the documentation site listens |
 | `Chaos:WebRootPath` | empty | Let the resolver find the console assets |
+| `Chaos:ConfigDirectory` | empty | Discover the installed `config` directory (registry, then `%ProgramData%\Project CHAOS\config`). Set it to run a checkout against a directory laid out like an install — `chaos.host.json` and `homestead.env` are then read from it |
 
 Anything can be overridden per-machine with a `CHAOS_`-prefixed environment
 variable in the project's debug properties — `CHAOS_BackendUrl`,
@@ -235,9 +238,20 @@ if one is present, otherwise the Python on your `PATH` with the repository's
 reports what it found:
 
 ```json
-"supervisor": { "registered": true, "state": "Running",
-  "runtime": "development", "restarts": 0 }
+"supervisor": { "registered": true,
+  "implementation": "Chaos.Host.Supervisor.BackendSupervisor",
+  "state": "Running", "supervisionState": "Running",
+  "processId": 12345, "restartCount": 0,
+  "runtime": { "layout": "Development", "description": "DEVELOPMENT layout: interpreter '…\\python.exe', PYTHONPATH '…\\src'" },
+  "healthEndpoint": "http://127.0.0.1:8081/health",
+  "failureReason": null, "nextRestartUtc": null, "standardErrorTail": [] }
 ```
+
+`state` is the gateway's contract (`Unknown`, `Starting`, `Running`,
+`Stopping`, `Stopped`, `Faulted`); `supervisionState` is the supervisor's own
+finer view, which also distinguishes `Restarting` and `Failed`. The
+`standardErrorTail` is the last lines the backend wrote to stderr — the Python
+traceback, when there is one.
 
 If you would rather run the backend yourself, under its own debugger, set
 `CHAOS_SuperviseBackend=false` in the launch profile. The gateway then keeps
@@ -261,8 +275,8 @@ lives in `Chaos.Shell.Core`.
 
 | Test project | Covers |
 |---|---|
-| `Chaos.Host.Tests` | Host endpoints, route-ownership table and validator, setup assessor, setup endpoints, startup validation |
-| `Chaos.Host.Supervisor.Tests` | Python runtime resolution, restart policy |
+| `Chaos.Host.Tests` | Host endpoints, route-ownership table and validator, setup assessor, setup endpoints, startup validation, the installed layout and configuration files, supervisor wiring (with a faked interpreter, process and probe), backend version refusal, the ported endpoints' wiring, file logging |
+| `Chaos.Host.Supervisor.Tests` | Python runtime resolution, restart policy, the supervision loop and its circuit breaker, the contract mapping, `homestead.env`, the service-control switches and registration plan, the rolling file logger |
 | `Chaos.Api.Tests` | Annunciator panel builder, legends, serviceability, read store, timestamps, query parsing |
 | `Chaos.Shell.Core.Tests` | Launcher state machine, platform lifecycle, probe client, settings, tray state, window placement, setup contract |
 | `Chaos.Api.ConformanceHost` | Not a test project — a minimal host that composes `Chaos.Api` alone, so the .NET port can be exercised against a real HTTP pipeline |
@@ -406,11 +420,17 @@ in `/host/setup` and `/host/info`:
 
 ## 8. What is not ported yet
 
-Every `/api/v1` prefix is served by the Python backend today. `Chaos.Api` exists,
-is built, and is covered by tests, but nothing in it is wired into the gateway:
-`Chaos.Host` does not reference it, and no manifest row names it.
+Every `/api/v1` prefix is served by the Python backend today. `Chaos.Api` is
+built, tested, referenced by `Chaos.Host`, and its endpoints are registered and
+mapped by the gateway on every start — but the shipped manifest still marks
+`/api/v1/annunciator`, the one route it serves, as Python-owned, so the proxy
+takes the request before the native endpoint sees it. The gateway derives the
+SQLite file the ported endpoints read from the platform's database URL
+(`/host/info` shows it under `storage.chaosApiSqlitePath`), and refuses to start
+if a row is flipped to .NET while the platform uses a database `Chaos.Api`
+cannot read, such as PostgreSQL.
 
-Porting a subsystem is intended to be one row in the route-ownership manifest —
+Porting a subsystem is therefore one row in the route-ownership manifest —
 compiled into `RouteOwnershipDefaults`, or merged over it from the node's own
 configuration:
 

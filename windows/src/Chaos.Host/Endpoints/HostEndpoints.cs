@@ -5,6 +5,7 @@ using Chaos.Host.Health;
 using Chaos.Host.Http;
 using Chaos.Host.Routing;
 using Chaos.Host.Setup;
+using Chaos.Host.Supervisor;
 using Chaos.Host.Web;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -66,10 +67,12 @@ public static class HostEndpoints
         var services = context.RequestServices;
         var coordinator = services.GetRequiredService<PlatformSetupCoordinator>();
         var options = services.GetRequiredService<IOptions<ChaosHostOptions>>().Value;
+        var storage = services.GetRequiredService<PlatformStorage>();
 
         return Results.Json(SetupPayload.Create(
             coordinator.Snapshot,
             options,
+            storage,
             coordinator.RecordPath,
             DateTimeOffset.UtcNow));
     }
@@ -103,6 +106,7 @@ public static class HostEndpoints
         var services = context.RequestServices;
         var coordinator = services.GetRequiredService<PlatformSetupCoordinator>();
         var options = services.GetRequiredService<IOptions<ChaosHostOptions>>().Value;
+        var storage = services.GetRequiredService<PlatformStorage>();
 
         var force = QueryFlags.IsTrue(context.Request.Query["force"]);
         var acceptance = coordinator.RequestRun("api", force);
@@ -113,6 +117,7 @@ public static class HostEndpoints
                 force,
                 coordinator.Snapshot,
                 options,
+                storage,
                 coordinator.RecordPath,
                 DateTimeOffset.UtcNow),
             statusCode: acceptance.Accepted
@@ -243,6 +248,9 @@ public static class HostEndpoints
         var webRoot = services.GetRequiredService<WebRootResolution>();
         var documentation = services.GetRequiredService<DocumentationSiteState>();
         var health = services.GetRequiredService<BackendHealthState>();
+        var installed = services.GetRequiredService<InstalledConfigurationState>();
+        var storage = services.GetRequiredService<PlatformStorage>();
+        var apiDatabase = services.GetRequiredService<ChaosApiDatabaseResolution>();
         var report = BackendHealthReport.Create(health, options, DateTimeOffset.UtcNow);
         var snapshot = report.Snapshot;
 
@@ -281,6 +289,39 @@ public static class HostEndpoints
                 path = webRoot.Path,
                 source = webRoot.Source,
                 searched = webRoot.SearchedPaths,
+            },
+
+            // What was read from the installed layout, and where the gateway
+            // looked. Names only from homestead.env: that file holds secrets.
+            installation = new
+            {
+                installed = installed.Layout.Installed,
+                source = installed.Layout.Source,
+                configDirectory = installed.Layout.ConfigDirectory,
+                hostConfigurationFile = installed.Layout.HostConfigurationFile,
+                hostConfigurationFileLoaded = installed.HostConfigurationFileLoaded,
+                backendEnvironmentFile = installed.Layout.BackendEnvironmentFile,
+                backendEnvironmentVariables = installed.BackendEnvironmentVariables,
+                backendEnvironmentProblems = installed.BackendEnvironmentProblems,
+                logDirectory = options.LogDirectory,
+                hostLogFile = options.LogDirectory is null
+                    ? null
+                    : Path.Combine(options.LogDirectory, ChaosHostExtensions.HostLogFileName),
+                installDirectory = installed.Layout.InstallDirectory,
+                searched = installed.Layout.Searched,
+            },
+            storage = new
+            {
+                databaseUrl = PlatformStorage.Redact(storage.DatabaseUrl),
+                databaseUrlSource = storage.DatabaseUrlSource,
+                dataDirectory = storage.DataDirectory,
+                dataDirectorySource = storage.DataDirectorySource,
+
+                // What the natively served endpoints would read, whether or
+                // not any route is owned by them yet.
+                chaosApiSqlitePath = apiDatabase.SqlitePath,
+                chaosApiSqlitePathSource = apiDatabase.Source,
+                chaosApiProblem = apiDatabase.Problem,
             },
 
             // Where the manuals are. The shell and the console link to this, so
@@ -364,6 +405,13 @@ public static class HostEndpoints
         var status = supervisor.Status;
         var isNull = supervisor is NullBackendSupervisor;
 
+        // The contract fields come first and are always present. The richer
+        // diagnostics - which Python was chosen, why the last run ended, the
+        // Python traceback from stderr - are there whenever the real supervisor
+        // is, because an operator reading this at 2am should not need a second
+        // endpoint to find out why the backend is not up.
+        var diagnostics = (supervisor as IBackendSupervisorDiagnostics)?.Snapshot;
+
         return new
         {
             registered = !isNull,
@@ -375,6 +423,18 @@ public static class HostEndpoints
             startedUtc = status.StartedUtc,
             lastExitCode = status.LastExitCode,
             restartCount = status.RestartCount,
+            supervisionState = diagnostics?.State.ToString(),
+            runtime = diagnostics is null ? null : new
+            {
+                layout = diagnostics.RuntimeLayout.ToString(),
+                description = diagnostics.RuntimeDescription,
+            },
+            healthEndpoint = diagnostics?.HealthEndpoint?.ToString(),
+            lastHealthyUtc = diagnostics?.LastHealthyAt,
+            failureReason = diagnostics?.FailureReason,
+            nextRestartUtc = diagnostics?.NextRestartAt,
+            standardErrorTail = diagnostics?.StandardErrorTail,
+            eventSink = diagnostics?.EventSinkDescription,
         };
     }
 }
