@@ -11,12 +11,13 @@ deploy/secrets/*
 *.egg-info/
 node_modules/
 
-# setuptools output. `pip wheel` and the Windows runtime builder
-# (windows/build/python-runtime.ps1) build the wheel inside the checkout and
-# leave build/ behind; it is a copy of src/ that goes stale the moment src/
-# changes, and it was once committed by mistake.
-build/
-dist/
+# setuptools output at the repository root. `pip wheel` and the Windows
+# runtime builder (windows/build/python-runtime.ps1) build the wheel inside
+# the checkout and leave build/ behind; it is a copy of src/ that goes stale
+# the moment src/ changes, and it was once committed by mistake. Anchored,
+# because windows/build/ is source.
+/build/
+/dist/
 
 # .NET / Windows build output
 windows/**/bin/
