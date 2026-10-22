@@ -341,10 +341,12 @@ Windows:
 | `PyYAML` | `jsonschema-specifications`, `paho-mqtt`, `pydantic` |
 | `rpds-py` (via `jsonschema`) | `pydantic-settings`, `python-dotenv`, `referencing` |
 | `SQLAlchemy` | `starlette`, `typing-extensions`, `typing-inspection` |
-| `watchfiles`, `websockets` | `uvicorn`, and the `chaos` wheel itself |
+| `watchfiles`, `websockets` | `uvicorn`, `alembic`, `Mako`, `MarkupSafe`, and the `chaos` wheel itself |
 
 The `postgres` extra (`-IncludePostgres`) is clean too: `psycopg`,
-`psycopg-binary`, `alembic`, `Mako`, `MarkupSafe`, `tzdata`.
+`psycopg-binary`, `tzdata`. (`alembic` and its `Mako`/`MarkupSafe` templating
+moved into the base dependencies when `chaos migrate` arrived, so every runtime
+ships them.)
 
 One dependency deserves a note. `uvicorn[standard]` pulls `uvloop`, which has
 **no Windows wheel and never will** — it is a libuv binding for POSIX. That is

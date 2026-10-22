@@ -416,7 +416,10 @@ run's result under `maintenance` — the archive path and its SHA-256, what was
 pruned, the retention counts, and any error in the CLI's own words — and the
 command transcript is appended to `logs\chaos-setup.log`. A failed backup is an
 error in `chaos-host.log` and a `lastRun` that says so; the next run is still
-scheduled.
+scheduled. The gateway also hands the supervised backend the same folder as
+`CHAOS_BACKUP_DIRECTORY` (unless `homestead.env` sets it), so the backup-age
+monitor behind the `backup_overdue` alarm watches the archives this schedule
+writes and not an empty folder under Program Files.
 
 On a development checkout there is no installed layout and so no backup
 directory; the schedule is off and `/host/info` says why. Set

@@ -137,7 +137,7 @@ A task-oriented index. Every entry lands on the section that answers it.
 | Document | Covers |
 |---|---|
 | [API reference](./api.md) | Every endpoint, roles, error semantics, the gateway's own routes |
-| EMS configuration — `docs/ems-configuration.md` | The optional override file named by `CHAOS_EMS_CONFIG_FILE`, what it may change, its provenance and revision record |
+| [EMS configuration](./ems-configuration.md) | The optional override file named by `CHAOS_EMS_CONFIG_FILE`, what it may change, its provenance and revision record |
 | [Design decision records](./design-decisions/README.md) | The open decisions, made decidable. All still *proposed* |
 
 ### Advanced — you do not need these

@@ -85,7 +85,7 @@
     `pip freeze` from a known-good tree; see docs/advanced-windows-packaging.md.
 
 .PARAMETER IncludePostgres
-    Also install the "postgres" extra (psycopg + alembic).  Off by default: the
+    Also install the "postgres" extra (psycopg; alembic is a base dependency).  Off by default: the
     Windows product runs on SQLite under %ProgramData%.
 
 .PARAMETER NoPrune

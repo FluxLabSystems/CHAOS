@@ -267,6 +267,19 @@ public static class ChaosHostExtensions
                         supervisor.Environment.TryAdd(key, value);
                     }
 
+                    // The nightly backup, the CLI shim and the backend's
+                    // backup-age monitor must look at one folder, or
+                    // backup_overdue reports on archives nobody writes. The
+                    // folder the gateway resolved for its scheduled backup
+                    // goes to the child whether or not the schedule is on
+                    // (a backup taken by hand lands there too), unless
+                    // homestead.env names one itself (TryAdd: the operator's
+                    // line wins, as with every other variable in that file).
+                    if (!string.IsNullOrWhiteSpace(options.Backup.Directory))
+                    {
+                        supervisor.Environment.TryAdd(BackendBackupDirectoryVariable, options.Backup.Directory);
+                    }
+
                     // The gateway drives the lifecycle through
                     // BackendSupervisorHost, bounded by Chaos:BackendStartTimeout
                     // and placed after route validation and first-run setup in
@@ -304,6 +317,12 @@ public static class ChaosHostExtensions
 
         return builder;
     }
+
+    /// <summary>
+    /// The backend setting that names the folder <c>chaos backup</c> writes to
+    /// and the backup-age monitor reads from.
+    /// </summary>
+    internal const string BackendBackupDirectoryVariable = "CHAOS_BACKUP_DIRECTORY";
 
     /// <summary>
     /// The scheduled backup writes to the installed layout's <c>backups</c>

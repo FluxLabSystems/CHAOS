@@ -253,6 +253,12 @@ A backup is taken three ways, and all three write the same archive:
 - **From the command line** — `chaos backup`, in
   [Command line § Backup](./advanced-command-line.md#5-backup).
 
+All three write into this node's backup directory: `CHAOS_BACKUP_DIRECTORY`
+when it is set, else `var/backups` under the workspace. On Windows the gateway
+hands the backend its own scheduled-backup folder, so the schedule, the
+console, the CLI and the backup-age monitor behind `backup_overdue` agree on
+one place without anyone editing `homestead.env`.
+
 Restoring stays a command-line procedure (4.3): it replaces the database under
 a running platform and is done against a stopped node.
 
@@ -428,6 +434,23 @@ holds, never point values and never credentials:
 A subsystem that is not running on this node (the EMS on the secondary, ingest
 with MQTT disabled) contributes **no series** and a comment line saying so, so
 "ingest received nothing" and "there is no ingest here" stay distinguishable.
+
+Two of the shipped alarms watch the platform itself, and both are live:
+
+- **`backup_overdue`** is fed by the `backup_age_h` point the primary publishes
+  every 30 s from the newest archive in its backup directory
+  (`CHAOS_BACKUP_DIRECTORY`, the folder `chaos backup` and the console's Backup
+  action write to; on the Windows product the gateway hands the backend its
+  own scheduled-backup folder). A node that has never been backed up publishes
+  a lower bound with `uncertain` quality, so the alarm still raises.
+- **`service_unavailable`** fires for the API's own asset: with MQTT on, the
+  backend registers a retained `offline` last will on that asset's availability
+  topic and publishes `online` on connect, so a backend that dies without
+  saying goodbye shows up on the panel.
+
+On the Windows product `/metrics` is served on loopback only and is not routed
+by the gateway (see [API § 12](./api.md#12-surface-size)); exposing it is the
+gateway owner's decision, not a default.
 
 ---
 
