@@ -3,6 +3,7 @@ using Chaos.Host.Configuration;
 using Chaos.Host.Docs;
 using Chaos.Host.Health;
 using Chaos.Host.Http;
+using Chaos.Host.Maintenance;
 using Chaos.Host.Routing;
 using Chaos.Host.Setup;
 using Chaos.Host.Supervisor;
@@ -251,6 +252,8 @@ public static class HostEndpoints
         var installed = services.GetRequiredService<InstalledConfigurationState>();
         var storage = services.GetRequiredService<PlatformStorage>();
         var apiDatabase = services.GetRequiredService<ChaosApiDatabaseResolution>();
+        var maintenance = services.GetRequiredService<MaintenanceState>();
+        var zone = services.GetRequiredService<TimeZoneInfo>();
         var report = BackendHealthReport.Create(health, options, DateTimeOffset.UtcNow);
         var snapshot = report.Snapshot;
 
@@ -336,6 +339,11 @@ public static class HostEndpoints
                     : "Not running on Windows; the Windows Service lifetime is not registered.",
             },
             supervisor = DescribeSupervisor(supervisor),
+
+            // The nightly backup and retention pass: when, where, and what the
+            // last run did. An operator who wonders whether this node has
+            // ever been backed up reads it here.
+            maintenance = MaintenancePayload.Create(maintenance.Snapshot, options, zone),
             routes = new
             {
                 total = table.Entries.Count,

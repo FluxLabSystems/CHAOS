@@ -12,7 +12,7 @@ namespace Chaos.Host.Configuration;
 /// <remarks>
 /// <para>
 /// The installer writes <c>%ProgramData%\Project CHAOS\config\chaos.host.json</c>
-/// and <c>homestead.env</c>, creates <c>db\</c> and <c>logs\</c> beside them,
+/// and <c>homestead.env</c>, creates <c>db\</c>, <c>logs\</c> and <c>backups\</c> beside them,
 /// and records every path under <c>HKLM\SOFTWARE\Project CHAOS</c>. This type
 /// is the gateway's reading of that layout: which files to load, where the
 /// database lives by default, and where logs go. A development checkout
@@ -63,7 +63,7 @@ public sealed record InstalledLayout
     /// <summary>The <c>config</c> directory, or null when not installed.</summary>
     public string? ConfigDirectory { get; init; }
 
-    /// <summary>The ProgramData root (<c>config</c>, <c>db</c>, <c>logs</c> live under it), or null.</summary>
+    /// <summary>The ProgramData root (<c>config</c>, <c>db</c>, <c>logs</c>, <c>backups</c> live under it), or null.</summary>
     public string? OperatorDataDirectory { get; init; }
 
     /// <summary>Where log files go, or null when there is nowhere installed to put them.</summary>
@@ -101,6 +101,16 @@ public sealed record InstalledLayout
     /// </summary>
     public string? DefaultDataDirectory =>
         InstallDirectory is null ? null : Path.Combine(InstallDirectory, "app", "data");
+
+    /// <summary>
+    /// Where the scheduled backup writes when nothing names a directory:
+    /// <c>&lt;ProgramData&gt;\Project CHAOS\backups</c>, the folder the installer
+    /// creates (<c>ProgramData.wxs</c>) and never removes. Null when not installed,
+    /// in which case there is no scheduled backup unless <c>Chaos:Backup:Directory</c>
+    /// names one.
+    /// </summary>
+    public string? DefaultBackupDirectory =>
+        OperatorDataDirectory is null ? null : Path.Combine(OperatorDataDirectory, "backups");
 }
 
 /// <summary>Reads the installer's registry key. Faked off Windows and in tests.</summary>

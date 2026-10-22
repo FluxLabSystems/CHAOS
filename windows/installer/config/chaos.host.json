@@ -55,6 +55,18 @@
     "_shutdown_comment": "How long in-flight requests get when the service stops.",
     "ShutdownTimeout": "00:00:30",
 
+    "_maintenance_comment": "The nightly backup. At Backup.TimeOfDay (local time) the service runs the platform's own 'chaos backup' into %ProgramData%\\Project CHAOS\\backups (the folder the installer created; set Backup.Directory to use another) and prunes it to the newest Backup.Keep archives, then runs 'chaos retention' as a DRY RUN and reports what the policy would delete. Retention is a deletion, so applying it is opt-in: Retention.Apply true commits it, and only after a backup that succeeded. The last run is on GET /host/info under 'maintenance'; the transcript is in logs\\chaos-setup.log. Keep one copy of the archives off the property (the manual's Operations page says why).",
+    "Backup": {
+      "Enabled": true,
+      "TimeOfDay": "02:00",
+      "Keep": 14,
+      "IncludeHistory": false
+    },
+    "Retention": {
+      "Enabled": true,
+      "Apply": false
+    },
+
     "Docs": {
       "_comment": "The offline manual, served on its own port by its own listener with no API and no proxy attached to it. It is separate so the manual stays readable when the control plane is not, which is exactly when somebody needs the troubleshooting page. The installer must open this port too, or it will only be reachable from this machine.",
       "Enabled": true,

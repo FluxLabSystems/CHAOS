@@ -536,6 +536,32 @@ immediate.
 
 ---
 
+## Nightly backup and retention
+
+The installer creates `%ProgramData%\Project CHAOS\backups` (`ProgramData.wxs`,
+permanent like everything else under that folder) and the gateway fills it.
+Once a day, at `Backup.TimeOfDay` local time (02:00 by default), the
+`ChaosHost` service runs the platform's own `chaos backup --output <that
+folder>` through the same runner first-run setup uses — same embedded
+interpreter, same database as the supervised backend — and prunes the folder
+to the newest `Backup.Keep` archives (14). It then runs `chaos retention
+--dry-run` and reports what the retention policy would delete; applying it is
+opt-in (`Retention.Apply`) and is never done after a backup that failed. The
+keys are in `chaos.host.json`, the last run is on `GET /host/info` under
+`maintenance`, and the transcript is in `logs\chaos-setup.log`.
+
+Pruning touches only files named `homestead-<role>-<UTC>.tar.gz`, which is
+how the CLI names them; anything else in the folder is left alone. The archive
+holds no credentials (the CLI redacts them), so the folder is safe to copy off
+the property, and it should be: the archive on the node is one copy of the
+three the operations manual asks for.
+
+This is ordinary .NET with no Windows-specific call in it; it is tested on
+Linux against a fake CLI and a virtual clock (`ScheduledMaintenanceTests`),
+and the only thing a Windows run adds is the real folder path.
+
+---
+
 ## Open items
 
 Known gaps in the Windows product, stated where the code that has them points.

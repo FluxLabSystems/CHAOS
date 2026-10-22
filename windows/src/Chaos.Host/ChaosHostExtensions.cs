@@ -6,6 +6,7 @@ using Chaos.Host.Configuration;
 using Chaos.Host.Docs;
 using Chaos.Host.Endpoints;
 using Chaos.Host.Health;
+using Chaos.Host.Maintenance;
 using Chaos.Host.Proxy;
 using Chaos.Host.Routing;
 using Chaos.Host.Setup;
@@ -106,6 +107,7 @@ public static class ChaosHostExtensions
         options.DataDirectory = storage.DataDirectory;
         options.ConfigDirectory ??= layout.ConfigDirectory;
         options.LogDirectory ??= layout.LogDirectory;
+        ApplyBackupDirectoryDefault(options, layout);
         builder.Services.AddSingleton(storage);
 
         // Log files, in the installed layout's logs folder (or wherever
@@ -135,6 +137,7 @@ public static class ChaosHostExtensions
                 bound.DataDirectory = storage.DataDirectory;
                 bound.ConfigDirectory ??= layout.ConfigDirectory;
                 bound.LogDirectory ??= layout.LogDirectory;
+                ApplyBackupDirectoryDefault(bound, layout);
             })
             .ValidateOnStart();
 
@@ -282,6 +285,12 @@ public static class ChaosHostExtensions
         builder.Services.AddHostedService<BackendHealthMonitor>();
         builder.Services.AddHostedService<DocumentationSiteHost>();
 
+        //  6. the scheduled backup and retention, last of all. It waits for
+        //     the configured time of day and runs the platform CLI through
+        //     the same runner as setup; nothing else depends on it, and it
+        //     neither blocks startup nor can take the host down.
+        builder.Services.AddScheduledMaintenance();
+
         if (windowsServiceLifetime)
         {
             WindowsServiceIntegration.AddWindowsServiceIfAvailable(builder);
@@ -294,6 +303,19 @@ public static class ChaosHostExtensions
         }
 
         return builder;
+    }
+
+    /// <summary>
+    /// The scheduled backup writes to the installed layout's <c>backups</c>
+    /// folder unless <c>Chaos:Backup:Directory</c> names somewhere. An empty
+    /// string counts as unset, as it does for every other path here.
+    /// </summary>
+    private static void ApplyBackupDirectoryDefault(ChaosHostOptions options, InstalledLayout layout)
+    {
+        if (string.IsNullOrWhiteSpace(options.Backup.Directory))
+        {
+            options.Backup.Directory = layout.DefaultBackupDirectory;
+        }
     }
 
     /// <summary>

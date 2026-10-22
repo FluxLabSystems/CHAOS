@@ -325,6 +325,34 @@ supervisor does when its circuit breaker trips, see
 — is restarted by SCM only after `sc failureflag ChaosHost 1` has been run once,
 elevated. `--install-service` does that for you.
 
+### What the gateway runs on a schedule
+
+An installed node is backed up without anyone typing [§ 5](#5-backup). Once a
+day the gateway runs the platform's own CLI, through the same runner first-run
+setup uses, so it is the same interpreter and the same database as the
+supervised backend:
+
+| When | Command | What it does |
+|---|---|---|
+| `Backup.TimeOfDay`, 02:00 local by default | `chaos backup --output <Backup.Directory>` | Writes `homestead-<role>-<UTC>.tar.gz` into `%ProgramData%\Project CHAOS\backups` (the folder the installer creates and never removes), then prunes that folder to the newest `Backup.Keep` archives — 14 by default. Only files named the way the CLI names them are counted or deleted; your own copies are left alone |
+| straight after, on the same schedule | `chaos retention --dry-run` | Computes what [§ 6](#6-retention) would delete, rolls back, and reports the counts. **Nothing is deleted by default.** `Retention.Apply: true` runs `chaos retention --apply` instead, and even then only after the backup of the same run succeeded |
+
+The keys live in `chaos.host.json` under `Backup` (`Enabled`, `TimeOfDay`,
+`Directory`, `Keep`, `IncludeHistory`, `Timeout`) and `Retention` (`Enabled`,
+`Apply`, `Timeout`), or as `CHAOS_Backup__TimeOfDay`-style environment
+variables. `GET /host/info` reports the schedule, the next run and the last
+run's result under `maintenance` — the archive path and its SHA-256, what was
+pruned, the retention counts, and any error in the CLI's own words — and the
+command transcript is appended to `logs\chaos-setup.log`. A failed backup is an
+error in `chaos-host.log` and a `lastRun` that says so; the next run is still
+scheduled.
+
+On a development checkout there is no installed layout and so no backup
+directory; the schedule is off and `/host/info` says why. Set
+`Chaos:Backup:Directory` to turn it on there. Either way, the archive on the
+node is one copy: [Operations § Backup and restore](./operations.md#4-backup-and-restore)
+says where the other two go.
+
 ---
 
 ## 12. Related reading

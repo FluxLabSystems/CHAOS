@@ -113,7 +113,7 @@ internal sealed partial class PlatformCommandRunner : IPlatformCommandRunner
         {
             var report = resolution.ToReport();
             _log.Write($"CANNOT START: {string.Join(' ', request.Arguments)}{Environment.NewLine}{report}");
-            LogRuntimeUnresolved(resolution.Detail);
+            LogRuntimeUnresolved(request.Purpose, resolution.Detail);
 
             return new PlatformCommandResult
             {
@@ -215,7 +215,7 @@ internal sealed partial class PlatformCommandRunner : IPlatformCommandRunner
                 };
             }
 
-            LogFailed(commandLine, exitCode);
+            LogFailed(commandLine, request.Purpose, exitCode);
             return new PlatformCommandResult
             {
                 Outcome = PlatformCommandOutcome.Failed,
@@ -330,17 +330,18 @@ internal sealed partial class PlatformCommandRunner : IPlatformCommandRunner
     private partial void LogSucceeded(string commandLine, TimeSpan elapsed);
 
     [LoggerMessage(EventId = 3103, Level = LogLevel.Error,
-        Message = "The platform CLI exited {ExitCode}: {CommandLine}. First-run setup did not complete; "
-                + "GET /host/setup carries the error and the log path.")]
-    private partial void LogFailed(string commandLine, int exitCode);
+        Message = "The platform CLI exited {ExitCode} ({Purpose}): {CommandLine}. The report for that purpose - "
+                + "GET /host/setup for first-run setup, GET /host/info (maintenance) for the scheduled backup and "
+                + "retention - carries the error and the log path.")]
+    private partial void LogFailed(string commandLine, string purpose, int exitCode);
 
     [LoggerMessage(EventId = 3104, Level = LogLevel.Error,
         Message = "The platform CLI did not finish within {Timeout} and was stopped: {CommandLine}")]
     private partial void LogTimedOut(string commandLine, TimeSpan timeout);
 
     [LoggerMessage(EventId = 3105, Level = LogLevel.Error,
-        Message = "No Python runtime could be resolved, so first-run setup cannot run: {Detail}")]
-    private partial void LogRuntimeUnresolved(string detail);
+        Message = "No Python runtime could be resolved, so the platform CLI cannot run ({Purpose}): {Detail}")]
+    private partial void LogRuntimeUnresolved(string purpose, string detail);
 
     [LoggerMessage(EventId = 3106, Level = LogLevel.Error,
         Message = "The operating system refused to start the platform CLI: {CommandLine}")]
