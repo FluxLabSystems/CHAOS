@@ -58,7 +58,12 @@ def test_home_reads_the_counts_the_daily_check_names():
     assert "/telemetry/stale" in api
     assert "points || {}).stale" in text
     # Each number says where it came from.
-    for source in ("GET /telemetry/stats", "GET /telemetry/stale", "GET /telemetry/dead-letters", "GET /overview"):
+    for source in (
+        "GET /telemetry/stats",
+        "GET /telemetry/stale",
+        "GET /telemetry/dead-letters",
+        "GET /overview",
+    ):
         assert source in text, source
 
 
