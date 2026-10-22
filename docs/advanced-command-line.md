@@ -77,7 +77,8 @@ does not have that subsystem installed" from "that subsystem failed".
 
 | Command | Purpose | GUI equivalent |
 |---|---|---|
-| `init-db` | Create every platform table | First-run setup |
+| `init-db` | Create every platform table and record the schema revision | First-run setup |
+| `migrate` | Apply pending schema migrations in place (Alembic) | None — upgrade procedure |
 | `load-registry` | Load the design package into the registry | First-run setup |
 | `load-all` | Registry + load schedule + alarm definitions | First-run setup |
 | `validate` | Validate the design package against its schemas | Runs in CI |
@@ -103,6 +104,24 @@ chaos init-db             # idempotent; creates tables, never alters them
 chaos load-all            # registry + load schedule + alarm definitions
 chaos status              # confirm what landed
 ```
+
+### Moving an existing schema forward
+
+```sh
+chaos migrate             # apply every pending revision; a no-op when at head
+chaos migrate --stamp     # record head without running anything
+```
+
+`init-db` never alters a table that exists, so a change to an existing table
+ships as an Alembic revision under `src/chaos/migrations` and `migrate` is what
+applies it. The two cooperate: `init-db` records the revision of the schema it
+built (head on a fresh database; the baseline when tables already existed, so
+that `migrate` carries them the rest of the way), and `migrate` refuses an
+unstamped database that already holds tables rather than trying to create them
+twice — the message names both ways out. There is no `alembic.ini`: the
+script location, the database URL and the metadata all come from the platform's
+own settings and models. Take a backup first; a failed migration leaves the
+database at the last completed revision.
 
 `load-all --skip-missing` skips stages whose subsystem is not installed rather
 than failing — which is what the gateway uses, because a node without the alarm

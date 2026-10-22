@@ -313,12 +313,25 @@ docker compose -f deploy/docker-compose.yml exec twin chaos init-db
 docker compose -f deploy/docker-compose.yml exec twin chaos status
 ```
 
-**There are no schema migrations yet.** Table creation adds new tables but never
-alters existing ones. A change to an existing column is currently a
-dump-and-restore. Alembic is declared in the `postgres` extra for when this
-stops being acceptable — which is the moment real telemetry is in the historian.
+`init-db` adds tables that are new and never alters one that exists. A change
+to an existing table ships as an Alembic revision under `src/chaos/migrations`,
+and `chaos migrate` applies whatever is pending in place — so after the image
+is rebuilt:
 
-**Take a backup before every upgrade.**
+```sh
+docker compose -f deploy/docker-compose.yml exec twin chaos migrate
+```
+
+`init-db` records the revision of the schema it produced, so `init-db` then
+`migrate` is a no-op on a fresh database, and `migrate` on a database that
+`init-db` built before migrations existed is refused with the two ways
+forward: `chaos migrate --stamp` if the schema is known to be current, or
+`init-db` (which stamps the baseline) and then `migrate`. Alembic is a base
+dependency of the package, so the image always has it.
+
+**Take a backup before every upgrade.** A migration leaves the database at the
+last completed revision if it fails, but a backup is what lets you choose not
+to retry.
 
 ---
 
@@ -333,6 +346,7 @@ stops being acceptable — which is the moment real telemetry is in the historia
 | Grafana panels empty | Correct — the platform writes nothing until ingest runs. Check the datasource first: Connections → Data sources → homestead-pg → Save & test |
 | Prometheus shows one target | Correct. Every other job is commented out because its exporter is not deployed |
 | `psycopg` import error | Install the `postgres` extra, or use the image, which includes it |
+| `chaos migrate` refuses: "records no schema revision" | The database predates migrations. Run `chaos init-db` (it stamps the baseline), then `chaos migrate`; or `chaos migrate --stamp` if you know the schema is current |
 | Compose refuses to start | `docker compose -f deploy/docker-compose.yml config -q` names the missing variable |
 
 For symptoms on a Windows node, use [Troubleshooting](./troubleshooting.md)

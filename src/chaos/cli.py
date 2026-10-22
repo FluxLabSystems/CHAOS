@@ -709,15 +709,18 @@ def cmd_init_db(args: argparse.Namespace) -> int:
         ) from exc
 
     db_module.configure(engine)
-    before = _table_names(engine)
+    _quiet_alembic(args)
+    before = _table_names(engine) - {MIGRATION_VERSION_TABLE}
     _create_all(db_module, engine, settings)
-    after = _table_names(engine)
+    after = _table_names(engine) - {MIGRATION_VERSION_TABLE}
+    stamp_note = _stamp_after_init(engine, had_tables=bool(before))
     engine.dispose()
 
     created = sorted(after - before)
     print(f"Database : {redact_url(settings.database_url)}")
     print(f"Node role: {settings.node_role}")
     print(f"Tables   : {len(after)} present, {len(created)} created, {len(metadata.tables)} declared")
+    print(f"Schema   : {stamp_note}")
     if created and args.verbose:
         for name in created:
             print(f"  + {name}")
@@ -727,6 +730,133 @@ def cmd_init_db(args: argparse.Namespace) -> int:
             f"{len(missing)} declared table(s) were not created: {', '.join(missing[:10])}",
             hint="Check the database user's CREATE privileges.",
         )
+    return EXIT_OK
+
+
+#: Alembic's bookmark table. Named here so ``init-db`` can tell "a database
+#: with platform tables" from "a database that only ever held the bookmark".
+MIGRATION_VERSION_TABLE = "alembic_version"
+
+
+def _quiet_alembic(args: argparse.Namespace) -> None:
+    """Alembic narrates every context it opens at INFO; the CLI prints its own lines."""
+    if getattr(args, "log_level", "INFO") != "DEBUG":
+        logging.getLogger("alembic").setLevel(logging.WARNING)
+
+
+def _stamp_after_init(engine: Any, *, had_tables: bool) -> str:
+    """Record which revision the schema ``create_all`` just produced corresponds to.
+
+    A fresh database now holds the *current* schema, so it is stamped at head.
+    A database that already had platform tables before this run is of unknown
+    vintage: ``create_all`` added whatever tables were missing but altered
+    nothing, so it is stamped at the baseline and ``chaos migrate`` carries it
+    the rest of the way. A database that already carries a revision is left
+    exactly as it is. Alembic is a declared dependency, but a node without it
+    must still get its tables, so its absence is reported rather than fatal.
+    """
+    try:
+        from chaos import migrations
+    except Exception as exc:  # ImportError, or an alembic that fails to import
+        return (
+            f"not stamped -- alembic is not importable ({type(exc).__name__}: {exc}); "
+            "run 'chaos migrate --stamp' once it is"
+        )
+
+    try:
+        current = migrations.current_revision(engine)
+        if current is not None:
+            pending = migrations.pending_revisions(engine)
+            if pending:
+                return f"at revision {current}; {len(pending)} migration(s) pending -- run 'chaos migrate'"
+            return f"at revision {current} (head)"
+        revision = migrations.BASELINE_REVISION if had_tables else "head"
+        migrations.stamp(engine, revision)
+        stamped = migrations.current_revision(engine)
+        if had_tables:
+            return (
+                f"existing tables stamped at baseline {stamped}; run 'chaos migrate' to apply later revisions"
+            )
+        return f"stamped at revision {stamped} (head)"
+    except Exception as exc:  # pragma: no cover - a stamping failure must not hide the tables
+        return f"not stamped ({type(exc).__name__}: {exc})"
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    """Bring the schema to the current revision with Alembic (``chaos.migrations``).
+
+    ``init-db`` adds tables and never alters them; this is the path that does.
+    ``--stamp`` records the head revision without running anything, for a
+    database whose schema is known to be current already -- one that
+    ``init-db`` built before migrations existed, say.
+    """
+    from chaos import db as db_module
+
+    migrations = resolve_subsystem(
+        "chaos.migrations",
+        subsystem="Schema migrations",
+        hint="pip install 'alembic>=1.13' (declared in pyproject dependencies).",
+    )
+    settings = build_settings(args)
+    metadata = _metadata()
+    _quiet_alembic(args)
+
+    try:
+        engine = db_module.build_engine(settings)
+    except Exception as exc:
+        raise CommandError(
+            f"Could not build a database engine for {redact_url(settings.database_url)}: {exc}",
+            hint=_database_hint(settings.database_url),
+        ) from exc
+
+    try:
+        head = migrations.head_revision()
+        current = migrations.current_revision(engine)
+        print(f"Database : {redact_url(settings.database_url)}")
+        print(f"Revision : {current or 'none recorded'} -> head {head}")
+
+        if args.stamp:
+            migrations.stamp(engine, "head")
+            print(f"Stamped  : {migrations.current_revision(engine)} (nothing was run)")
+            return EXIT_OK
+
+        if current is None and migrations.has_platform_tables(engine):
+            raise CommandError(
+                "This database holds platform tables but records no schema revision, so the "
+                "baseline migration would try to create tables that already exist.",
+                hint=(
+                    "If the schema is current, run 'chaos migrate --stamp'. If it predates migrations, "
+                    "run 'chaos init-db' (it stamps the baseline) and then 'chaos migrate'."
+                ),
+            )
+
+        pending = migrations.pending_revisions(engine)
+        if not pending:
+            print("Pending  : none -- already at head")
+        else:
+            print(f"Pending  : {', '.join(pending)}")
+            migrations.upgrade(engine, "head")
+            print(f"Applied  : {len(pending)} revision(s); now at {migrations.current_revision(engine)}")
+
+        present = _table_names(engine)
+        missing = sorted(set(metadata.tables) - present)
+        print(
+            f"Tables   : {len(present - {MIGRATION_VERSION_TABLE})} present, {len(metadata.tables)} declared"
+        )
+        if missing:
+            raise CommandError(
+                f"{len(missing)} declared table(s) are absent after migrating: {', '.join(missing[:10])}",
+                hint="The models and the migrations have drifted apart; a new revision is needed.",
+            )
+    except CommandError:
+        raise
+    except Exception as exc:
+        raise CommandError(
+            f"Migration failed on {redact_url(settings.database_url)}: {type(exc).__name__}: {exc}",
+            hint="The database is left as the last completed revision; nothing is half-applied.",
+        ) from exc
+    finally:
+        engine.dispose()
     return EXIT_OK
 
 
@@ -1578,6 +1708,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init_db.add_argument("-v", "--verbose", action="store_true", help="List the tables created.")
     init_db.set_defaults(func=cmd_init_db)
+
+    # --- migrate --------------------------------------------------------
+    migrate = subparsers.add_parser(
+        "migrate",
+        help="Bring the database schema to the current revision (Alembic).",
+        description=(
+            "Apply every pending schema revision from chaos.migrations. init-db creates tables and "
+            "never alters them; migrate is the path that alters them in place. Take a backup first."
+        ),
+    )
+    migrate.add_argument(
+        "--stamp",
+        action="store_true",
+        help=(
+            "Record the head revision without running anything, for a database whose schema is "
+            "already current (one init-db built before migrations existed)."
+        ),
+    )
+    migrate.set_defaults(func=cmd_migrate)
 
     # --- load-registry --------------------------------------------------
     load_registry = subparsers.add_parser(

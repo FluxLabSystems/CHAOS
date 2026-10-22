@@ -214,7 +214,9 @@ the .NET gateway with first-run setup · the WinUI 3 desktop shell ·
 - **MQTT TLS** — the client side is complete (`CHAOS_MQTT_TLS_CA`, `_CERT`,
   `_KEY`); the broker's TLS listener stays disabled until certificates are
   issued.
-- **No schema migrations.** `init-db` adds tables; it never alters them.
+- **Schema migrations** exist (Alembic under `src/chaos/migrations`, applied
+  by `chaos migrate`) but only the baseline revision does, so a migration that
+  alters a populated historian has not yet been run anywhere real.
 - **Prometheus** scrapes the API's `/metrics` and itself; no exporters are
   deployed and most target addresses are open items.
 

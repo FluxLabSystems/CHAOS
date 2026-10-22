@@ -297,7 +297,7 @@ explains why that is treated as a primary control rather than belt-and-braces.
 | Database | SQLite by default; PostgreSQL supported |
 | Historian | A relational table. The InfluxDB-versus-TimescaleDB decision is unresolved, so neither is deployed |
 | Geospatial | PostGIS is installed and the geometry column prepared, but geometry is stored as GeoJSON and the generated column is commented out |
-| Migrations | **None.** Table creation adds tables; it never alters them |
+| Migrations | Alembic, configured in code under `src/chaos/migrations` with a baseline equal to the schema `init-db` builds. `chaos migrate` applies what is pending; `init-db` records the revision it produced |
 
 The relational historian is a real limitation, not a finished choice. It is
 adequate for commissioning and for the secondary node; it is not adequate for
@@ -348,7 +348,7 @@ over real tables · 2418 Python tests.
 | **Historian** | Relational, pending the InfluxDB/TimescaleDB decision |
 | **PostGIS** | Geometry column prepared and disabled; GeoJSON stored |
 | **MQTT TLS** | Client side complete (`CHAOS_MQTT_TLS_CA`, `_CERT`, `_KEY`); the broker's listener stays disabled until certificates are issued |
-| **Migrations** | None. Alembic is declared and unused |
+| **Migrations** | The environment, the baseline revision and `chaos migrate` exist and are tested on SQLite; no revision beyond the baseline has been needed yet, so a migration that alters a populated PostgreSQL historian has not been exercised |
 | **Water, rack and lifecycle extensions** | In the design package; not merged into the registry. Consumed directly by the screens that need them |
 
 ### Not built
