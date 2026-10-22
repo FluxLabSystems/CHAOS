@@ -45,10 +45,11 @@ public sealed class EnvironmentExitCodeReporter : IHostExitCodeReporter
 /// </para>
 /// <para>
 /// This is a stop with an error, not a crash. SCM applies recovery to it
-/// only when the service's failure flag is set (<c>sc failureflag ChaosHost 1</c>,
-/// which <c>--install-service</c> does); the MSI's recovery policy on its own
-/// covers crashes only. docs/advanced-command-line.md, "The gateway's own
-/// switches", says so where an operator will read it.
+/// only when the service's failure flag is set. Both registration paths set
+/// it - <c>--install-service</c> with <c>sc failureflag ChaosHost 1</c>, the
+/// MSI with a <c>ServiceConfig</c> row in <c>Service.wxs</c> - and an install
+/// made from an older MSI needs that command once. docs/advanced-command-line.md,
+/// "The gateway's own switches", says so where an operator will read it.
 /// </para>
 /// </remarks>
 public sealed class SupervisionFailureHostStop : IHostedService

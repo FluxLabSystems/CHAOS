@@ -264,12 +264,19 @@ exercisable end to end from a laptop.</p>
 <div class="doc-code" data-lang="toml"><div class="doc-code-bar"><span class="doc-code-lang">toml</span><button type="button" class="doc-copy" data-copy><span class="doc-copy-label">Copy</span></button></div><pre class="doc-pre"><code class="lang-toml"><span class="t-t">[tool.pytest.ini_options]</span>
 <span class="t-p">testpaths</span> = [<span class="t-s">"tests"</span>]
 <span class="t-p">pythonpath</span> = [<span class="t-s">"src"</span>]</code></pre></div>
-<p><strong>These tests are not in Test Explorer today.</strong> There is no Python project file
-in the repository, so nothing here configures Visual Studio to discover them.
-Visual Studio's Python workload can run pytest against a folder once a Python
-environment and test framework are selected for the workspace, but that is a
-per-machine setup step this repository does not perform for you. If you want the
-numbers without setting that up, CI runs the same suite on every push.</p>
+<p><strong>These tests are not in Test Explorer today, and that is a decision rather
+than an omission.</strong> The way to put them there is a Python project file
+(<code>.pyproj</code>) in the solution, and a <code>.pyproj</code> brings back, on every machine
+without the Python workload, the <em>unsupported project type</em> dialog and
+migration report that <code>Chaos.Installer.csproj</code> exists to remove for the WiX
+sources (see
+<a href="advanced-windows-packaging.html#why-chaosinstaller-is-a-c-project">Why Chaos.Installer is a C# project</a>).
+A dialog on every solution open, for everyone, is a worse trade than a
+per-machine setup step for the people who want pytest in the IDE. Visual
+Studio's Python workload can run pytest against a folder once a Python
+environment and test framework are selected for the workspace; this repository
+does not perform that step for you. If you want the numbers without setting it
+up, CI runs the same suite on every push.</p>
 <h3 id="which-python-the-gateway-uses" class="doc-h"><span class="doc-h-text">Which Python the gateway uses</span><a class="doc-anchor" href="#which-python-the-gateway-uses" aria-label="Link to this section"></a></h3>
 <p>The gateway's runtime resolver decides, in this order, and reports what it chose
 in <code>/host/setup</code> and <code>/host/info</code>:</p>

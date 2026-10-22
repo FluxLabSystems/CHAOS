@@ -43,7 +43,7 @@
     "BackendHealthPath": "/health",
     "BackendStartTimeout": "00:02:00",
 
-    "_health_comment": "How the gateway watches the backend. The supervisor restarts a backend that dies or stops answering /health, with a backoff from 2 s up to 2 min. After five failures inside ten minutes it gives up and STOPS THIS SERVICE with exit code 70 so Windows' recovery policy can restart it -- see the troubleshooting page, 'It starts, then stops, then starts again', including the one-time 'sc failureflag ChaosHost 1' an MSI install needs for that. The counts live under the Backend key (MaxStartFailures, FailureWindow, HealthyRunDuration, StopHostOnCircuitBreakerTrip). The quiet period stops a long outage filling the log with identical lines.",
+    "_health_comment": "How the gateway watches the backend. The supervisor restarts a backend that dies or stops answering /health, with a backoff from 2 s up to 2 min. After five failures inside ten minutes it gives up and STOPS THIS SERVICE with exit code 70 so Windows' recovery policy can restart it -- see the troubleshooting page, 'It starts, then stops, then starts again'. The installer sets the service's failure flag so Windows counts that stop; an install made from an older MSI needs the one-time 'sc failureflag ChaosHost 1' for it. The counts live under the Backend key (MaxStartFailures, FailureWindow, HealthyRunDuration, StopHostOnCircuitBreakerTrip). The quiet period stops a long outage filling the log with identical lines.",
     "BackendHealthInterval": "00:00:10",
     "BackendHealthTimeout": "00:00:05",
     "BackendHealthMaxBackoff": "00:00:30",
@@ -55,6 +55,18 @@
     "_shutdown_comment": "How long in-flight requests get when the service stops.",
     "ShutdownTimeout": "00:00:30",
 
+    "_maintenance_comment": "The nightly backup. At Backup.TimeOfDay (local time) the service runs the platform's own 'chaos backup' into %ProgramData%\\Project CHAOS\\backups (the folder the installer created; set Backup.Directory to use another) and prunes it to the newest Backup.Keep archives, then runs 'chaos retention' as a DRY RUN and reports what the policy would delete. Retention is a deletion, so applying it is opt-in: Retention.Apply true commits it, and only after a backup that succeeded. The last run is on GET /host/info under 'maintenance'; the transcript is in logs\\chaos-setup.log. Keep one copy of the archives off the property (the manual's Operations page says why).",
+    "Backup": {
+      "Enabled": true,
+      "TimeOfDay": "02:00",
+      "Keep": 14,
+      "IncludeHistory": false
+    },
+    "Retention": {
+      "Enabled": true,
+      "Apply": false
+    },
+
     "Docs": {
       "_comment": "The offline manual, served on its own port by its own listener with no API and no proxy attached to it. It is separate so the manual stays readable when the control plane is not, which is exactly when somebody needs the troubleshooting page. The installer must open this port too, or it will only be reachable from this machine.",
       "Enabled": true,
@@ -63,7 +75,7 @@
   },
 
   "Logging": {
-    "_comment": "Files land in %ProgramData%\\Project CHAOS\\logs (the registry's LogDir): chaos-host.log holds the gateway, the supervisor and the Python backend's own output, rotated at LogFileMaxBytes with LogFilesRetained copies kept; chaos-setup.log is the first-run setup transcript. Service lifecycle events (IDs 1000-1090) also go to the Windows Application event log under the source 'Project CHAOS' WHEN that source is registered -- 'Chaos.Host.exe --install-service' registers it, the MSI does not -- and otherwise only to the file. When the service will not start at all, the Application log's own Service Control Manager entries are where to look.",
+    "_comment": "Files land in %ProgramData%\\Project CHAOS\\logs (the registry's LogDir): chaos-host.log holds the gateway, the supervisor and the Python backend's own output, rotated at LogFileMaxBytes with LogFilesRetained copies kept; chaos-setup.log is the first-run setup transcript. Service lifecycle events (IDs 1000-1090) also go to the Windows Application event log under the source 'Project CHAOS' WHEN that source is registered -- the installer registers it, as does 'Chaos.Host.exe --install-service', and the gateway's first log lines say whether it found the source -- and otherwise only to the file. When the service will not start at all, the Application log's own Service Control Manager entries are where to look.",
     "LogLevel": {
       "Default": "Information",
       "Microsoft.AspNetCore": "Warning",

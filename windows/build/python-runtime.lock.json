@@ -44,10 +44,13 @@
       "size": 11249023,
       "signature_url": "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip.asc",
       "notes": [
-        "This is the version the platform is developed and tested against:",
+        "This is the version the embedded runtime was built and verified with:",
         "pyproject requires-python >= 3.11, ruff target-version py311, and the",
-        "Python CI matrix is ['3.11'].  A control system ships the configuration",
-        "that was tested, not the newest one.",
+        "wheels-only install plus every verify-runtime.py check were run for",
+        "cp311.  The Python CI matrix (.github/workflows/ci.yml) runs the test",
+        "suite on 3.11, 3.12 and 3.13, on Linux; a control system ships the",
+        "configuration that was proven end to end, not the newest one that",
+        "passes its unit tests.",
         "",
         "KNOWN LIMITATION, READ BEFORE A LONG DEPLOYMENT: 3.11.9 is the LAST",
         "CPython 3.11 release with Windows binaries.  3.11.10 and later are",
@@ -66,9 +69,12 @@
       "size": 11133606,
       "signature_url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip.asc",
       "notes": [
-        "Last CPython 3.12 release with Windows binaries.  Not yet exercised by",
-        "the Python test suite; add '3.12' to the CI matrix in",
-        ".github/workflows/ci.yml before shipping it."
+        "Last CPython 3.12 release with Windows binaries.  The Python test suite",
+        "runs on 3.12 in CI (.github/workflows/ci.yml), on Linux.  Shipping it as",
+        "the embedded runtime still needs the Windows proof: the cp312",
+        "wheel-availability check, EXPECTED_PYTHON in verify-runtime.py, and the",
+        "whole install sequence run with this interpreter - see",
+        "docs/advanced-windows-packaging.md, 'Changing the pinned Python version'."
       ]
     },
 
@@ -80,9 +86,12 @@
       "size": 11009825,
       "signature_url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip.asc",
       "notes": [
-        "Current maintained line with Windows binaries.  This is where the",
-        "runtime should end up once the platform test suite runs green on 3.13.",
-        "Not yet exercised by the Python test suite."
+        "Current maintained line with Windows binaries, and where the runtime",
+        "should end up.  The Python test suite runs on 3.13 in CI",
+        "(.github/workflows/ci.yml), on Linux; 3.11.9 stays the shipped runtime",
+        "until the same wheels-only install and verification have been run on",
+        "Windows with this interpreter (cp313 wheels for every dependency,",
+        "EXPECTED_PYTHON in verify-runtime.py)."
       ]
     }
   },

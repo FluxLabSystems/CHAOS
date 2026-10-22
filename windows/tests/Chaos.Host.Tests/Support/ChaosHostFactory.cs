@@ -72,6 +72,9 @@ internal sealed class ChaosHostFactory : WebApplicationFactory<Program>
             _settings["Chaos:AutoSetup"] = "false";
             // Never launch a real interpreter from a test host.
             _settings["Chaos:SuperviseBackend"] = "false";
+            // Nor let the scheduled backup run the real CLI; the tests that
+            // exercise it inject a fake runner and a fake clock.
+            _settings["Chaos:Backup:Enabled"] = "false";
 
             // Keep the "starting" grace window short so backend-down states are
             // reached immediately instead of after a minute.

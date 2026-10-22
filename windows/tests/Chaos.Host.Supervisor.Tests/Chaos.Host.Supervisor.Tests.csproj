@@ -3,9 +3,11 @@
   <!--
     Tests target the same $(ChaosTargetFramework) as the library and run on any
     OS. Policy tests use an injectable clock and a fake process launcher, so no
-    test sleeps out a real backoff. The one test that launches the real Python
-    backend finds a free port and skips itself, loudly, when Python or its
-    dependencies are missing.
+    test sleeps out a real backoff. The real-process tests
+    (SystemProcessLauncherTests) launch an actual python3 child that traps
+    SIGTERM, through SystemProcessLauncher and through the whole supervisor;
+    they skip themselves, with the reason, on Windows and where python3 is not
+    on PATH.
   -->
 
   <PropertyGroup>

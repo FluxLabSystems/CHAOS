@@ -92,13 +92,38 @@
           CPU, and the Event Log shows a clean 60-second cadence that is easy
           to recognise as a crash loop.
 
-          KNOWN GAP: the host does not only crash. When its backend supervisor
-          gives up (five backend failures in ten minutes) it STOPS ITSELF with
-          exit code 70 - a stop with an error, not a crash - and SCM applies
-          this policy to such a stop only when the service's failure flag is
-          set. util:ServiceConfig cannot set that flag; it is one elevated
-          command, `sc failureflag ChaosHost 1`, which the host-registration
-          path (`--install-service`, below) runs and this path does not. See
+          THE FAILURE FLAG. The host does not only crash. When its backend
+          supervisor gives up (five backend failures in ten minutes) it STOPS
+          ITSELF with exit code 70 - a stop with an error, not a crash - and SCM
+          applies the policy above to such a stop only when the service's
+          failure flag (FailureActionsOnNonCrashFailures) is set.
+          util:ServiceConfig has no attribute for it. The core ServiceConfig
+          element below does: it is the MsiServiceConfig table's
+          SERVICE_CONFIG_FAILURE_ACTIONS_FLAG row (MSI 5.0, which Chaos.wxs
+          declares with InstallerVersion 500), applied by the standard
+          MsiConfigureServices action after InstallServices, and rolled back by
+          Windows Installer like everything else here. It is the declarative
+          equivalent of the `sc failureflag ChaosHost 1` that the
+          host-registration path (the install-service switch,
+          ServiceRegistrationPlan.cs) runs. A double hyphen cannot appear inside
+          an XML comment, which is why the switch is not spelled out here; the
+          earlier version of this comment did spell it out, and wix would have
+          refused the file. The flag and the actions are independent registry values, so
+          the order the two elements are processed in does not matter.
+
+          NOT YET VERIFIED ON WINDOWS. This file was changed on a machine that
+          cannot run wix: the XML is well-formed, the element and attribute
+          names are the WiX core schema's (ServiceConfig: ServiceName,
+          OnInstall/OnReinstall/OnUninstall, FailureActionsWhen =
+          failedToStop | failedToStopOrReturnedError, DelayedAutoStart,
+          PreShutdownDelay, ServiceSid), and the MsiServiceConfig semantics are
+          Windows Installer's documented ones. After the first install from
+          this MSI, `sc qfailureflag ChaosHost` must print
+          FAILURE_ACTIONS_ON_NONCRASH_FAILURES : TRUE. If wix 5.0.2 rejects the
+          element, the fallback is a deferred WixQuietExec64 custom action
+          running `sc.exe failureflag ChaosHost 1` - the pattern
+          ChaosInstallService uses at the bottom of this file; if it builds but
+          the flag is not set, the one-time elevated command still works. See
           docs/advanced-windows-packaging.md, "Open items".
         -->
         <util:ServiceConfig ServiceName="$(var.ChaosServiceName)"
@@ -107,6 +132,48 @@
                             ThirdFailureActionType="restart"
                             RestartServiceDelayInSeconds="60"
                             ResetPeriodInDays="1" />
+
+        <ServiceConfig ServiceName="$(var.ChaosServiceName)"
+                       OnInstall="yes"
+                       OnReinstall="yes"
+                       FailureActionsWhen="failedToStopOrReturnedError" />
+
+        <!--
+          The Event Log source.
+
+          The gateway writes its service lifecycle events (IDs 1000-1090:
+          supervision started, backend ready, backend exited, circuit breaker
+          tripped, forced termination) to the Application log under this
+          source WHEN the source is registered; without it they go to
+          chaos-host.log only, and the gateway says so at startup
+          (ChaosEventSinkFactory). The source name is a contract with the
+          supervisor: BackendSupervisorOptions.EventLogSource defaults to the
+          product name, and chaos.host.json does not override it.
+
+          This is the declarative equivalent of the New-EventLog that the
+          install-service switch runs: four registry values under
+          HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\<name>,
+          written by Windows Installer and removed on uninstall. The message
+          file is the .NET Framework's EventLogMessages.dll, which is exactly
+          what New-EventLog (Windows PowerShell) and System.Diagnostics.EventLog
+          register: it holds the one generic message that renders an event's
+          text as written. .NET Framework 4.x is inbox on every Windows this
+          product installs on (Chaos.wxs: Windows 10 1809 / Server 2019 or
+          newer), so the path is fixed rather than discovered, and WindowsFolder
+          is a standard Windows Installer property.
+
+          NOT YET VERIFIED ON WINDOWS, for the same reason as the failure flag.
+          After the first install and a service start,
+          `Get-EventLog -LogName Application -Source 'Project CHAOS' -Newest 5`
+          must show event 1000 with its text intact, not "the description for
+          Event ID 1000 from source Project CHAOS cannot be found".
+        -->
+        <util:EventSource Log="Application"
+                          Name="$(var.ChaosProductName)"
+                          EventMessageFile="[WindowsFolder]Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll"
+                          SupportsErrors="yes"
+                          SupportsInformationals="yes"
+                          SupportsWarnings="yes" />
 
         <!--
           Stop="both" stops the service on uninstall AND before a major upgrade

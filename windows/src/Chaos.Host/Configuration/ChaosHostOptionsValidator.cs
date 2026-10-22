@@ -89,9 +89,53 @@ internal sealed class ChaosHostOptionsValidator : IValidateOptions<ChaosHostOpti
               + "is told setup timed out when in fact it was never given time to run.");
         }
 
+        ValidateMaintenance(failures, options);
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
+    }
+
+    /// <summary>
+    /// The scheduled backup and retention. A keep count of zero would delete
+    /// the archive just written, and a time of day outside the clock would
+    /// never fire; both are refused here rather than discovered at 02:00.
+    /// </summary>
+    private static void ValidateMaintenance(List<string> failures, ChaosHostOptions options)
+    {
+        var backup = options.Backup;
+        if (backup is null)
+        {
+            failures.Add("Chaos:Backup must not be null.");
+        }
+        else
+        {
+            if (backup.TimeOfDay < TimeSpan.Zero || backup.TimeOfDay >= TimeSpan.FromDays(1))
+            {
+                failures.Add(
+                    $"Chaos:Backup:TimeOfDay must be a time of day from 00:00 up to but not including 24:00; got "
+                  + $"{backup.TimeOfDay}. Write it as \"02:00\" or \"23:30\".");
+            }
+
+            if (backup.Keep < 1)
+            {
+                failures.Add(
+                    $"Chaos:Backup:Keep must be at least 1; got {backup.Keep}. It is how many archives survive "
+                  + "pruning, and 0 would delete the archive that was just written.");
+            }
+
+            RequirePositive(failures, "Backup:Timeout", backup.Timeout);
+        }
+
+        var retention = options.Retention;
+        if (retention is null)
+        {
+            failures.Add("Chaos:Retention must not be null.");
+        }
+        else
+        {
+            RequirePositive(failures, "Retention:Timeout", retention.Timeout);
+        }
     }
 
     /// <summary>

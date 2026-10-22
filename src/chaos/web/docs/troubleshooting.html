@@ -113,13 +113,20 @@ reason.</li><li>Is <strong>dark</strong> and serviceable → go to 3.2.</li></ul
 Fixing them is a change to the design package — add the trigger points to their
 asset classes or bindings — not a change to the platform.</p>
 <h3 id="32-the-alarm-is-serviceable-and-still-did-not-fire" class="doc-h"><span class="doc-h-text">3.2 The alarm is serviceable and still did not fire</span><a class="doc-anchor" href="#32-the-alarm-is-serviceable-and-still-did-not-fire" aria-label="Link to this section"></a></h3>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Check</th><th scope="col">Where</th><th scope="col">What you are looking for</th></tr></thead><tbody><tr><td>Did the value arrive at all?</td><td>Console → Assets → the asset → its points</td><td>A current value with a recent timestamp</td></tr><tr><td>Is the value's quality usable?</td><td>Same screen</td><td><strong>A process alarm whose input quality is <code>bad</code> or <code>stale</code> is not evaluated at all.</strong> The data-quality alarm is raised against the point instead</td></tr><tr><td>Did it cross far enough, for long enough?</td><td>The definition's threshold and on-delay</td><td>A crossing that goes away before the on-delay elapses is closed out as a transient — still recorded, never notified</td></tr><tr><td>Did the message arrive but fail to resolve?</td><td>Console → the dead-letter list</td><td>A message that arrived and could not be matched to a registry point. <strong>During commissioning this is far more common than a dead sensor</strong></td></tr><tr><td>Was the whole scope in maintenance?</td><td>Console → Control → operating modes</td><td>Maintenance mode modifies alarms with the lockout visible</td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Check</th><th scope="col">Where</th><th scope="col">What you are looking for</th></tr></thead><tbody><tr><td>Did the value arrive at all?</td><td>Console → Assets → the asset → its points</td><td>A current value with a recent timestamp</td></tr><tr><td>Is the value's quality usable?</td><td>Same screen</td><td><strong>A process alarm whose input quality is <code>bad</code> or <code>stale</code> is not evaluated at all.</strong> The data-quality alarm is raised against the point instead</td></tr><tr><td>Did it cross far enough, for long enough?</td><td>The definition's threshold and on-delay</td><td>A crossing that goes away before the on-delay elapses is closed out as a transient — still recorded, never notified</td></tr><tr><td>Did the message arrive but fail to resolve?</td><td>Console → Home → the dead-letter list</td><td>A message that arrived and could not be matched to a registry point. <strong>During commissioning this is far more common than a dead sensor</strong></td></tr><tr><td>Was the whole scope in maintenance?</td><td>Console → Control → the operating-modes table</td><td>Maintenance mode modifies alarms with the lockout visible</td></tr></tbody></table></div>
 <h3 id="33-it-fired-and-nobody-was-told" class="doc-h"><span class="doc-h-text">3.3 It fired and nobody was told</span><a class="doc-anchor" href="#33-it-fired-and-nobody-was-told" aria-label="Link to this section"></a></h3>
-<p>Check the notification delivery log on the console. Every attempt on every
-channel is a row, so <em>"why did nobody get called"</em> is answerable after the fact.</p>
-<p>Rows with status <code>not_configured</code> mean exactly that: only the <code>log</code> channel has
-a working implementation. <code>email</code>, <code>push</code> and <code>voice</code> record the attempt and
-never claim success. See <a href="alarms.html#7-notification-and-the-honest-part">Alarms § Notification</a>.</p>
+<p>Check the notification delivery log on the console's Alarms screen — at the
+foot of the page, or the incident's own panel. Every attempt on every channel
+is a row, so <em>"why did nobody get called"</em> is answerable after the fact.</p>
+<p>Read the status word. <code>sent</code> means the channel accepted the message: the log
+line was written, the SMTP relay took the mail, the push server answered 2xx.
+<code>failed</code> carries the relay's or the server's error and is retried on a later
+engine cycle, up to the retry limit. <code>not_configured</code> means exactly that: the
+channel has never been given its settings, and the row names the setting it is
+missing — <code>log</code> works with no configuration, <code>email</code> and <code>push</code> need a relay
+or a push server on the property network, and <code>voice</code> is not implemented and
+records <code>not_configured</code> every time. See
+<a href="alarms.html#7-notification-and-the-honest-part">Alarms § Notification</a>.</p>
 <hr>
 <h2 id="4-setup-says-needs_attention" class="doc-h"><span class="doc-h-text">4. Setup says <code>needs_attention</code></span><a class="doc-anchor" href="#4-setup-says-needs_attention" aria-label="Link to this section"></a></h2>
 <p><strong>This is the gateway refusing to touch a database it does not fully understand.
@@ -201,15 +208,17 @@ file), and <strong>stops the whole service with exit code 70</strong>. That is t
 "crash-loop" signal: the <code>ChaosHost</code> service shows as stopped in
 <code>services.msc</code>, and the last gateway log ends with <em>Backend supervision has
 given up</em>.</p>
-<p><strong>Windows restarts the service</strong> — after 5 s, 15 s, then every minute — but
-only if its recovery policy counts that stop. A crash always counts. A stop
-with an error code, which is what the supervisor does, counts only when the
-service's failure flag is set: <code>sc failureflag ChaosHost 1</code>, once, elevated.
-<code>Chaos.Host.exe --install-service</code> sets it; the MSI's own registration does
-not, so on an MSI install run that command once if you want the machine to
-keep trying unattended. Either way, something is wrong in the backend; read the
-platform log via <strong>Open logs</strong> — the repeated failure is at the top of each
-restart — and fix that before relying on the retries.</p>
+<p><strong>Windows restarts the service</strong>, on a delay that depends on how it was
+registered: the MSI's own registration restarts it after 60 s, every time;
+<code>Chaos.Host.exe --install-service</code> registers 5 s, then 15 s, then every
+minute. Either way it only happens if the recovery policy counts that stop. A
+crash always counts. A stop with an error code, which is what the supervisor
+does, counts only when the service's failure flag is set:
+<code>sc failureflag ChaosHost 1</code>, once, elevated. <code>--install-service</code> sets it; the
+MSI's own registration does not, so on an MSI install run that command once if
+you want the machine to keep trying unattended. Either way, something is wrong
+in the backend; read the platform log via <strong>Open logs</strong> — the repeated failure
+is at the top of each restart — and fix that before relying on the retries.</p>
 <p>The counts and delays are the <code>Backend</code> keys in <code>chaos.host.json</code>
 (<code>MaxStartFailures</code>, <code>FailureWindow</code>, <code>InitialRestartDelay</code>, <code>MaxRestartDelay</code>,
 <code>HealthyRunDuration</code>); <code>Backend.StopHostOnCircuitBreakerTrip: false</code> keeps the

@@ -39,15 +39,19 @@ That is deliberate: **one switch should not be able to arm the property.**
 
 | Task | Where |
 |---|---|
-| See where an asset stands | Console → **Control** → the asset. Its commissioning status is on the screen |
-| Record a step outcome | The commissioning endpoint, with the `maintainer` role |
-| Enable a binding once the gate allows it | The commissioning endpoint, with the `maintainer` role |
-| Track progress across every asset | Console → **Assets**, and the binding statuses |
+| See where an asset stands | Console → **Commissioning** → the asset: steps passed, prerequisites, whether supervisory control is permitted, the twelve records |
+| Record a step outcome | The same screen's **Record a step outcome** form, with the `maintainer` role |
+| Enable a binding once the gate allows it | The same screen's **Point bindings** table, with the `maintainer` role |
+| Track progress across every asset | Console → **Assets** for the binding statuses; Console → **Commissioning** for each asset's record |
 
-**There is no dedicated commissioning form in the console today.** Recording a
-step is an API call; the request bodies are in
-[API reference § Maintenance and commissioning](./api.md#10-maintenance-and-commissioning).
-Reading the state — which is what you do far more often — is on screen.
+The console's **Commissioning** screen is the form for this record. Recording a
+step asks for the step, the outcome, the preconditions, the injected
+condition, the expected sequence, what was observed and the evidence — the
+fields SDD 39 requires of a test record — and refuses a pass or fail with
+nothing observed. The same request bodies are in
+[API reference § Maintenance and commissioning](./api.md#10-maintenance-and-commissioning)
+for anyone recording from a script. See
+[The operator console § Commissioning](./operator-console.md#49-commissioning).
 
 ### The four outcomes
 
@@ -241,8 +245,10 @@ Make a real alarm fire and follow it all the way out.
 - Confirm the alarm links to its operating procedure, affected assets,
   dependencies and manual controls.
 - Confirm the lifecycle works: acknowledge → mitigate → clear → review.
-- **Confirm it works with the internet down.** If the only channel is `log` or
-  `email`, this step fails.
+- **Confirm it works with the internet down.** If the only working channel is
+  `log`, or every relay and push server the `email` and `push` channels reach
+  is outside the property, this step fails. The delivery log on the console's
+  Alarms screen says which channel said what.
 
 **Pass:** the alarm fires, reaches a human, carries its context, and clears
 properly.
@@ -283,9 +289,13 @@ Capture what "normal" looks like, so a future deviation is visible.
 - [ ] Binding addresses, protocol and scaling recorded; the binding status is no
       longer `tbd`.
 - [ ] Alarm definitions reviewed against what actually fired during steps 6–10.
-- [ ] Photos, wiring notes and vendor documents attached as document records.
+- [ ] Photos, wiring notes and vendor documents attached as document records
+      (Console → **Assets** → the asset → **Documentation**; the record says
+      where the document lives — the platform stores no files).
 - [ ] Broker topic-permission verification re-run for the new identity.
-- [ ] Backup taken **and restored into a scratch database** to prove it works.
+- [ ] Backup taken (Console → **Home** → **Backups**, or `chaos backup`)
+      **and restored into a scratch database** to prove it works — the restore
+      is a command-line drill.
 - [ ] A portable archive copied off the property.
 
 **Pass:** someone who was not there could operate and troubleshoot this
@@ -299,8 +309,10 @@ subsystem from the record.
 Confirm the asset reports supervisory control permitted and fully commissioned.
 
 Then enable the bindings that need automatic control — **one at a time, with a
-reason**. The platform returns a refusal, not a success, if the prerequisites
-have not passed; that refusal is the point of the endpoint.
+reason**, from the Commissioning screen's point-bindings table or the
+endpoint. The platform returns a refusal, not a success, if the prerequisites
+have not passed; that refusal is the point of the endpoint, and the screen
+shows it with its reason.
 
 Then **watch it for a while** before commissioning the next subsystem. The
 failure modes that matter usually appear on the second night, not the first
@@ -346,7 +358,7 @@ battery and inverters last, because they are the ones that can hurt you.
 | Step 6 "passes" because nothing alarmed | The platform did not notice the loss. That is a **fail**, not a pass — check the point's stale window |
 | Step 7 passes with a sensor reading zero | Zero is plausible. Confirm the **quality model** marks it bad, rather than the range check accepting it |
 | Step 9 acknowledgement never arrives | The gateway has no permission to publish acknowledgements. Check the broker log for denied publishes |
-| Step 10 notification never arrives | Only the `log` channel is implemented. A log line is not an alert |
+| Step 10 notification never arrives | Read the delivery log on the console's Alarms screen. `not configured` means the channel was never given its settings and the row names which; `failed` carries the relay or push server's error. Only `log` works with no configuration, and a log line is not an alert |
 | Step 10 alarm never fires | Check the annunciator tile. It may be `OUT OF SVC` — it cannot fire |
 | Everything passes in a day | Steps 6, 7, 8 and 11 require actually breaking things. **If nothing was broken, they were not tested** |
 

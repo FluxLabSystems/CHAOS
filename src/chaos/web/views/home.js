@@ -13,9 +13,10 @@
 --------------------------------------------------------------------------- */
 
 import {
-  card, clear, fmtAge, fmtDateTime, fmtDuration, fmtNumber, h,
-  meterBar, metricReadout, provenance, resultProblem, severityChip, statusChip,
+  card, clear, confirmAction, fmtAge, fmtDateTime, fmtDuration, fmtNumber, h, kv,
+  meterBar, metricReadout, provenance, requireRole, resultProblem, severityChip, statusChip, toast,
 } from '../app.js';
+import { api } from '../api.js';
 
 const SITE_STATE_COPY = {
   nominal:        { status: 'ok',          headline: 'Nominal' },
@@ -295,6 +296,375 @@ function subsystemGrid(data, ctx) {
     grid);
 }
 
+/* ------------------------------------------------------- daily check ---- */
+
+/*
+   docs/operations.md § 0 asks the operator to read four things on this
+   screen every day: active alarms (above), the energy state (above), the
+   dead-letter count and the stale-point count. The last two come from the
+   telemetry API, not from /overview, and the backup card beside them answers
+   the weekly question — did the nightly archive run — without a shell.
+
+   Every number here names its source, because the platform has two notions
+   of "stale": a point whose quality code the ingest marker set to stale or
+   bad (/telemetry/stale), and a point whose last value is older than its
+   stale window right now (/overview). They usually agree; when they do not,
+   the difference is the diagnosis.
+*/
+
+const DEAD_LETTER_PAGE = 25;
+const STALE_LIMIT = 500;
+const BACKUP_STALE_AFTER_H = 36;
+
+const ops = {
+  loaded: false,
+  stats: null,
+  stale: null,
+  deadLetters: null,
+  backups: null,
+  offset: 0,
+  filters: { topic: '', reason: '' },
+  host: null,
+  lastBackup: null,
+  busy: false,
+};
+
+async function loadOps(ctx) {
+  const [stats, stale, deadLetters, backups] = await Promise.all([
+    api.telemetryStats(),
+    api.stalePoints(STALE_LIMIT),
+    api.deadLetters({ limit: DEAD_LETTER_PAGE, offset: ops.offset, ...ops.filters }),
+    api.backups(),
+  ]);
+  Object.assign(ops, { stats, stale, deadLetters, backups, loaded: true });
+  paintOps(ctx);
+}
+
+async function loadDeadLetters(ctx) {
+  ops.deadLetters = await api.deadLetters({ limit: DEAD_LETTER_PAGE, offset: ops.offset, ...ops.filters });
+  paintOps(ctx);
+}
+
+function opsSection(ctx) {
+  const host = h('section', { id: 'daily-check', style: 'margin-top:1.4rem' });
+  ops.host = host;
+  paintOps(ctx);
+  return host;
+}
+
+function paintOps(ctx) {
+  const host = ops.host;
+  if (!host) return;
+  clear(host);
+  host.appendChild(h('div', { class: 'page-head', style: 'margin:0 0 .6rem' },
+    h('div', null,
+      h('h2', { style: 'font-size:1.05rem', text: 'Ingest, stale points and backups' }),
+      h('p', { class: 'lede', text: 'The rest of the daily check: messages the platform rejected, points it admits it cannot see, and whether the last archive exists. Each count says where it came from.' }))));
+  if (!ops.loaded) {
+    host.appendChild(h('p', { class: 'loading', text: 'Loading ingest statistics…' }));
+    return;
+  }
+  host.appendChild(h('div', { class: 'grid grid-wide' },
+    deadLetterCard(), staleCard(ctx), backupCard(ctx)));
+  host.appendChild(h('div', { style: 'margin-top:var(--gap)' }, deadLetterTable(ctx)));
+}
+
+/** The reason string starts with the ingest writer's own code, e.g.
+ *  `unresolved_topic: …`; that prefix is the category, nothing is invented. */
+function deadLetterCategory(reason) {
+  const match = String(reason || '').match(/^[A-Za-z0-9_]+/);
+  return match ? match[0] : 'other';
+}
+
+function deadLetterCard() {
+  const result = ops.stats;
+  if (!result.ok) {
+    return card({ title: 'Dead letters', status: 'unknown', children: resultProblem(result, 'ingest statistics') });
+  }
+  const database = result.data.database || {};
+  // `ingest` is the IngestService.stats() block, or null on a node without
+  // ingest; its counters sit under `counters` with the writer's own names.
+  const ingest = result.data.ingest;
+  const counters = ingest && ingest.counters ? ingest.counters : null;
+  const total = database.dead_letters;
+  const sinceStart = counters && typeof counters.dead_lettered === 'number' ? counters.dead_lettered : null;
+  const status = sinceStart ? 'degraded' : (total ? 'stale' : 'ok');
+  return card({
+    title: 'Dead letters',
+    status,
+    statusText: sinceStart ? 'Growing' : (total ? 'Recorded' : 'None'),
+    children: [
+      h('div', { class: 'readout' },
+        h('span', { class: 'value num', text: String(total ?? '—') }),
+        h('span', { class: 'unit', text: 'in the database' })),
+      h('p', { class: 'card-note', text: sinceStart
+        ? `${sinceStart} since the ingest service started — a count that grows every day is a binding that was never commissioned properly, not noise.`
+        : (total
+          ? 'None since the ingest service started. Older rows are listed below; retention prunes them with the historian.'
+          : 'No message has been rejected. During commissioning that is the result to protect.') }),
+      kv([
+        ['Ingest service', result.data.ingest_running
+          ? statusChip('ok', 'running')
+          : statusChip(ingest ? 'degraded' : 'not_deployed', ingest ? 'stopped' : 'not on this node')],
+        ['Received / written', counters ? `${counters.messages_received ?? '—'} / ${counters.messages_written ?? '—'}` : '—'],
+        ['Out of order · stale-marked', counters ? `${counters.out_of_order ?? '—'} · ${counters.stale_marked ?? '—'}` : '—'],
+        ['Last message', ingest && ingest.last_message_at ? fmtAge(ingest.last_message_at) : (ingest ? 'none since start' : '—')],
+        ['Last error', ingest && ingest.last_error ? ingest.last_error : 'none'],
+        ['Source', 'GET /telemetry/stats'],
+      ]),
+    ],
+  });
+}
+
+function staleCard(ctx) {
+  const result = ops.stale;
+  if (!result.ok) {
+    return card({ title: 'Stale points', status: 'unknown', children: resultProblem(result, 'the stale-point list') });
+  }
+  const rows = Array.isArray(result.data) ? result.data : [];
+  const capped = rows.length >= STALE_LIMIT;
+  const overview = ctx.latestOverview().data;
+  const subsystems = overview ? (overview.subsystems || []) : [];
+  const byAge = subsystems.reduce((sum, entry) => sum + ((entry.points || {}).stale || 0), 0);
+  const withData = subsystems.reduce((sum, entry) => sum + ((entry.points || {}).with_data || 0), 0);
+  const byQuality = rows.reduce((acc, row) => {
+    acc[row.quality] = (acc[row.quality] || 0) + 1;
+    return acc;
+  }, {});
+  return card({
+    title: 'Stale points',
+    status: rows.length ? 'stale' : 'ok',
+    statusText: rows.length ? `${capped ? `${STALE_LIMIT}+` : rows.length} not trusted` : 'All trusted',
+    children: [
+      h('div', { class: 'readout' },
+        h('span', { class: 'value num', text: capped ? `${STALE_LIMIT}+` : String(rows.length) }),
+        h('span', { class: 'unit', text: 'quality stale or bad' })),
+      h('p', { class: 'card-note', text: rows.length
+        ? 'Every point here is unknown, not normal. Treat the last value as history.'
+        : 'No current value carries a stale or bad quality code.' }),
+      kv([
+        ['By quality', Object.keys(byQuality).length
+          ? Object.entries(byQuality).map(([quality, count]) => `${quality}: ${count}`).join(' · ')
+          : '—'],
+        ['Older than stale window', overview
+          ? `${byAge} of ${withData} reporting points (GET /overview, evaluated now)`
+          : statusChip('no_data', 'overview not loaded')],
+        ['Source', `GET /telemetry/stale (limit ${STALE_LIMIT})`],
+      ]),
+      rows.length
+        ? h('details', { class: 'raw' },
+            h('summary', { text: `Stale points (${capped ? `first ${STALE_LIMIT}` : rows.length})` }),
+            h('div', { class: 'table-wrap', style: 'margin-top:.4rem' },
+              h('table', null,
+                h('thead', null, h('tr', null,
+                  h('th', { text: 'Point' }), h('th', { text: 'Quality' }), h('th', { text: 'Last value' }))),
+                h('tbody', null, rows.slice(0, 100).map((row) => h('tr', null,
+                  h('td', null, h('a', { class: 'mono', href: `#/assets/${encodeURIComponent(row.asset_id)}`,
+                                         text: row.point_id })),
+                  h('td', null, statusChip(row.quality === 'stale' ? 'stale' : 'alarm', row.quality)),
+                  h('td', { text: row.ts ? `${fmtAge(row.ts)} (${fmtDateTime(row.ts)})` : 'never' })))))))
+        : null,
+    ],
+  });
+}
+
+function fmtMiB(bytes) {
+  if (typeof bytes !== 'number') return '—';
+  return `${fmtNumber(bytes / (1024 * 1024), 2)} MiB`;
+}
+
+function backupCard(ctx) {
+  const result = ops.backups;
+  if (!result.ok) {
+    return card({ title: 'Backups', status: 'unknown', children: resultProblem(result, 'the backup listing') });
+  }
+  const listing = result.data;
+  const archives = listing.archives || [];
+  const newest = archives.find((entry) => entry.manifest) || null;
+  const newestAt = newest ? newest.manifest.created_at : null;
+  const ageH = newestAt ? (Date.now() - new Date(newestAt).getTime()) / 3600000 : null;
+  const status = !newest ? 'no_data' : (ageH !== null && ageH > BACKUP_STALE_AFTER_H ? 'stale' : 'ok');
+  const statusText = !newest ? 'No archive' : (status === 'stale' ? 'Last archive is old' : 'Recent archive');
+
+  const children = [];
+  if (newest) {
+    const m = newest.manifest;
+    children.push(kv([
+      ['Last archive', h('span', { class: 'mono', text: newest.name })],
+      ['Taken', `${fmtDateTime(m.created_at)} · ${fmtAge(m.created_at)}`],
+      ['Size', fmtMiB(newest.size_bytes)],
+      ['Contents', `${m.tables} tables · ${m.rows} rows${m.includes_history ? ' · includes history' : ''}`],
+      ['Written by', `${m.node_role || '?'} node, platform v${m.platform_version || '?'}`],
+      ['Restorable', m.restorable ? statusChip('ok', 'yes') : statusChip('alarm', 'format not recognised')],
+    ]));
+    if (status === 'stale') {
+      children.push(h('p', { class: 'card-note', style: 'color:var(--status-stale)',
+        text: `More than ${BACKUP_STALE_AFTER_H} hours old. If the nightly job is scheduled, it did not run.` }));
+    }
+  } else {
+    children.push(h('p', { class: 'card-note' },
+      statusChip('no_data', 'No archive'), ' ',
+      listing.exists
+        ? `${listing.directory} holds no backup archive.`
+        : `${listing.directory} does not exist yet — nothing has been backed up on this node.`));
+  }
+  children.push(h('p', { class: 'card-note', text: `${archives.length} archive${archives.length === 1 ? '' : 's'} in ${listing.directory}. This copy sits in the same failure domain as the database: keep one on the secondary node and one offline.` }));
+
+  if (archives.length) {
+    children.push(h('details', { class: 'raw' },
+      h('summary', { text: `All archives (${archives.length})` }),
+      h('div', { class: 'table-wrap', style: 'margin-top:.4rem' },
+        h('table', null,
+          h('thead', null, h('tr', null,
+            h('th', { text: 'Archive' }), h('th', { text: 'Taken' }), h('th', { class: 'num', text: 'Size' }),
+            h('th', { text: 'Contents' }))),
+          h('tbody', null, archives.map((entry) => h('tr', null,
+            h('td', null, h('span', { class: 'mono', text: entry.name })),
+            h('td', { text: entry.manifest ? fmtDateTime(entry.manifest.created_at) : `modified ${fmtDateTime(entry.modified_at)}` }),
+            h('td', { class: 'num', text: fmtMiB(entry.size_bytes) }),
+            h('td', null, entry.manifest
+              ? `${entry.manifest.tables} tables · ${entry.manifest.rows} rows`
+              : statusChip('alarm', entry.error || 'unreadable')))))))));
+  }
+
+  children.push(backupAction(ctx));
+  return card({ title: 'Backups', status, statusText, children });
+}
+
+function backupAction(ctx) {
+  const history = h('input', { type: 'checkbox', id: 'backup-history' });
+  const button = h('button', { class: 'btn btn-primary btn-sm', text: 'Take a backup now…', disabled: ops.busy });
+  const outcome = h('div', { style: 'margin-top:.5rem' });
+
+  if (ops.lastBackup) showBackupOutcome(outcome, ops.lastBackup);
+
+  button.addEventListener('click', async () => {
+    if (!requireRole('maintainer')) return;
+    const includeHistory = history.checked;
+    const yes = await confirmAction({
+      title: 'Write a backup archive on this node',
+      note: `This runs the same code as "chaos backup" and writes one .tar.gz into the backup directory`
+        + `${includeHistory ? ', including telemetry samples and dead letters (large)' : ' (registry, alarms, commands, energy, maintenance and current state; no history)'}.`
+        + ' The archive holds no credentials. The write is audited against your name.',
+      confirmLabel: 'Write archive',
+    });
+    if (!yes) return;
+    ops.busy = true;
+    button.disabled = true;
+    const response = await api.createBackup(includeHistory);
+    ops.busy = false;
+    ops.lastBackup = response;
+    if (response.ok) {
+      toast('success', 'Backup written', `${response.data.name} · ${fmtMiB(response.data.size_bytes)}`);
+      ops.backups = await api.backups();
+      paintOps(ctx);
+    } else if (response.missing) {
+      toast('warn', 'Backup endpoint not available', 'This node does not expose POST /backup. Nothing was written.');
+      paintOps(ctx);
+    } else {
+      toast('error', 'Backup failed', response.error || `HTTP ${response.status}`);
+      paintOps(ctx);
+    }
+  });
+
+  return h('div', { style: 'margin-top:.7rem' },
+    h('div', { class: 'filters', style: 'margin-bottom:.3rem' },
+      h('label', { style: 'flex-direction:row;align-items:center;gap:.4rem' },
+        history, h('span', { text: 'Include history (telemetry samples and dead letters — large)' })),
+      button),
+    outcome);
+}
+
+function showBackupOutcome(host, response) {
+  clear(host);
+  if (response.ok) {
+    const d = response.data;
+    host.appendChild(h('div', null,
+      h('p', { style: 'margin:0 0 .3rem' }, statusChip('ok', 'Archive written'), ` by ${d.written_by || 'you'}`),
+      kv([
+        ['Path', h('span', { class: 'mono', text: d.path })],
+        ['Size', fmtMiB(d.size_bytes)],
+        ['Tables · rows', `${d.tables} · ${d.rows}`],
+        ['Taken', fmtDateTime(d.created_at)],
+        ['SHA-256', h('span', { class: 'mono', text: d.sha256 })],
+        ['History', d.includes_history ? 'included' : 'not included'],
+        ['Absent tables', (d.tables_absent || []).length ? d.tables_absent.join(', ') : 'none'],
+      ]),
+      h('p', { class: 'card-note', text: d.note || '' })));
+  } else {
+    host.appendChild(h('p', { style: 'margin:0' },
+      statusChip('alarm', response.forbidden ? 'Refused' : 'Failed'), ' ',
+      h('span', { text: response.error || `HTTP ${response.status}` })));
+  }
+}
+
+function deadLetterTable(ctx) {
+  const result = ops.deadLetters;
+  const stats = ops.stats;
+  const total = stats && stats.ok ? (stats.data.database || {}).dead_letters : null;
+  const filtered = Boolean(ops.filters.topic || ops.filters.reason);
+
+  const topic = h('input', { type: 'search', class: 'input', placeholder: 'topic or point', value: ops.filters.topic,
+    oninput: (event) => { ops.filters.topic = event.target.value; } });
+  const reason = h('input', { type: 'search', class: 'input', placeholder: 'reason', value: ops.filters.reason,
+    oninput: (event) => { ops.filters.reason = event.target.value; } });
+  const filters = h('form', { class: 'filters', style: 'margin-bottom:.6rem',
+    onsubmit: (event) => { event.preventDefault(); ops.offset = 0; loadDeadLetters(ctx); } },
+    h('label', null, h('span', { text: 'Topic' }), topic),
+    h('label', null, h('span', { text: 'Reason' }), reason),
+    h('button', { class: 'btn btn-sm', type: 'submit', text: 'Apply' }),
+    filtered ? h('button', { class: 'btn btn-sm', type: 'button', text: 'Clear',
+      onclick: () => { ops.filters = { topic: '', reason: '' }; ops.offset = 0; loadDeadLetters(ctx); } }) : null);
+
+  const children = [filters];
+  if (!result.ok) {
+    children.push(resultProblem(result, 'the dead-letter list'));
+    return card({ title: 'Dead-letter list', status: 'unknown', children });
+  }
+  const rows = Array.isArray(result.data) ? result.data : [];
+  if (!rows.length) {
+    children.push(h('div', { class: 'empty' },
+      h('h3', null, statusChip('ok', filtered || ops.offset ? 'No matching dead letters' : 'No dead letters')),
+      h('p', { text: filtered
+        ? 'Nothing matches these filters.'
+        : 'No ingest message has been rejected, or retention has pruned the ones that were. A silent point with no dead letter is a device that never published, not a message the platform dropped.' })));
+  } else {
+    children.push(h('div', { class: 'table-wrap' },
+      h('table', null,
+        h('caption', { text: `${rows.length} shown, newest first${total !== null && !filtered ? ` of ${total} recorded` : ''}` }),
+        h('thead', null, h('tr', null,
+          h('th', { text: 'When' }), h('th', { text: 'Category' }), h('th', { text: 'Topic / point' }),
+          h('th', { text: 'Reason' }))),
+        h('tbody', null, rows.map((row) => h('tr', null,
+          h('td', { text: row.created_at ? `${fmtDateTime(row.created_at)} · ${fmtAge(row.created_at)}` : '—' }),
+          h('td', null, h('span', { class: 'tag', text: deadLetterCategory(row.reason) })),
+          h('td', null, h('span', { class: 'mono', text: row.topic })),
+          h('td', null,
+            h('div', { text: row.reason }),
+            row.payload
+              ? h('details', { class: 'raw' }, h('summary', { text: 'Payload' }), h('pre', { text: row.payload }))
+              : null)))))));
+  }
+
+  const pageEnd = ops.offset + rows.length;
+  const more = filtered || total === null ? rows.length === DEAD_LETTER_PAGE : pageEnd < total;
+  if (ops.offset > 0 || more) {
+    children.push(h('div', { class: 'pill-row', style: 'margin-top:.7rem' },
+      h('button', { class: 'btn btn-sm', disabled: ops.offset === 0,
+        onclick: () => { ops.offset = Math.max(0, ops.offset - DEAD_LETTER_PAGE); loadDeadLetters(ctx); },
+        text: '← Previous' }),
+      h('span', { class: 'card-note', style: 'margin:0',
+        text: rows.length
+          ? `${ops.offset + 1}–${pageEnd}${total !== null && !filtered ? ` of ${total}` : ''}`
+          : `offset ${ops.offset}` }),
+      h('button', { class: 'btn btn-sm', disabled: !more,
+        onclick: () => { ops.offset += DEAD_LETTER_PAGE; loadDeadLetters(ctx); },
+        text: 'Next →' })));
+  }
+  children.push(h('p', { class: 'card-note', text: 'Source: GET /telemetry/dead-letters. The category is the ingest writer’s own reason code; the troubleshooting guide reads this list when a message arrived but failed to resolve.' }));
+  return card({ title: 'Dead-letter list', status: rows.length ? 'degraded' : 'ok', children });
+}
+
 function render(root, data, ctx) {
   clear(root);
   root.appendChild(h('div', { class: 'page-head' },
@@ -324,6 +694,7 @@ function render(root, data, ctx) {
   root.appendChild(grid);
 
   root.appendChild(subsystemGrid(data, ctx));
+  root.appendChild(opsSection(ctx));
 
   root.appendChild(h('details', { class: 'raw' },
     h('summary', { text: 'What the status words mean' }),
@@ -352,10 +723,13 @@ export default {
       clear(root).appendChild(resultProblem(current.result, 'the property overview'));
     }
 
+    await loadOps(ctx);
+
     return {
-      // The shell already refreshes /overview; the subscription repaints us.
-      async refresh() {},
-      destroy() { unsubscribe(); },
+      // The shell already refreshes /overview; the subscription repaints the
+      // overview tiles. The operations block has its own requests.
+      async refresh() { await loadOps(ctx); },
+      destroy() { unsubscribe(); ops.host = null; },
     };
   },
 };

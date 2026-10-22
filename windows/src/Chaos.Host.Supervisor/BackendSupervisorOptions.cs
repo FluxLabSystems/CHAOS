@@ -147,10 +147,19 @@ public sealed class BackendSupervisorOptions
     // -- Shutdown ----------------------------------------------------------
 
     /// <summary>
-    /// Time the child gets to exit after the graceful signal before the process
-    /// tree is killed.
+    /// Time the child gets to exit after it has been asked to stop - over the
+    /// loopback stop endpoint or by a process signal - before the process tree
+    /// is killed.
     /// </summary>
     public TimeSpan GracefulShutdownTimeout { get; set; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// Bound on the <c>POST /_supervisor/stop</c> request itself (connect,
+    /// send, and the <c>202</c> answer). A backend that is alive but not
+    /// listening fails this fast; one that is wedged must not hold the stop
+    /// for long, because the signal and the Job Object are waiting behind it.
+    /// </summary>
+    public TimeSpan StopRequestTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
     // -- Host integration --------------------------------------------------
 
@@ -189,10 +198,12 @@ public sealed class BackendSupervisorOptions
     // -- Windows Event Log -------------------------------------------------
 
     /// <summary>
-    /// Event Log source. Registered, elevated, by <c>--install-service</c>
-    /// (docs/advanced-command-line.md, "The gateway's own switches"); the MSI
-    /// does not register it, and without it lifecycle events go to the log
-    /// file only - <see cref="Events.ChaosEventSinkFactory"/> says which at startup.
+    /// Event Log source. Registered by the MSI (<c>util:EventSource</c> in
+    /// <c>windows/installer/Service.wxs</c>, whose name must match this) and,
+    /// elevated, by <c>--install-service</c> (docs/advanced-command-line.md,
+    /// "The gateway's own switches"); without it lifecycle events go to the
+    /// log file only - <see cref="Events.ChaosEventSinkFactory"/> says which
+    /// at startup.
     /// </summary>
     public string EventLogSource { get; set; } = "Project CHAOS";
 
@@ -215,6 +226,13 @@ public sealed class BackendSupervisorOptions
     /// <summary>Backend root, for logging and for the gateway's proxy destination.</summary>
     public Uri BaseAddress =>
         new($"http://{FormatHostForUri(BindAddress)}:{Port.ToString(CultureInfo.InvariantCulture)}/");
+
+    /// <summary>
+    /// The backend's loopback stop endpoint
+    /// (<see cref="Health.BackendStopContract.Path"/>), the first thing the
+    /// supervisor tries when it stops the child.
+    /// </summary>
+    public Uri StopEndpoint => new(BaseAddress, Health.BackendStopContract.Path.TrimStart('/'));
 
     private string NormalisedHealthPath =>
         HealthPath.StartsWith('/') ? HealthPath : "/" + HealthPath;
@@ -262,6 +280,7 @@ public sealed class BackendSupervisorOptions
         RequirePositive(errors, MaxRestartDelay, nameof(MaxRestartDelay));
         RequirePositive(errors, FailureWindow, nameof(FailureWindow));
         RequirePositive(errors, GracefulShutdownTimeout, nameof(GracefulShutdownTimeout));
+        RequirePositive(errors, StopRequestTimeout, nameof(StopRequestTimeout));
 
         if (MaxRestartDelay < InitialRestartDelay)
         {

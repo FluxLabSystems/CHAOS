@@ -274,6 +274,26 @@ public sealed class ChaosHostOptions
     /// </summary>
     public TimeSpan SetupCommandTimeout { get; set; } = TimeSpan.FromMinutes(10);
 
+    // -- Scheduled maintenance ---------------------------------------------
+    //
+    // The same reasoning as setup: an installed node must be backed up without
+    // anyone opening a terminal, and the gateway is the one process that is
+    // always there to do it.
+
+    /// <summary>
+    /// The nightly backup: <c>chaos backup</c> on a schedule, into the installed
+    /// layout's <c>backups</c> folder by default, pruned to a fixed number of
+    /// archives. See <see cref="BackupOptions"/>.
+    /// </summary>
+    public BackupOptions Backup { get; set; } = new();
+
+    /// <summary>
+    /// The retention pass that follows the backup: a dry run unless
+    /// <see cref="RetentionOptions.Apply"/> says otherwise. See
+    /// <see cref="RetentionOptions"/>.
+    /// </summary>
+    public RetentionOptions Retention { get; set; } = new();
+
     /// <summary>The backend base address, parsed. </summary>
     /// <returns>The parsed absolute URI.</returns>
     /// <exception cref="InvalidOperationException"><see cref="BackendUrl"/> is not an absolute URI.</exception>

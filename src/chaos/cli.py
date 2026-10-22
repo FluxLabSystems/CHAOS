@@ -24,10 +24,8 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
-import hashlib
 import importlib
 import inspect
-import io
 import json
 import logging
 import os
@@ -978,116 +976,19 @@ def cmd_backup(args: argparse.Namespace) -> int:
     portable ``.tar.gz`` holding the registry tables as JSON, redacted runtime
     settings and the machine-readable design package.
     """
+    # The archive itself is written by chaos.backup so that POST /api/v1/backup
+    # produces exactly the same file; imported lazily, like every subsystem here.
+    from chaos.backup import run_backup
+
     settings = build_settings(args)
-    metadata = _metadata()
-    now = dt.datetime.now(dt.UTC)
-    stamp = now.strftime("%Y%m%dT%H%M%SZ")
+    result = run_backup(settings, args.output, include_history=bool(args.include_history))
 
-    default_name = f"homestead-{settings.node_role}-{stamp}.tar.gz"
-    output = Path(args.output) if args.output else workspace_root(settings) / "var" / "backups" / default_name
-    if output.is_dir():
-        output = output / default_name
-    output.parent.mkdir(parents=True, exist_ok=True)
-
-    groups = list(REGISTRY_TABLES) + list(ALARM_TABLES) + list(COMMAND_TABLES)
-    groups += list(ENERGY_TABLES) + list(MAINTENANCE_TABLES) + list(STATE_TABLES)
-    if args.include_history:
-        groups += list(HISTORY_TABLES)
-
-    dumps: dict[str, list[dict[str, Any]]] = {}
-    missing_tables: list[str] = []
-
-    with open_session(settings) as session:
-        present = _table_names(session.get_bind())
-        for name in groups:
-            table = metadata.tables.get(name)
-            if table is None or name not in present:
-                missing_tables.append(name)
-                continue
-            dumps[name] = _dump_table(session, table)
-
-    manifest = {
-        "kind": BACKUP_KIND,
-        "format_version": BACKUP_FORMAT_VERSION,
-        "created_at": now.isoformat(),
-        "platform_version": __version__,
-        "node_role": settings.node_role,
-        "site_id": settings.site_id,
-        "database": redact_url(settings.database_url),
-        "includes_history": bool(args.include_history),
-        "row_counts": {name: len(rows) for name, rows in dumps.items()},
-        "tables_absent": missing_tables,
-        "sdd_reference": "16.1 mitigation 3 (configuration replicated outside the container)",
-    }
-
-    restore_text = (
-        "Project CHAOS backup\n"
-        "=============================\n\n"
-        f"Created  : {now.isoformat()}\n"
-        f"Node role: {settings.node_role}\n\n"
-        "Contents\n"
-        "  manifest.json      row counts and provenance\n"
-        "  settings.json      redacted runtime settings (secrets are NOT included)\n"
-        "  tables/*.json      one JSON array per database table\n"
-        "  design-package/    data/*.yaml|json and schemas/*.json as loaded on this node\n\n"
-        "Restore\n"
-        "  1. chaos init-db                      # on the target node, CHAOS_DATABASE_URL set\n"
-        "  2. chaos restore <this archive>       # validates manifest.json, restores every\n"
-        "                                        # tables/*.json in dependency order, in one\n"
-        "                                        # transaction; refuses a database that already\n"
-        "                                        # holds rows unless --force replaces them\n"
-        "  3. chaos status                       # confirm counts match manifest.json\n\n"
-        "  chaos restore --dry-run <this archive> reports what would happen and writes nothing.\n"
-        "  Alternatively 'chaos load-all' rebuilds the registry, load schedule and alarm\n"
-        "  definitions from design-package/ -- registry content only: no alarm or command\n"
-        "  history, no work orders, no notification log.\n\n"
-        "This archive contains no MQTT, database or notification credentials. Those are\n"
-        "per-device and must be re-issued, not restored (SDD section 15.2).\n\n"
-        "Keep at least one copy off the property and one copy offline (SDD sections 15.8, 16.1).\n"
-    )
-
-    def _add_bytes(tar: tarfile.TarFile, name: str, data: bytes) -> None:
-        info = tarfile.TarInfo(name=name)
-        info.size = len(data)
-        info.mtime = int(now.timestamp())
-        info.mode = 0o600
-        tar.addfile(info, io.BytesIO(data))
-
-    settings_payload = json.loads(settings.model_dump_json())
-    for key in list(settings_payload):
-        if any(token in key for token in ("password", "secret", "token", "key")):
-            settings_payload[key] = "***redacted***"
-    settings_payload["database_url"] = redact_url(settings.database_url)
-
-    try:
-        with tarfile.open(output, "w:gz") as tar:
-            _add_bytes(tar, "manifest.json", _dumps(manifest, "json").encode("utf-8"))
-            _add_bytes(tar, "RESTORE.txt", restore_text.encode("utf-8"))
-            _add_bytes(tar, "settings.json", _dumps(settings_payload, "json").encode("utf-8"))
-            for name, rows in dumps.items():
-                _add_bytes(tar, f"tables/{name}.json", _dumps(rows, "json").encode("utf-8"))
-
-            data_dir = Path(settings.data_dir)
-            if data_dir.is_dir():
-                for path in sorted(data_dir.iterdir()):
-                    if path.is_file():
-                        tar.add(path, arcname=f"design-package/data/{path.name}")
-            schema_dir = Path(settings.schema_dir)
-            if schema_dir.is_dir():
-                for path in sorted(schema_dir.iterdir()):
-                    if path.is_file():
-                        tar.add(path, arcname=f"design-package/schemas/{path.name}")
-    except OSError as exc:
-        raise CommandError(f"Could not write {output}: {exc}") from exc
-
-    digest = hashlib.sha256(output.read_bytes()).hexdigest()
-    size_mb = output.stat().st_size / (1024 * 1024)
-    print(f"Backup   : {output}")
-    print(f"Size     : {size_mb:.2f} MiB")
-    print(f"SHA-256  : {digest}")
-    print(f"Tables   : {len(dumps)} dumped, {sum(len(r) for r in dumps.values())} rows")
-    if missing_tables:
-        print(f"Absent   : {len(missing_tables)} declared table(s) not present in this database")
+    print(f"Backup   : {result.path}")
+    print(f"Size     : {result.size_bytes / (1024 * 1024):.2f} MiB")
+    print(f"SHA-256  : {result.sha256}")
+    print(f"Tables   : {result.tables} dumped, {result.rows} rows")
+    if result.tables_absent:
+        print(f"Absent   : {len(result.tables_absent)} declared table(s) not present in this database")
     print("Copy this archive off the property and keep one offline copy (SDD 15.8, 16.1).")
     return EXIT_OK
 

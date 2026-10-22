@@ -435,8 +435,12 @@ Remove-ChaosDirectory -Path $wheelHouse
 New-Item -ItemType Directory -Path $wheelHouse -Force | Out-Null
 
 # setuptools writes build\ and src\*.egg-info into the CHECKOUT while building a
-# wheel, and repo\build is not in .gitignore.  Remember what was there so the
-# build does not leave litter in someone's working tree.
+# wheel.  Both are in .gitignore now (a build\ tree was once committed by
+# mistake and has been removed), so git would not show the litter; it is still
+# cleaned up here when this script created it, because a stale build\lib from
+# an earlier run is exactly what a later pip wheel can quietly fold into the
+# next wheel.  Remember what was there so a build\ the developer made on
+# purpose is left alone.
 $repoBuildDir = Join-Path $paths.Repo 'build'
 $repoBuildDirExisted = Test-Path $repoBuildDir
 

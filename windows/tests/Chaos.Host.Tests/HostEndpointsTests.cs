@@ -91,6 +91,75 @@ public sealed class HostEndpointsTests
     }
 
     [Fact]
+    public async Task Host_info_reports_the_scheduled_maintenance_and_why_it_is_off()
+    {
+        // The test factory turns the scheduled backup off, so the report must
+        // say so rather than show a schedule that will never fire.
+        await using var backend = await StubBackend.StartAsync();
+        using var factory = ChaosHostFactory.For(backend).Build();
+        using var client = factory.CreateClient();
+
+        var body = await (await client.GetAsync("/host/info")).ReadJsonAsync();
+        var maintenance = body.GetProperty("maintenance");
+
+        Assert.Equal("disabled", maintenance.GetStringProperty("status"));
+        Assert.Contains("Chaos:Backup:Enabled", maintenance.GetStringProperty("detail"), StringComparison.Ordinal);
+        Assert.Equal(JsonValueKind.Null, maintenance.GetProperty("nextRunUtc").ValueKind);
+        Assert.Equal(JsonValueKind.Null, maintenance.GetProperty("lastRun").ValueKind);
+        Assert.False(maintenance.GetProperty("schedule").GetProperty("enabled").GetBoolean());
+        Assert.Equal("02:00", maintenance.GetProperty("schedule").GetStringProperty("timeOfDay"));
+        Assert.Equal(14, maintenance.GetProperty("backup").GetProperty("keep").GetInt32());
+        Assert.False(maintenance.GetProperty("retention").GetProperty("apply").GetBoolean());
+        Assert.Equal("chaos retention --dry-run", maintenance.GetProperty("retention").GetStringProperty("command"));
+    }
+
+    [Fact]
+    public async Task Host_info_shows_the_next_backup_when_the_schedule_is_on()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "chaos-host-tests-backups-" + Guid.NewGuid().ToString("N"));
+
+        // Twelve hours from now, so the real clock cannot reach it while the
+        // test runs and the real platform CLI is never launched.
+        var farFromNow = (DateTime.Now.TimeOfDay + TimeSpan.FromHours(12));
+        if (farFromNow >= TimeSpan.FromDays(1))
+        {
+            farFromNow -= TimeSpan.FromDays(1);
+        }
+
+        try
+        {
+            await using var backend = await StubBackend.StartAsync();
+            using var factory = ChaosHostFactory.For(backend)
+                .With("Backup:Enabled", "true")
+                .With("Backup:Directory", directory)
+                .With("Backup:TimeOfDay", farFromNow.ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture))
+                .With("Backup:Keep", "7")
+                .With("Retention:Apply", "true")
+                .Build();
+            using var client = factory.CreateClient();
+
+            var body = await (await client.GetAsync("/host/info")).ReadJsonAsync();
+            var maintenance = body.GetProperty("maintenance");
+
+            Assert.Equal("scheduled", maintenance.GetStringProperty("status"));
+            Assert.NotEqual(JsonValueKind.Null, maintenance.GetProperty("nextRunUtc").ValueKind);
+            Assert.True(maintenance.GetProperty("nextRunUtc").GetDateTimeOffset() > DateTimeOffset.UtcNow);
+            Assert.Equal(Path.GetFullPath(directory), Path.GetFullPath(maintenance.GetProperty("backup").GetStringProperty("directory")));
+            Assert.Equal(7, maintenance.GetProperty("backup").GetProperty("keep").GetInt32());
+            Assert.True(maintenance.GetProperty("retention").GetProperty("apply").GetBoolean());
+            Assert.Equal("chaos retention --apply", maintenance.GetProperty("retention").GetStringProperty("command"));
+            Assert.Equal(0, maintenance.GetProperty("runCount").GetInt32());
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Host_info_reports_that_no_supervisor_is_registered_when_supervision_is_off()
     {
         // The test factory sets Chaos:SuperviseBackend=false, so the gateway

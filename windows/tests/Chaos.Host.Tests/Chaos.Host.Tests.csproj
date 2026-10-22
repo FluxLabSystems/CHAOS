@@ -31,6 +31,12 @@
     <ProjectReference Include="..\..\src\Chaos.Host\Chaos.Host.csproj" />
   </ItemGroup>
 
+  <!-- The supervisor tests' virtual clock, shared rather than copied: the
+       scheduled-maintenance tests advance it to 02:00 instead of waiting. -->
+  <ItemGroup>
+    <Compile Include="..\Chaos.Host.Supervisor.Tests\Fakes\FakeClock.cs" Link="Support\FakeClock.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>

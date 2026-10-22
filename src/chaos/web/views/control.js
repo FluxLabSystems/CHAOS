@@ -15,10 +15,20 @@
 --------------------------------------------------------------------------- */
 
 import {
-  askReason, card, clear, fmtAge, fmtDateTime, fmtNumber, h, kv, requireRole,
+  askReason, card, clear, confirmAction, fmtAge, fmtDateTime, fmtNumber, h, kv, requireRole,
   resultProblem, statusChip, toast,
 } from '../app.js';
 import { api } from '../api.js';
+
+/** SDD 11 mode set, in the order the API lists it (chaos.commands.modes.MODES). */
+const MODES = ['off', 'manual', 'automatic', 'scheduled', 'maintenance', 'degraded', 'emergency'];
+
+const MODE_NOTES = {
+  maintenance: 'Inhibits automatic starts and modifies alarms with the lockout visible — use this for planned work instead of suppressing alarms.',
+  emergency: 'Latches. Only protective commands run, and leaving it needs a named operator asserting the condition is gone.',
+  off: 'The most restrictive non-latching mode: nothing in this scope is commanded.',
+  automatic: 'The default: the platform may request, local controllers still decide.',
+};
 
 const AUTHORITY_COPY = {
   local: 'Local — the equipment or its own controller has authority right now.',
@@ -35,7 +45,11 @@ async function renderPicker(root, ctx) {
   root.appendChild(h('div', { class: 'page-head' },
     h('div', null,
       h('h2', { text: 'Control' }),
-      h('p', { class: 'lede', text: 'Pick an asset to see its full SDD 17.4 control presentation: actual and requested state, authority, interlocks, last command, manual override and budget impact.' }))));
+      h('p', { class: 'lede', text: 'Site and domain operating modes, the maintainer reloads, and the per-asset SDD 17.4 control presentation: actual and requested state, authority, interlocks, last command, manual override and budget impact.' }))));
+
+  const panels = h('div', { class: 'grid grid-2', style: 'margin-bottom:var(--gap)' });
+  root.appendChild(panels);
+  await paintSitePanels(panels, ctx);
 
   const result = await api.assets({ limit: 500 });
   if (!result.ok) {
@@ -69,6 +83,339 @@ async function renderPicker(root, ctx) {
         }))))))));
 
   return { async refresh() {}, destroy() {} };
+}
+
+/* ------------------------------------------------------- operating modes --- */
+
+function scopeKey(scope) {
+  // The API resolves the literal "site" to the configured site id; a domain or
+  // an asset is named explicitly so nothing is guessed from the segment.
+  return scope.type === 'site' ? 'site' : scope.id;
+}
+
+/**
+ * One form that sets an operating mode on a site, domain or asset scope
+ * (POST /operating-modes/{scope}). The reason dialog comes first because the
+ * API refuses a mode change without one, and emergency's reset policy is
+ * spelled out before the request is sent rather than learned from a 409.
+ */
+function modeSetter({ scopes, current, onDone, note }) {
+  const scopeSelect = h('select', { class: 'select-sm' },
+    scopes.map((scope) => h('option', { value: `${scope.type}:${scope.id}`, text: scope.label })));
+  const modeSelect = h('select', { class: 'select-sm' },
+    MODES.map((mode) => h('option', { value: mode, text: mode, selected: mode === current })));
+  const expires = h('input', { type: 'datetime-local', class: 'input' });
+  const clearBox = h('input', { type: 'checkbox' });
+  const hint = h('p', { class: 'card-note', style: 'margin:.2rem 0 0', text: MODE_NOTES[modeSelect.value] || '' });
+  modeSelect.addEventListener('change', () => { hint.textContent = MODE_NOTES[modeSelect.value] || ''; });
+  const button = h('button', { class: 'btn btn-primary btn-sm', type: 'button', text: 'Set mode…' });
+  const outcome = h('div', { style: 'margin-top:.5rem' });
+
+  button.addEventListener('click', async () => {
+    if (!requireRole('operator')) return;
+    const [type, id] = scopeSelect.value.split(/:(.*)/s);
+    const scope = scopes.find((s) => s.type === type && s.id === id);
+    const mode = modeSelect.value;
+    const leavingEmergency = current === 'emergency' && mode !== 'emergency';
+    const reason = await askReason({
+      title: `Set ${scope.type} ${scope.id} to ${mode}`,
+      note: `${MODE_NOTES[mode] || ''} The change is recorded with your name and this reason`
+        + `${expires.value ? `, and expires ${fmtDateTime(new Date(expires.value).toISOString())}` : ''}.`
+        + (leavingEmergency
+          ? (clearBox.checked
+            ? ' You are asserting that the emergency condition is gone.'
+            : ' Emergency is latched: tick "condition cleared" or the API will refuse this.')
+          : ''),
+      confirmLabel: 'Set mode',
+      danger: mode === 'emergency' || mode === 'off' || leavingEmergency,
+    });
+    if (!reason) return;
+    const body = { mode, reason, condition_clear: clearBox.checked };
+    if (scope.type !== 'site') body.scope_type = scope.type;
+    if (expires.value) body.expires_at = new Date(expires.value).toISOString();
+    button.disabled = true;
+    const response = await api.setOperatingMode(scopeKey(scope), body);
+    button.disabled = false;
+    showModeOutcome(outcome, response, scope, mode);
+    if (response.ok) {
+      toast('success', 'Mode set', `${scope.type} ${scope.id} is now ${response.data.mode}.`);
+      if (onDone) await onDone();
+    } else if (response.forbidden) {
+      toast('error', 'Refused', `${response.error} — check your operator role.`);
+    } else if (response.missing) {
+      toast('warn', 'Mode endpoint not available', 'This node does not expose POST /operating-modes. Nothing was changed.');
+    } else {
+      toast('error', 'Mode not changed', typeof response.error === 'string' ? response.error : `HTTP ${response.status}`);
+    }
+  });
+
+  return h('div', null,
+    note ? h('p', { class: 'card-note', style: 'margin:0 0 .4rem', text: note }) : null,
+    h('div', { class: 'filters', style: 'margin:0' },
+      h('label', null, h('span', { text: 'Scope' }), scopeSelect),
+      h('label', null, h('span', { text: 'Mode' }), modeSelect),
+      h('label', null, h('span', { text: 'Expires (optional)' }), expires),
+      h('label', { style: 'flex-direction:row;align-items:center;gap:.4rem' },
+        clearBox, h('span', { text: 'Emergency condition cleared' })),
+      button),
+    hint,
+    outcome);
+}
+
+function showModeOutcome(host, response, scope, mode) {
+  clear(host);
+  if (response.ok) {
+    const row = response.data;
+    host.appendChild(h('div', null,
+      h('p', { style: 'margin:0 0 .3rem' }, statusChip('ok', `${row.scope_type} ${row.scope_id}: ${row.mode}`)),
+      kv([
+        ['Previous mode', row.previous_mode || '—'],
+        ['Set by', `${row.changed_by} · ${fmtAge(row.changed_at)}`],
+        ['Reason', row.reason || '—'],
+        ['Expires', row.expires_at ? fmtDateTime(row.expires_at) : 'no expiry'],
+        ['Latched', row.latched ? statusChip('alarm', 'yes — needs a deliberate reset') : 'no'],
+      ])));
+    return;
+  }
+  const detail = response.data && typeof response.data === 'object' && response.data.detail
+    && typeof response.data.detail === 'object' ? response.data.detail : null;
+  host.appendChild(h('div', null,
+    h('p', { style: 'margin:0 0 .3rem' },
+      statusChip('alarm', response.forbidden ? 'Refused' : `HTTP ${response.status}`), ' ',
+      h('span', { text: detail ? detail.message : (response.error || `could not set ${scope.type} ${scope.id} to ${mode}`) })),
+    detail && Array.isArray(detail.required)
+      ? h('ul', { class: 'provenance' }, detail.required.map((item) => h('li', { text: `Required: ${item}` })))
+      : null));
+}
+
+async function paintSitePanels(host, ctx) {
+  clear(host);
+  host.appendChild(h('p', { class: 'loading', text: 'Loading operating modes…' }));
+  const modes = await api.operatingModes();
+  clear(host);
+  host.appendChild(modesCard(modes, ctx, () => paintSitePanels(host, ctx)));
+  host.appendChild(maintainerCard());
+}
+
+function modesCard(modes, ctx, reload) {
+  const overview = ctx.latestOverview().data;
+  const siteId = overview && overview.site ? overview.site.site_id : null;
+  const siteMode = overview && overview.site && overview.site.operating_mode
+    ? overview.site.operating_mode.mode : null;
+  const domains = overview
+    ? (overview.subsystems || []).map((entry) => entry.domain).filter(Boolean)
+    : [];
+  const rows = modes.ok ? (Array.isArray(modes.data) ? modes.data : []) : [];
+  rows.forEach((row) => { if (row.scope_type === 'domain' && !domains.includes(row.scope_id)) domains.push(row.scope_id); });
+
+  const children = [];
+  if (!modes.ok) {
+    children.push(resultProblem(modes, 'the operating-mode list'));
+  } else if (!rows.length) {
+    children.push(h('p', { class: 'card-note', style: 'margin-top:0' },
+      statusChip('no_data', 'No mode stored'),
+      ' No scope has had a mode set yet; every scope is implicitly automatic.'));
+  } else {
+    children.push(h('div', { class: 'table-wrap', style: 'margin-bottom:.7rem' },
+      h('table', null,
+        h('thead', null, h('tr', null,
+          h('th', { text: 'Scope' }), h('th', { text: 'Mode' }), h('th', { text: 'Set by' }),
+          h('th', { text: 'Reason' }), h('th', { text: 'Expires' }))),
+        h('tbody', null, rows.map((row) => h('tr', null,
+          h('td', null, h('span', { class: 'tag', text: row.scope_type }), ' ',
+            row.scope_type === 'asset'
+              ? h('a', { class: 'mono', href: `#/control/${encodeURIComponent(row.scope_id)}`, text: row.scope_id })
+              : h('span', { class: 'mono', text: row.scope_id })),
+          h('td', null, statusChip(row.mode === 'emergency' ? 'alarm' : (row.mode === 'maintenance' ? 'degraded' : 'ok'), row.mode),
+            row.latched ? ' latched' : ''),
+          h('td', { text: row.changed_by ? `${row.changed_by} · ${fmtAge(row.changed_at)}` : '—' }),
+          h('td', { text: row.reason || '—' }),
+          h('td', { text: row.expires_at ? fmtDateTime(row.expires_at) : '—' })))))));
+  }
+
+  const scopes = [{ type: 'site', id: siteId || 'site', label: `site — ${siteId || 'this site'}` }]
+    .concat(domains.sort().map((domain) => ({ type: 'domain', id: domain, label: `domain — ${domain}` })));
+  children.push(modeSetter({
+    scopes,
+    current: siteMode || 'automatic',
+    onDone: async () => { await reload(); ctx.refreshOverview(); },
+    note: 'Set the mode of the whole site or of one domain. An asset’s own mode is set from its control panel below.',
+  }));
+  return card({
+    title: 'Operating modes',
+    status: rows.some((row) => row.mode === 'emergency') ? 'alarm' : (rows.some((row) => row.mode === 'maintenance') ? 'degraded' : 'ok'),
+    statusText: siteMode ? `site: ${siteMode}` : 'site: not set',
+    children,
+  });
+}
+
+/* ----------------------------------------------------- maintainer actions --- */
+
+function countsKv(payload, keys) {
+  return kv(keys.filter((key) => key in payload).map((key) => [key.replace(/_/g, ' '),
+    Array.isArray(payload[key]) ? String(payload[key].length) : String(payload[key] ?? '—')]));
+}
+
+function maintainerCard() {
+  const registryOutcome = h('div', { style: 'margin-top:.4rem' });
+  const alarmOutcome = h('div', { style: 'margin-top:.4rem' });
+  const strict = h('input', { type: 'checkbox', checked: true });
+
+  function showReload(host, response, what, keys) {
+    clear(host);
+    if (response.ok) {
+      const payload = response.data;
+      host.appendChild(h('p', { style: 'margin:0 0 .3rem' }, statusChip('ok', `${what} reloaded`)));
+      host.appendChild(countsKv(payload, keys));
+      const warnings = payload.warnings || [];
+      if (warnings.length) {
+        host.appendChild(h('details', { class: 'raw' },
+          h('summary', { text: `${warnings.length} warning${warnings.length === 1 ? '' : 's'}` }),
+          h('ul', { class: 'provenance' }, warnings.map((line) => h('li', { text: String(line) })))));
+      }
+      return;
+    }
+    const detail = response.data && typeof response.data === 'object' && typeof response.data.detail === 'object'
+      ? response.data.detail : null;
+    host.appendChild(h('p', { style: 'margin:0' },
+      statusChip('alarm', response.forbidden ? 'Refused' : `HTTP ${response.status}`), ' ',
+      h('span', { text: detail && detail.message ? detail.message : (response.error || 'failed') })));
+    if (detail && Array.isArray(detail.warnings) && detail.warnings.length) {
+      host.appendChild(h('ul', { class: 'provenance' }, detail.warnings.map((line) => h('li', { text: String(line) }))));
+    }
+  }
+
+  async function reloadRegistry() {
+    if (!requireRole('maintainer')) return;
+    const yes = await confirmAction({
+      title: 'Reload the registry from the design package',
+      note: 'Re-runs the idempotent package loader against data/ on this node. Nothing is dropped; edited assets, points and bindings are converged onto the files. The reload is recorded under your name.',
+      confirmLabel: 'Reload registry',
+    });
+    if (!yes) return;
+    registryOutcome.replaceChildren(h('p', { class: 'loading', text: 'Reloading…' }));
+    showReload(registryOutcome, await api.reloadRegistry(), 'Registry',
+      ['assets', 'points', 'bindings', 'relationships', 'asset_classes', 'point_definitions', 'locations', 'skipped_assets', 'package_version', 'revision']);
+  }
+
+  async function reloadAlarms() {
+    if (!requireRole('maintainer')) return;
+    const yes = await confirmAction({
+      title: 'Reload the alarm definitions',
+      note: `Replaces the trip thresholds and escalation paths with data/alarm_definitions.yaml as it is on disk${strict.checked ? '; strict mode rejects the whole reload if any point or asset does not resolve' : ''}. Active alarms are not cleared.`,
+      confirmLabel: 'Reload definitions',
+      danger: true,
+    });
+    if (!yes) return;
+    alarmOutcome.replaceChildren(h('p', { class: 'loading', text: 'Reloading…' }));
+    showReload(alarmOutcome, await api.reloadAlarmDefinitions(strict.checked), 'Alarm definitions',
+      ['total', 'created', 'updated', 'unchanged', 'disabled', 'reloaded_by', 'source']);
+  }
+
+  return card({
+    title: 'Maintainer actions',
+    children: [
+      h('p', { class: 'card-note', style: 'margin-top:0', text: 'Both reloads need the maintainer role and converge the database onto the files in the design package. Neither takes a reason; the API records who asked.' }),
+      h('div', { class: 'filters', style: 'margin:0 0 .3rem' },
+        h('button', { class: 'btn btn-sm', type: 'button', onclick: reloadRegistry, text: 'Reload registry…' })),
+      registryOutcome,
+      h('div', { class: 'filters', style: 'margin:.6rem 0 .3rem' },
+        h('label', { style: 'flex-direction:row;align-items:center;gap:.4rem' }, strict, h('span', { text: 'Strict' })),
+        h('button', { class: 'btn btn-sm', type: 'button', onclick: reloadAlarms, text: 'Reload alarm definitions…' })),
+      alarmOutcome,
+    ],
+  });
+}
+
+/* ------------------------------------------------------ budget leases ------ */
+
+/** Request a power-budget lease for this asset (POST /energy/load-budgets/reservations).
+ *  A denial comes back 201 with `granted: false` and a reason: it is an answer,
+ *  not an error, and is shown as one. */
+function leaseConsole(data, reload) {
+  const asset = data.asset;
+  const kwInput = h('input', { type: 'number', class: 'input', min: '0.1', step: '0.1', placeholder: 'e.g. 1.5' });
+  const minutes = h('input', { type: 'number', class: 'input', min: '1', step: '1', placeholder: 'until revoked' });
+  const priority = h('select', { class: 'select-sm' },
+    [0, 1, 2, 3, 4].map((level) => h('option', { value: String(level), text: `${level}${level === 0 ? ' (highest)' : level === 4 ? ' (lowest)' : ''}`, selected: level === 3 })));
+  const revocable = h('input', { type: 'checkbox', checked: true });
+  const button = h('button', { class: 'btn btn-primary btn-sm', type: 'button', text: 'Request lease…' });
+  const outcome = h('div', { style: 'margin-top:.5rem' });
+
+  button.addEventListener('click', async () => {
+    if (!requireRole('operator')) return;
+    const kw = Number(kwInput.value);
+    if (!(kw > 0)) { kwInput.reportValidity(); toast('warn', 'Requested power required', 'Enter the kW to reserve.'); return; }
+    const reason = await askReason({
+      title: `Request ${fmtNumber(kw, 2)} kW for ${asset.name}`,
+      note: 'A lease is an allocation of the site power budget, never a safety permissive (SDD 31.4). The energy manager grants or denies it against the current state and surplus, and records either answer with your name.',
+      confirmLabel: 'Request lease',
+    });
+    if (!reason) return;
+    const body = {
+      asset_id: asset.asset_id, requested_kw: kw, reason,
+      priority: Number(priority.value), revocable: revocable.checked,
+    };
+    if (Number(minutes.value) > 0) body.duration_s = Math.round(Number(minutes.value) * 60);
+    button.disabled = true;
+    const response = await api.requestLease(body);
+    button.disabled = false;
+    clear(outcome);
+    if (response.ok) {
+      const decision = response.data;
+      const lease = decision.lease;
+      outcome.appendChild(h('p', { style: 'margin:0 0 .3rem' },
+        decision.granted ? statusChip('ok', `Granted ${fmtNumber(lease ? lease.granted_kw : kw, 2)} kW`) : statusChip('alarm', 'Denied'),
+        ' ', h('span', { text: decision.reason || '' })));
+      outcome.appendChild(kv([
+        ['Energy state', decision.energy_state || '—'],
+        ['Available', decision.available_kw !== null && decision.available_kw !== undefined ? `${fmtNumber(decision.available_kw, 2)} kW` : '—'],
+        ['Already granted', decision.already_granted_kw !== null && decision.already_granted_kw !== undefined ? `${fmtNumber(decision.already_granted_kw, 2)} kW` : '—'],
+        ['Lease', lease ? `${lease.lease_id} · expires ${lease.expires_at ? fmtDateTime(lease.expires_at) : 'when revoked'}` : '—'],
+      ]));
+      toast(decision.granted ? 'success' : 'info', decision.granted ? 'Lease granted' : 'Lease denied', decision.reason || '');
+      if (decision.granted) await reload();
+    } else if (response.missing) {
+      toast('warn', 'Lease endpoint not available', 'This node does not expose the reservation route. Nothing was requested.');
+    } else {
+      outcome.appendChild(h('p', { style: 'margin:0' },
+        statusChip('alarm', response.forbidden ? 'Refused' : `HTTP ${response.status}`), ' ', h('span', { text: response.error || '' })));
+      toast('error', 'Lease not requested', response.error || `HTTP ${response.status}`);
+    }
+  });
+
+  return h('div', { style: 'margin-top:.5rem' },
+    h('div', { class: 'filters', style: 'margin:0' },
+      h('label', null, h('span', { text: 'Power (kW)' }), kwInput),
+      h('label', null, h('span', { text: 'Duration (min)' }), minutes),
+      h('label', null, h('span', { text: 'Priority' }), priority),
+      h('label', { style: 'flex-direction:row;align-items:center;gap:.4rem' }, revocable, h('span', { text: 'Revocable' })),
+      button),
+    outcome);
+}
+
+function leaseRow(lease, reload) {
+  const revoke = h('button', { class: 'btn btn-sm btn-danger', type: 'button', text: 'Revoke…' });
+  revoke.addEventListener('click', async () => {
+    if (!requireRole('operator')) return;
+    const reason = await askReason({
+      title: `Revoke lease ${lease.lease_id}`,
+      note: 'Revocation withdraws the allocation only. No stop command is issued; the subsystem stays safe under its own controller (SDD 31.4).',
+      confirmLabel: 'Revoke',
+      danger: true,
+    });
+    if (!reason) return;
+    const response = await api.revokeLease(lease.lease_id, reason);
+    if (response.ok) {
+      toast('success', 'Lease revoked', response.data.note || lease.lease_id);
+      await reload();
+    } else {
+      toast('error', 'Lease not revoked', response.error || `HTTP ${response.status}`);
+    }
+  });
+  return h('li', { class: 'provenance', style: 'display:flex;gap:.6rem;align-items:center;flex-wrap:wrap' },
+    h('span', { text: `${lease.granted_kw} kW · ${lease.state || 'active'} · priority ${lease.priority} · expires ${lease.expires_at ? fmtAge(lease.expires_at) : 'when revoked'} · ${lease.reason} (requested by ${lease.requested_by || 'unknown'})` }),
+    lease.revocable === false ? h('span', { class: 'tag', text: 'not revocable' }) : revoke);
 }
 
 /* ---------------------------------------------------------------- panel --- */
@@ -246,7 +593,7 @@ function commandBlock(data) {
 }
 
 /** 17.4 item 7. */
-function budgetBlock(data) {
+function budgetBlock(data, reload) {
   const budget = data.budget_impact || {};
   const profile = budget.load_profile;
   const measured = budget.measured_power_kw;
@@ -290,9 +637,9 @@ function budgetBlock(data) {
   const leases = budget.active_leases || [];
   children.push(h('h4', { class: 'card-note', style: 'margin-top:.8rem;text-transform:uppercase;letter-spacing:.06em', text: 'Power-budget leases' }));
   children.push(leases.length
-    ? h('ul', null, leases.map((lease) => h('li', { class: 'provenance',
-        text: `${lease.granted_kw} kW · ${lease.state} · priority ${lease.priority} · expires ${fmtAge(lease.expires_at)} · ${lease.reason} (requested by ${lease.requested_by || 'unknown'})` })))
+    ? h('ul', null, leases.map((lease) => leaseRow(lease, reload)))
     : h('p', { class: 'card-note', text: 'No power budget has been granted to this asset.' }));
+  children.push(leaseConsole(data, reload));
 
   return card({
     title: 'Impact on energy and resource budgets',
@@ -507,6 +854,16 @@ async function drawPanel(root, ctx, assetId) {
         ['Mode reason', mode.reason || '—'],
       ]),
       authority.note ? h('p', { class: 'card-note', text: authority.note }) : null,
+      h('h4', { class: 'card-note', style: 'margin-top:.8rem;text-transform:uppercase;letter-spacing:.06em', text: 'Set operating mode' }),
+      modeSetter({
+        scopes: [
+          { type: 'asset', id: asset.asset_id, label: `asset — ${asset.name}` },
+          { type: 'domain', id: asset.domain, label: `domain — ${asset.domain}` },
+          { type: 'site', id: 'site', label: 'site — whole property' },
+        ],
+        current: mode.mode || 'automatic',
+        onDone: async () => { await drawPanel(root, ctx, assetId); ctx.refreshOverview(); },
+      }),
     ],
   });
 
@@ -528,7 +885,8 @@ async function drawPanel(root, ctx, assetId) {
   });
 
   root.appendChild(h('div', { class: 'control-grid' },
-    stateCard, authorityCard, interlockBlock(data), commandBlock(data), overrideCard, budgetBlock(data)));
+    stateCard, authorityCard, interlockBlock(data), commandBlock(data), overrideCard,
+    budgetBlock(data, () => drawPanel(root, ctx, assetId))));
 
   root.appendChild(h('div', { style: 'margin-top:var(--gap)' },
     commandConsole(data, () => drawPanel(root, ctx, assetId))));

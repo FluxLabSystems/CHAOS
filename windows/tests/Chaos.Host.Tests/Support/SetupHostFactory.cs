@@ -113,6 +113,7 @@ internal sealed class SetupHostFactory : WebApplicationFactory<Program>
             // Setup is exercised with a faked command runner; supervising a real
             // backend would launch an interpreter this test never asked for.
             _settings["Chaos:SuperviseBackend"] = "false";
+            _settings["Chaos:Backup:Enabled"] = "false";
             _settings["Chaos:SetupLogPath"] = Path.Combine(_stateDirectory, "chaos-setup.log");
             _settings["Chaos:SetupStateFile"] = Path.Combine(_stateDirectory, "chaos-setup-state.json");
             _settings["Chaos:SetupTimeout"] = "00:00:30";

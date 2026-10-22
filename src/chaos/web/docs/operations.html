@@ -44,7 +44,7 @@ has. That changes one subsystem at a time as
 <h2 id="0-daily-and-weekly" class="doc-h"><span class="doc-h-text">0. Daily and weekly</span><a class="doc-anchor" href="#0-daily-and-weekly" aria-label="Link to this section"></a></h2>
 <h3 id="daily--two-minutes-on-the-consoles-home-screen" class="doc-h"><span class="doc-h-text">Daily — two minutes, on the console's Home screen</span><a class="doc-anchor" href="#daily--two-minutes-on-the-consoles-home-screen" aria-label="Link to this section"></a></h3>
 <p>Look at four things:</p>
-<div class="doc-table-wrap"><table><thead><tr><th scope="col">Look at</th><th scope="col">Bad sign</th></tr></thead><tbody><tr><td>Active alarms</td><td>Anything critical or major that nobody has acknowledged</td></tr><tr><td>The dead-letter count</td><td>A count that <strong>grows every day</strong>. That is a binding that was never commissioned properly, not noise</td></tr><tr><td>The energy state and how old its evaluation is</td><td>A state derived from stale inputs. The screen shows the data quality alongside the state precisely so this is visible</td></tr><tr><td>The stale-point count</td><td>Points the platform admits it cannot see</td></tr></tbody></table></div>
+<div class="doc-table-wrap"><table><thead><tr><th scope="col">Look at</th><th scope="col">Bad sign</th></tr></thead><tbody><tr><td>Active alarms</td><td>Anything critical or major that nobody has acknowledged</td></tr><tr><td>The dead-letter count (the <strong>Dead letters</strong> card, with the list beneath it)</td><td>A count that <strong>grows every day</strong>. That is a binding that was never commissioned properly, not noise</td></tr><tr><td>The energy state and how old its evaluation is</td><td>A state derived from stale inputs. The screen shows the data quality alongside the state precisely so this is visible</td></tr><tr><td>The stale-point count (the <strong>Stale points</strong> card)</td><td>Points the platform admits it cannot see</td></tr></tbody></table></div>
 <p>The freshness indicator in the top-right tells you whether what you are reading
 is live at all. If the <em>API unreachable</em> banner is showing, you are looking at a
 snapshot — see <a href="troubleshooting.html#6-the-console-loads-but-has-no-data">Troubleshooting § The console has no data</a>.</p>
@@ -53,8 +53,11 @@ snapshot — see <a href="troubleshooting.html#6-the-console-loads-but-has-no-da
 coverage. If it changes, something changed in the design package. See
 <a href="annunciator.html">The annunciator panel</a>.</p>
 <h3 id="weekly" class="doc-h"><span class="doc-h-text">Weekly</span><a class="doc-anchor" href="#weekly" aria-label="Link to this section"></a></h3>
-<ul><li><strong>Confirm the nightly backup ran</strong> and its manifest reports no failures. There
-is no backup action in the console today — see section 4.</li><li><strong>Confirm the secondary node's replica is current.</strong> Point the desktop shell's
+<ul><li><strong>Confirm the nightly backup ran.</strong> Home → <strong>Backups</strong> shows the newest
+archive with its manifest and goes amber when it is more than 36 hours old;
+for the full backup set on the container stack, read its manifest for a
+failure count of zero. A maintainer can take an archive from the same card
+— see section 4.</li><li><strong>Confirm the secondary node's replica is current.</strong> Point the desktop shell's
 <strong>Settings → Gateway</strong> at the secondary node and compare its Assets counts
 with the primary's. Change it back afterwards.</li><li><strong>Check the binding statuses</strong> on the console's Assets screen. Anything still
 <code>tbd</code> is un-commissioned, whatever the wiring looks like.</li></ul>
@@ -82,8 +85,8 @@ state.</strong></p>
 <ol><li><strong>Expire stale commands.</strong> Anything pending or dispatched from before the
 outage is meaningless. On the console's Control screen, cancel anything that
 has not already expired on its own time-to-live.</li><li><strong>Distrust retained bus state.</strong> Retained topics may describe the world as it
-was before the lights went out.</li><li><strong>Find what the platform cannot see.</strong> The stale-point list. Every point there
-is <em>unknown</em>, not <em>normal</em>.</li><li><strong>Walk the plant.</strong> Confirm actual breaker, valve and equipment states against
+was before the lights went out.</li><li><strong>Find what the platform cannot see.</strong> The stale-point list (Home →
+<strong>Stale points</strong>). Every point there is <em>unknown</em>, not <em>normal</em>.</li><li><strong>Walk the plant.</strong> Confirm actual breaker, valve and equipment states against
 what the twin believes. <strong>Correct the twin, not the plant.</strong></li><li><strong>Only then</strong> let the energy manager resume. It must not begin dispatching
 against a state model that is a mixture of pre-outage memory and post-outage
 guesswork.</li></ol>
@@ -143,7 +146,8 @@ of independent events. The annunciator shows the same thing as a panel: one
 lit window per condition.</li><li><strong>Sort by severity and time.</strong> The earliest critical alarm is usually the
 cause; the rest are consequences.</li><li><strong>Ask whether the platform is the problem.</strong> A flood with no plant symptoms is
 often ingest: a gateway republishing history with old timestamps, or a binding
-pointed at the wrong point. Check the dead-letter list.</li><li><strong>Silence, then acknowledge, in that order.</strong> On the annunciator, SILENCE HORN
+pointed at the wrong point. Check the dead-letter list (Home →
+<strong>Dead-letter list</strong>).</li><li><strong>Silence, then acknowledge, in that order.</strong> On the annunciator, SILENCE HORN
 quiets the room without touching a single lamp, so you can think. Then
 acknowledge deliberately, tile by tile or as a set.</li><li><strong>Afterwards, review.</strong> A flood is usually an alarm-design failure: a missing
 dead-band, a missing on-delay, or an alarm on a derived value that should have
@@ -151,18 +155,24 @@ been an alarm on its input. Fix <code>data/alarm_definitions.yaml</code> and re-
 from the launcher's <strong>Run again</strong>.</li></ol>
 <h3 id="planned-work-use-maintenance-mode-not-suppression" class="doc-h"><span class="doc-h-text">Planned work: use maintenance mode, not suppression</span><a class="doc-anchor" href="#planned-work-use-maintenance-mode-not-suppression" aria-label="Link to this section"></a></h3>
 <p>On the console's Control screen, set the scope's operating mode to
-<code>maintenance</code>. That inhibits automatic starts and modifies alarms <strong>with the
-lockout visible</strong>.</p>
+<code>maintenance</code> — the setter on the asset's panel for one asset, or the one at
+the top of the Control page for a domain or the whole site. That inhibits
+automatic starts and modifies alarms <strong>with the lockout visible</strong>.</p>
 <p>Suppressing an alarm makes the lockout invisible, which is how a subsystem gets
 left in maintenance mode for three weeks.</p>
 <hr>
 <h2 id="4-backup-and-restore" class="doc-h"><span class="doc-h-text">4. Backup and restore</span><a class="doc-anchor" href="#4-backup-and-restore" aria-label="Link to this section"></a></h2>
-<p><strong>There is no backup action in the console or the shell today.</strong> Backups are
-produced by the platform's own tooling on a schedule, which is the right shape
-for a task that should run unattended at 02:00 — but it does mean this section
-points at <a href="advanced-command-line.html#5-backup">Command line</a> and
-<a href="advanced-container-deployment.html#7-backups">Container deployment</a> for the
-mechanics.</p>
+<p>A backup is taken three ways, and all three write the same archive:</p>
+<ul><li><strong>On a schedule, unattended</strong> — the right shape for a task that should run
+at 02:00. On Windows the gateway schedules it; on the container stack cron
+runs <code>deploy/backup/backup.sh</code>, which wraps <code>chaos backup</code> in the fuller set
+described below — see
+<a href="advanced-container-deployment.html#7-backups">Container deployment § Backups</a>.</li><li><strong>From the console</strong> — Home → <strong>Backups</strong> → <em>Take a backup now</em>, with the
+<code>maintainer</code> role. The action confirms first, writes one archive into this
+node's backup directory, lists it, and is audited under your name.</li><li><strong>From the command line</strong> — <code>chaos backup</code>, in
+<a href="advanced-command-line.html#5-backup">Command line § Backup</a>.</li></ul>
+<p>Restoring stays a command-line procedure (4.3): it replaces the database under
+a running platform and is done against a stopped node.</p>
 <p>What matters operationally:</p>
 <h3 id="41-what-a-backup-set-contains" class="doc-h"><span class="doc-h-text">4.1 What a backup set contains</span><a class="doc-anchor" href="#41-what-a-backup-set-contains" aria-label="Link to this section"></a></h3>
 <p>A database dump, a portable registry-and-configuration archive, the broker
@@ -238,9 +248,9 @@ provides holdover.</strong> It is an open item.</p>
 <p><strong>Do not skip to this section.</strong></p>
 <ol><li>The subsystem has passed all twelve commissioning steps. Confirm it on the
 console — the commissioning status for the asset must report supervisory
-control permitted.</li><li>Enable the specific binding through the commissioning endpoint. <strong>The
-platform refuses if the prerequisites have not passed</strong>, and that refusal is
-the point of the endpoint.</li><li>Only then turn on the platform-wide gate, and restart the platform so it
+control permitted.</li><li>Enable the specific binding from the console's Commissioning screen (or
+the commissioning endpoint). <strong>The platform refuses if the prerequisites
+have not passed</strong>, and that refusal is the point of the endpoint.</li><li>Only then turn on the platform-wide gate, and restart the platform so it
 takes effect.</li><li><strong>Verify</strong> that the platform reports physical control as enabled — the
 console's Control screen and <code>/health</code> both carry it.</li><li><strong>Issue one command</strong>, watch it acknowledge, and read the audit record before
 issuing a second.</li></ol>
