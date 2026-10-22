@@ -63,11 +63,17 @@ def build_router(plugin: NetBotzPlugin) -> APIRouter:
 
     @router.get("/enclosures", summary="Appliances the transport can see")
     def enclosures() -> dict[str, Any]:
-        found = [enclosure.as_dict() for enclosure in plugin.transport.enclosures()]
+        try:
+            found = [enclosure.as_dict() for enclosure in plugin.transport.enclosures()]
+            error = None
+        except Exception as exc:
+            # The appliance not answering is the finding, not a server fault.
+            found, error = [], f"{type(exc).__name__}: {exc}"
         return {
             "transport": plugin.transport.describe(),
             "count": len(found),
             "enclosures": found,
+            "error": error,
         }
 
     @router.get("/readings", summary="Raw vendor readings, before any mapping")
@@ -78,11 +84,16 @@ def build_router(plugin: NetBotzPlugin) -> APIRouter:
         ``/bindings`` is how you tell "the appliance is not reporting that
         sensor" from "that sensor is not bound to a point".
         """
-        raw = list(plugin.transport.read())
+        try:
+            raw = list(plugin.transport.read())
+            error = None
+        except Exception as exc:
+            raw, error = [], f"{type(exc).__name__}: {exc}"
         return {
             "transport": plugin.transport.describe(),
             "count": len(raw),
             "readings": [reading.as_dict() for reading in raw],
+            "error": error,
         }
 
     @router.get("/bindings", summary="Registry rows that make NetBotz readings mean something")
